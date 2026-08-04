@@ -1,0 +1,2328 @@
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+var ctx = context.Background()
+
+type fakeStore struct {
+	sessions   map[domain.SessionID]domain.SessionRecord
+	prs        map[domain.SessionID][]domain.PullRequest
+	signatures map[string]string
+
+	listPRsErr        error
+	signatureWriteErr error
+	signatureWrites   int
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+}
+
+func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	r, ok := f.sessions[id]
+	return r, ok, nil
+}
+
+func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	if f.listPRsErr != nil {
+		return nil, f.listPRsErr
+	}
+	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
+	var out []domain.SessionRecord
+	for _, rec := range f.sessions {
+		if rec.ProjectID == project {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.sessions[rec.ID] = rec
+	return nil
+}
+
+func (f *fakeStore) GetPRLastNudgeSignature(_ context.Context, prURL string) (string, error) {
+	return f.signatures[prURL], nil
+}
+
+func (f *fakeStore) UpdatePRLastNudgeSignature(_ context.Context, prURL, payload string) error {
+	if f.signatureWriteErr != nil {
+		return f.signatureWriteErr
+	}
+	if f.signatures == nil {
+		f.signatures = map[string]string{}
+	}
+	f.signatures[prURL] = payload
+	f.signatureWrites++
+	return nil
+}
+
+type fakeMessenger struct {
+	msgs []string
+	ids  []domain.SessionID
+	err  error
+}
+
+type fakeCompletionTerminator struct {
+	calls int
+	err   error
+}
+
+func (f *fakeCompletionTerminator) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	f.calls++
+	return true, f.err
+}
+
+type telemetrySink struct {
+	events []ports.TelemetryEvent
+}
+
+func (s *telemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.events = append(s.events, ev)
+}
+
+func (*telemetrySink) Close(context.Context) error { return nil }
+
+func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.msgs = append(f.msgs, msg)
+	f.ids = append(f.ids, id)
+	return nil
+}
+
+func newManager() (*Manager, *fakeStore, *fakeMessenger) {
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	return New(st, msg), st, msg
+}
+
+func working(id domain.SessionID) domain.SessionRecord {
+	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
+}
+
+func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeFailed, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("failed probe should not persist a state, got %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestRuntimeObservation_ExitedWorkloadKeepsSessionLive(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeAlive, Workload: ports.ProbeDead, LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want live/exited, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_AliveWorkloadCannotResurrectExitedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{
+		Runtime:  ports.ProbeAlive,
+		Workload: ports.ProbeAlive,
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("original supervisor observation resurrected exited session: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestRuntimeObservation_StaleLaunchIsIgnored(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-2"
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeAlive, Workload: ports.ProbeDead, LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("stale launch observation mutated session: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestActivity_InvalidIsIgnored(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: false, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatal("invalid signal must not mutate")
+	}
+}
+
+func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{AgentSessionID: "native-session-1"}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Metadata.AgentSessionID != "native-session-1" {
+		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("metadata-only hook changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
+		t.Fatalf("metadata-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
+func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          rec.Activity.State,
+		AgentSessionID: "native-session-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Metadata.AgentSessionID != "native-session-1" {
+		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("same-state metadata signal changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+}
+
+func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
+	m, st, _ := newManager()
+	updatedAt := time.Unix(100, 0).UTC()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	rec.FirstSignalAt = updatedAt
+	rec.UpdatedAt = updatedAt
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("stale reconciliation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("current reconciliation left activity %q", got)
+	}
+}
+
+func TestActivity_RepeatedUserPromptFencesTerminalReconciliation(t *testing.T) {
+	m, st, _ := newManager()
+	before := time.Unix(100, 0).UTC()
+	after := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return after }
+	rec := working("mer-1")
+	rec.FirstSignalAt = before
+	rec.UpdatedAt = before
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityActive,
+		Event: "user-prompt-submit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].UpdatedAt; !got.Equal(after) {
+		t.Fatalf("updated at = %v, want %v", got, after)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: before,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("fresh prompt was overwritten with %q", got)
+	}
+}
+
+func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.AgentSessionID = "existing-native-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          domain.ActivityActive,
+		AgentSessionID: "   ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "existing-native-1" {
+		t.Fatalf("AgentSessionID = %q, want existing-native-1", got)
+	}
+}
+
+func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
+	m, _, _ := newManager()
+	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})
+	if !errors.Is(err, ports.ErrSessionNotFound) {
+		t.Fatalf("err = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestActivity_ExitedPreservesLiveSessionAndRejectsDelayedHooks(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+	m.flights["mer-1"] = &toolFlight{inflight: map[string]string{"tool-1": "Bash"}, blockedCandidate: "tool-1"}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited}); err != nil {
+		t.Fatal(err)
+	}
+	exited := st.sessions["mer-1"]
+	if exited.IsTerminated || exited.Activity.State != domain.ActivityExited {
+		t.Fatalf("agent exit should preserve live session, got %+v", exited)
+	}
+	if _, ok := m.flights["mer-1"]; ok {
+		t.Fatal("tool-flight state leaked after agent exit")
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	stillExited := st.sessions["mer-1"]
+	if stillExited.IsTerminated || stillExited.Activity.State != domain.ActivityExited {
+		t.Fatalf("delayed active signal resurrected exited launch: %+v", stillExited)
+	}
+}
+
+func TestActivity_UserPromptResumesExitedWorkload(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-2"
+	st.sessions["mer-1"] = rec
+	signalAt := time.Unix(123, 0).UTC()
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:     true,
+		State:     domain.ActivityActive,
+		Event:     "user-prompt-submit",
+		Timestamp: signalAt,
+		LaunchID:  "launch-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityActive {
+		t.Fatalf("valid prompt did not resume exited workload: %+v", got)
+	}
+	if !got.Activity.LastActivityAt.Equal(signalAt) {
+		t.Fatalf("last activity = %v, want %v", got.Activity.LastActivityAt, signalAt)
+	}
+}
+
+func TestActivity_StaleUserPromptDoesNotResumeExitedWorkload(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-2"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:    true,
+		State:    domain.ActivityActive,
+		Event:    "user-prompt-submit",
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("stale prompt resumed exited workload: %+v", got)
+	}
+}
+
+func TestActivity_StaleLaunchSignalIsIgnored(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-2"
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, LaunchID: "launch-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("stale process exit mutated session: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestActivity_NewLaunchSignalWaitsForMarkSpawned(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions["mer-1"] = rec
+
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	signalAt := time.Unix(123, 0).UTC()
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Valid:     true,
+			State:     domain.ActivityActive,
+			Timestamp: signalAt,
+			LaunchID:  "launch-new",
+		})
+	}()
+
+	select {
+	case err := <-signalDone:
+		t.Fatalf("new-generation signal completed before MarkSpawned: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		RuntimeHandleID: "tmux-mer-1",
+		RuntimeLaunchID: "launch-new",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-signalDone; err != nil {
+		t.Fatal(err)
+	}
+
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityActive {
+		t.Fatalf("early signal was not applied after spawn commit: %+v", got)
+	}
+	if got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("runtime launch id = %q, want launch-new", got.Metadata.RuntimeLaunchID)
+	}
+	if !got.FirstSignalAt.Equal(signalAt) {
+		t.Fatalf("first signal at = %v, want %v", got.FirstSignalAt, signalAt)
+	}
+}
+
+func TestActivity_CancelledLaunchReleasesAndRejectsEarlySignal(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions["mer-1"] = rec
+
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Valid:    true,
+			State:    domain.ActivityActive,
+			LaunchID: "launch-new",
+		})
+	}()
+
+	m.CancelLaunch("mer-1", "launch-new")
+	if err := <-signalDone; err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("cancelled launch signal mutated durable state: %+v", got)
+	}
+}
+
+func TestPrepareLaunchRejectsOverlappingGeneration(t *testing.T) {
+	m, _, _ := newManager()
+	if err := m.PrepareLaunch("mer-1", "launch-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-1"); err != nil {
+		t.Fatalf("same generation should be idempotent: %v", err)
+	}
+	if err := m.PrepareLaunch("mer-1", "launch-2"); err == nil {
+		t.Fatal("overlapping generation was accepted")
+	}
+	m.CancelLaunch("mer-1", "launch-1")
+}
+
+func TestMarkTerminated(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	metadata := domain.SessionMetadata{
+		Branch:            "b",
+		WorkspacePath:     "/ws",
+		WorkspaceRepoPath: "/repos/mer",
+		RuntimeHandleID:   "h1",
+		AgentSessionID:    "agent",
+		Prompt:            "prompt",
+	}
+	if err := m.MarkSpawned(ctx, "mer-1", metadata); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle || got.Metadata.RuntimeHandleID != "h1" {
+		t.Fatalf("spawn metadata wrong: %+v", got)
+	}
+	if got.Metadata.WorkspaceRepoPath != metadata.WorkspaceRepoPath {
+		t.Fatalf("workspace repo path = %q, want %q", got.Metadata.WorkspaceRepoPath, metadata.WorkspaceRepoPath)
+	}
+}
+
+// TestMarkSpawned_StampsUTCActivity locks the lifecycle clock to UTC so
+// activity-driven timestamps match the session manager's spawn timestamps. A
+// local clock here left `ao session get` showing created in UTC but updated in
+// local time.
+func TestMarkSpawned_StampsUTCActivity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeHandleID: "h1"}); err != nil {
+		t.Fatal(err)
+	}
+	if loc := st.sessions["mer-1"].Activity.LastActivityAt.Location(); loc != time.UTC {
+		t.Fatalf("LastActivityAt location = %v, want UTC", loc)
+	}
+}
+
+func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(3 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want waiting_input entered/exited", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[1].Payload["dwell_ms"]; got != int64(3000) {
+		t.Fatalf("dwell_ms = %#v, want 3000", got)
+	}
+}
+
+func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{
+		{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "https://ci.example/build", LogTail: "boom"},
+		{Name: "lint", CommitHash: "c1", Status: domain.PRCheckCancelled, URL: "https://ci.example/lint"},
+	}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge with log tail, got %v", msg.msgs)
+	}
+	for _, want := range []string{
+		"CI is failing on your PR.",
+		"Failed: build (failed)",
+		"Failure URL: https://ci.example/build",
+		"Log tail (last 1 line):",
+		"boom",
+		"fetch full CI logs only if you need additional context",
+	} {
+		if !strings.Contains(msg.msgs[0], want) {
+			t.Fatalf("CI nudge missing %q:\n%s", want, msg.msgs[0])
+		}
+	}
+	if strings.Contains(msg.msgs[0], "lint") || strings.Contains(msg.msgs[0], "cancelled") {
+		t.Fatalf("cancelled checks must not be included in CI nudge:\n%s", msg.msgs[0])
+	}
+}
+
+func TestPRObservation_CancelledChecksDoNotNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{
+		{Name: "lint", CommitHash: "c1", Status: domain.PRCheckCancelled, URL: "https://ci.example/lint"},
+	}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("cancelled-only checks must not nudge, got %v", msg.msgs)
+	}
+}
+
+func TestReviewCommentsSignatureUsesStableIDs(t *testing.T) {
+	original := []ports.PRCommentObservation{
+		{ID: "c1", ThreadID: "t1", Author: "alice", File: "old.go", Line: 10, Body: "old", URL: "https://old"},
+		{ID: "c2", ThreadID: "t2", Author: "bob", File: "old.go", Line: 20, Body: "old", URL: "https://old"},
+	}
+	editedAndReordered := []ports.PRCommentObservation{
+		{ID: "c2", ThreadID: "t2", Author: "bob", File: "new.go", Line: 99, Body: "edited", URL: "https://new"},
+		{ID: "c1", ThreadID: "t1", Author: "alice", File: "new.go", Line: 42, Body: "edited", URL: "https://new"},
+	}
+	if got, want := reviewCommentsSignature(editedAndReordered), reviewCommentsSignature(original); got != want {
+		t.Fatalf("signature changed after edit/reorder\n got %q\nwant %q", got, want)
+	}
+
+	withNewComment := append([]ports.PRCommentObservation(nil), original...)
+	withNewComment = append(withNewComment, ports.PRCommentObservation{ID: "c3", ThreadID: "t2", Body: "new comment in same thread"})
+	if got, old := reviewCommentsSignature(withNewComment), reviewCommentsSignature(original); got == old {
+		t.Fatalf("new comment id should change signature, got %q", got)
+	}
+}
+
+func TestFormatCIFailureMessageUsesNonMutatingFence(t *testing.T) {
+	logTail := "start\n```\ninner\n````\nend"
+	msg := formatCIFailureMessage([]ports.PRCheckObservation{{
+		Name: "build", Status: domain.PRCheckFailed, LogTail: logTail,
+	}})
+	if !strings.Contains(msg, logTail) {
+		t.Fatalf("message should preserve log text without zero-width mutation:\n%s", msg)
+	}
+	if strings.Contains(msg, "\u200b") {
+		t.Fatalf("message must not insert zero-width characters:\n%s", msg)
+	}
+	if !strings.Contains(msg, "`````\n"+logTail+"\n`````") {
+		t.Fatalf("message should wrap log in a fence longer than embedded runs:\n%s", msg)
+	}
+}
+
+func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{
+		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1"},
+		{ID: "2", Author: "bob", Body: "already handled", Resolved: true},
+	}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want review nudge, got %v", msg.msgs)
+	}
+	for _, want := range []string{
+		"The following 1 unresolved review comment(s)",
+		"foo.go:12 (@alice):",
+		"fix this",
+		"https://github.com/o/r/pull/1#discussion_r1",
+		"Thread ID: T1",
+		"re-fetch review data unless you need additional context",
+	} {
+		if !strings.Contains(msg.msgs[0], want) {
+			t.Fatalf("review nudge missing %q:\n%s", want, msg.msgs[0])
+		}
+	}
+	if strings.Contains(msg.msgs[0], "already handled") {
+		t.Fatalf("review nudge included resolved comment:\n%s", msg.msgs[0])
+	}
+}
+
+func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{
+		Fetched:  true,
+		URL:      "pr1",
+		CI:       domain.CIFailing,
+		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:   domain.ReviewChangesRequest,
+		Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	// Both actionable items fire — neither is suppressed by the other — in queue
+	// order (CI first, then review).
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want CI and review nudges, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("first nudge should carry the CI failure, got %q", msg.msgs[0])
+	}
+	if !strings.Contains(msg.msgs[1], "fix this") {
+		t.Fatalf("second nudge should carry the review feedback, got %q", msg.msgs[1])
+	}
+	// Re-observing the identical state re-nudges nothing: per-item dedup is intact.
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("re-observation should not re-nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+// A failed parent-stack lookup (the store read behind the merge-conflict
+// exemption) must not discard the CI/review nudges already queued for the same
+// PR. Only the merge-conflict nudge is skipped this cycle; CI and review still
+// send, the read error still surfaces so the observer logs and re-polls, and the
+// merge-conflict nudge fires once the read recovers.
+func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.listPRsErr = errors.New("transient store read failure")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "pr1",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:       domain.ReviewChangesRequest,
+		Comments:     []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+		Mergeability: domain.MergeConflicting,
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
+		t.Fatal("want the deferred parent-stack read error surfaced")
+	}
+	// CI and review still fired despite the merge-conflict lookup failing; the
+	// merge-conflict nudge itself is skipped this cycle.
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want CI and review nudges sent, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("first nudge should carry the CI failure, got %q", msg.msgs[0])
+	}
+	if !strings.Contains(msg.msgs[1], "fix this") {
+		t.Fatalf("second nudge should carry the review feedback, got %q", msg.msgs[1])
+	}
+	for _, sent := range msg.msgs {
+		if strings.Contains(sent, "merge conflicts") {
+			t.Fatalf("merge-conflict nudge must be skipped on read error, got %q", sent)
+		}
+	}
+
+	// Next poll, the read recovers: the merge-conflict nudge now fires while
+	// CI/review stay deduped (their signatures persisted before the error).
+	st.listPRsErr = nil
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 3 {
+		t.Fatalf("want merge-conflict nudge on recovery with CI/review deduped, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[2], "merge conflicts") {
+		t.Fatalf("third nudge should be the merge-conflict nudge, got %q", msg.msgs[2])
+	}
+}
+
+func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// A CI log tail with an embedded ANSI escape sequence and a NUL byte; the
+	// agent's pane must receive the visible text without the control bytes.
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "line1\x1b[2Jline2\x00\ttabbed"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') {
+		t.Fatalf("nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "line1") || !strings.Contains(got, "line2") || !strings.Contains(got, "\ttabbed") {
+		t.Fatalf("nudge dropped visible text or tab: %q", got)
+	}
+}
+
+func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
+		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
+func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1},
+		CI: ports.SCMCIObservation{
+			Summary: string(domain.CIFailing),
+			HeadSHA: "c1",
+			FailedChecks: []ports.SCMCheckObservation{{
+				Name: "build", Status: string(domain.PRCheckFailed), LogTail: "boom",
+			}},
+		},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("want SCM CI nudge with log tail, got %v", msg.msgs)
+	}
+}
+
+func TestSCMObservation_MissingSessionIsIgnored(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, nil)
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1},
+	}
+	if err := m.ApplySCMObservation(ctx, "missing-1", o); err != nil {
+		t.Fatalf("ApplySCMObservation missing session: %v", err)
+	}
+}
+
+func TestSCMObservationUsesPRHeadWhenCIHeadMissing(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", HeadSHA: "c1"},
+		CI: ports.SCMCIObservation{
+			Summary: string(domain.CIFailing),
+			FailedChecks: []ports.SCMCheckObservation{{
+				Name: "build", Status: string(domain.PRCheckFailed),
+			}},
+		},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	o.PR.HeadSHA = "c2"
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want separate CI nudges for distinct PR heads when CI head is absent, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("want merge-conflict nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_ExitedAgentIsNotNudged(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("exited agent should not receive reaction nudges, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_NudgeIncludesPRIdentity(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "https://github.com/o/r/pull/7",
+		Number:       7,
+		Title:        "Add auth",
+		SourceBranch: "feat/x/auth",
+		TargetBranch: "feat/x",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	got := msg.msgs[0]
+	if !strings.Contains(got, `PR #7 "Add auth" (feat/x/auth → feat/x)`) {
+		t.Fatalf("nudge missing PR identity: %q", got)
+	}
+	if !strings.Contains(got, "PR: https://github.com/o/r/pull/7") {
+		t.Fatalf("nudge missing PR URL: %q", got)
+	}
+}
+
+func TestPRObservation_MergedStaysLiveWhenAutoTerminateDisabled(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State == domain.ActivityExited {
+		t.Fatalf("merged PR should stay live when auto-terminate is disabled, got %+v", got)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_MergedUsesConfiguredTerminator(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+}
+
+func TestPRObservation_MergedTeardownFailureStaysLiveForRetry(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{err: errors.New("transient teardown failure")}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true})
+	if err == nil || !strings.Contains(err.Error(), "transient teardown failure") {
+		t.Fatalf("ApplyPRObservation err = %v, want teardown failure", err)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("failed teardown must not hide a live session: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestPRObservation_MergedRequiresConfiguredTerminator(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true})
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("ApplyPRObservation err = %v, want configuration error", err)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("missing terminator must not mark the session terminated: %+v", st.sessions["mer-1"])
+	}
+}
+
+// A session with one merged PR and one still-open PR must NOT terminate: the
+// completion bar is "no open PR remains AND at least one merged".
+func TestPRObservation_MergedWithOpenSiblingDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2"},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("session with an open sibling PR must stay alive, got %+v", got)
+	}
+	if terminator.calls != 0 {
+		t.Fatalf("terminator calls = %d, want 0", terminator.calls)
+	}
+}
+
+// Once the last open PR merges (all PRs now merged), the session terminates.
+func TestPRObservation_LastMergeTerminatesSession(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2", Merged: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr2", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+}
+
+// A closed PR that leaves the session with an open sibling and no merge does not
+// terminate; closing the last PR with no merge also does not terminate (nothing
+// shipped).
+func TestPRObservation_ClosedWithoutMergeDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Closed: true}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Closed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("a closed-without-merge PR must not terminate the session, got %+v", got)
+	}
+	if terminator.calls != 0 {
+		t.Fatalf("terminator calls = %d, want 0", terminator.calls)
+	}
+}
+
+// A PR stacked on an open parent (its target branch is the parent's source
+// branch) is exempt from the merge-conflict nudge: conflicts there are expected
+// until the parent merges.
+func TestPRObservation_StackedChildConflictSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "child", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("stacked child conflict should be suppressed, got %v", msg.msgs)
+	}
+}
+
+// The bottom-of-stack PR (not stacked on any open parent) still gets the
+// merge-conflict nudge even when it has open stacked children.
+func TestPRObservation_BottomOfStackConflictNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "parent", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("bottom-of-stack conflict should nudge, got %v", msg.msgs)
+	}
+}
+
+// TestPRObservation_DedupSurvivesManagerRestart simulates a daemon restart by
+// constructing a second Manager over the same store and asserts that an
+// identical PR observation does not re-fire the nudge — the dedup signature
+// must survive process restart, not just live in the Manager's maps.
+func TestPRObservation_DedupSurvivesManagerRestart(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "https://github.com/o/r/pull/1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+	}
+
+	first := &fakeMessenger{}
+	m1 := New(st, first)
+	if err := m1.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("first ApplyPRObservation: %v", err)
+	}
+	if len(first.msgs) != 1 {
+		t.Fatalf("first manager: want 1 nudge, got %d", len(first.msgs))
+	}
+	if got := st.signatures[o.URL]; got == "" {
+		t.Fatalf("signature was not persisted; want a non-empty JSON payload for %q", o.URL)
+	}
+
+	// Simulate daemon restart: the second Manager has no in-memory state but
+	// shares the same store, so it should hydrate seen/attempts from the
+	// persisted payload and suppress the re-send.
+	second := &fakeMessenger{}
+	m2 := New(st, second)
+	if err := m2.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyPRObservation: %v", err)
+	}
+	if len(second.msgs) != 0 {
+		t.Fatalf("post-restart manager re-nudged on identical observation, got %d msgs: %v", len(second.msgs), second.msgs)
+	}
+
+	// And a genuinely new signature (different log tail) still fires — proving
+	// the persisted state is per-signature, not a blanket "this PR was nudged".
+	o2 := o
+	o2.Checks = []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "different boom"}}
+	if err := m2.ApplyPRObservation(ctx, "mer-1", o2); err != nil {
+		t.Fatalf("third ApplyPRObservation: %v", err)
+	}
+	if len(second.msgs) != 1 {
+		t.Fatalf("new signature should send, got %d msgs", len(second.msgs))
+	}
+}
+
+func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	for _, url := range []string{"https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"} {
+		o := ports.PRObservation{
+			Fetched: true, URL: url, CI: domain.CIFailing,
+			Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		}
+		if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+			t.Fatalf("ApplyPRObservation for %s: %v", url, err)
+		}
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("distinct PRs should each get one nudge, got %d", len(msg.msgs))
+	}
+	if _, ok := st.signatures["https://github.com/o/r/pull/1"]; !ok {
+		t.Fatal("missing persisted signature for PR 1")
+	}
+	if _, ok := st.signatures["https://github.com/o/r/pull/2"]; !ok {
+		t.Fatal("missing persisted signature for PR 2")
+	}
+}
+
+func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+	result := ReviewResult{
+		RunID:          "run-1",
+		WorkerID:       "mer-1",
+		PRURL:          "https://github.com/o/r/pull/1",
+		TargetSHA:      "sha1",
+		Verdict:        domain.VerdictChangesRequested,
+		Body:           "fix the bug",
+		GithubReviewID: "98\x1b[2J765",
+	}
+
+	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("AO review nudge missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
+	}
+	if st.signatures[result.PRURL] == "" {
+		t.Fatal("AO review nudge did not persist sendOnce signature")
+	}
+
+	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("repeat ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+
+	result.RunID = "run-2"
+	result.TargetSHA = "sha2"
+	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("new pass ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
+		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+	// permission dialog stores blocked before sendOnce's just-in-time re-read
+	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
+	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
+	// delivered and the changes-requested feedback re-fires once unblocked.
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	bst := &blockOnNthGetStore{fakeStore: st, id: "mer-1", flipAt: 2}
+	msg := &fakeMessenger{}
+	m := New(bst, msg)
+	result := ReviewResult{
+		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
+	}
+
+	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliveryNoop {
+		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudge pasted into a session that went blocked before send: %v", msg.msgs)
+	}
+	if st.signatures[result.PRURL] != "" {
+		t.Fatal("suppressed nudge must not persist a sendOnce signature (it re-fires next observation)")
+	}
+}
+
+func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+	results := []ReviewResult{
+		{RunID: "run-2", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2", Verdict: domain.VerdictChangesRequested, Body: "fix tests", GithubReviewID: "102"},
+		{RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix auth", GithubReviewID: "101"},
+	}
+
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", results)
+	if err != nil {
+		t.Fatalf("ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{
+		"submitted 2 review(s) requesting changes",
+		"PR: https://github.com/o/r/pull/1",
+		"GitHub review: 101",
+		"Review body:\nfix auth",
+		"PR: https://github.com/o/r/pull/2",
+		"GitHub review: 102",
+		"Review body:\nfix tests",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("batch nudge missing %q: %q", want, got)
+		}
+	}
+	if st.signatures["https://github.com/o/r/pull/1"] == "" {
+		t.Fatal("batch nudge did not persist signature on anchor PR")
+	}
+
+	outcome, err = m.ApplyReviewBatch(ctx, "mer-1", "batch-1", results)
+	if err != nil {
+		t.Fatalf("repeat ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("repeat should suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", nil)
+	if err != nil {
+		t.Fatalf("ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+		t.Fatalf("empty batch should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+	}
+}
+
+func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
+	deliveredAt := time.Unix(100, 0).UTC()
+	tests := []struct {
+		name   string
+		result ReviewResult
+		rec    domain.SessionRecord
+	}{
+		{
+			name:   "approved",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
+			rec:    working("mer-1"),
+		},
+		{
+			name:   "already delivered",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
+			rec:    working("mer-1"),
+		},
+		{
+			name:   "terminated worker",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    func() domain.SessionRecord { r := working("mer-1"); r.IsTerminated = true; return r }(),
+		},
+		{
+			name:   "worker waiting input",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+		},
+		{
+			name:   "worker agent exited",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = tt.rec
+			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			if err != nil {
+				t.Fatalf("ApplyReviewResult: %v", err)
+			}
+			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+			}
+		})
+	}
+}
+
+func TestApplyTrackerFacts_TerminalStateMarksTerminated(t *testing.T) {
+	for _, state := range []domain.NormalizedIssueState{domain.IssueDone, domain.IssueCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = working("mer-1")
+			o := ports.TrackerObservation{
+				Fetched: true,
+				Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: state},
+			}
+			if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+				t.Fatalf("ApplyTrackerFacts: %v", err)
+			}
+			got := st.sessions["mer-1"]
+			if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+				t.Fatalf("want terminated/exited for state %q, got %+v", state, got)
+			}
+			if len(msg.msgs) != 0 {
+				t.Fatalf("terminal state should not nudge, got %v", msg.msgs)
+			}
+		})
+	}
+}
+
+func TestApplyTrackerFacts_AssigneeChangedIsLogOnly(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen, Assignee: "someone-else"},
+		Changed: ports.TrackerChanged{Assignee: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("assignee-only change must not mutate the session row, got %+v", st.sessions["mer-1"])
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("assignee-only change must not nudge, got %v", msg.msgs)
+	}
+}
+
+func TestApplyTrackerFacts_NewBotCommentNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "human-1", Author: "alice", Body: "human chime-in, must NOT nudge", IsBot: false},
+			{ID: "bot-1", Author: "ci-bot[bot]", Body: "please rerun the migration", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one bot-mention nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "please rerun the migration") {
+		t.Fatalf("nudge should include the bot comment body, got %q", msg.msgs[0])
+	}
+	if strings.Contains(msg.msgs[0], "human chime-in") {
+		t.Fatalf("nudge must not include human comments, got %q", msg.msgs[0])
+	}
+}
+
+func TestApplyTrackerFacts_NudgeSuppressedOnRepeat(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "bot-1", Author: "ci-bot[bot]", Body: "please rerun the migration", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("first ApplyTrackerFacts: %v", err)
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("repeat observation must dedup; got %d nudges: %v", len(msg.msgs), msg.msgs)
+	}
+
+	// A genuinely new bot comment still fires.
+	o.Comments = append(o.Comments, ports.TrackerCommentObservation{ID: "bot-2", Author: "ci-bot[bot]", Body: "now check the seed", IsBot: true})
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("third ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("new bot comment id should re-fire, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+func TestApplyTrackerFacts_BotCommentWithEmptyIDIsIgnored(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// Bot comment lacks an ID — without one we cannot dedup, and the
+	// zero-value signature collides with m.react.seen's empty default and
+	// would silently suppress every future nudge for this issue. The
+	// reducer must skip it entirely.
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "", Author: "ci-bot[bot]", Body: "no id, must be skipped", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("bot comment with empty ID must not nudge, got %v", msg.msgs)
+	}
+	// A subsequent, properly-formed bot comment must still nudge — the
+	// earlier empty-ID entry must not have polluted the dedup signature.
+	o.Comments = []ports.TrackerCommentObservation{
+		{ID: "bot-1", Author: "ci-bot[bot]", Body: "now with an id", IsBot: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("follow-up bot comment with real ID should nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+func TestApplyTrackerFacts_NotFetchedIsNoop(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", ports.TrackerObservation{Fetched: false}); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("not-fetched observation must not mutate state")
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("not-fetched observation must not nudge")
+	}
+}
+
+func TestApplyTrackerFacts_TerminatedSessionDoesNotRefireOrNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "bot-1", Body: "x", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("terminated session must not receive nudges, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	msg.err = errors.New("temporary send failure")
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
+		t.Fatal("want send error")
+	}
+	msg.err = nil
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want retry to send once, got %v", msg.msgs)
+	}
+}
+
+func TestActivity_FirstSignalStampsReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
+	// A same-state repeat (idle on an idle-seeded row) must still write: the
+	// receipt itself is the durable fact that clears no_signal.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.FirstSignalAt.IsZero() {
+		t.Fatalf("first signal not stamped: %+v", got)
+	}
+	stamped := got.FirstSignalAt
+	// Later signals must not move the receipt.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.FirstSignalAt.Equal(stamped) {
+		t.Fatalf("first signal moved: %v -> %v", stamped, got.FirstSignalAt)
+	}
+}
+
+func TestActivity_SameStateRepeatAfterReceiptIsNoOp(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now()
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("same-state repeat after receipt must not rewrite: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Hour)
+	st.sessions["mer-1"] = rec
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.FirstSignalAt.IsZero() {
+		t.Fatalf("spawn/restore must clear the receipt, got %+v", got)
+	}
+}
+
+type fakeNotificationSink struct {
+	intents     []ports.NotificationIntent
+	resolutions []ports.NotificationResolution
+	err         error
+}
+
+func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.intents = append(f.intents, intent)
+	return f.err
+}
+
+func (f *fakeNotificationSink) Resolve(_ context.Context, res ports.NotificationResolution) error {
+	f.resolutions = append(f.resolutions, res)
+	return f.err
+}
+
+func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	intent := sink.intents[0]
+	if intent.Type != domain.NotificationNeedsInput || intent.SessionID != "mer-1" || intent.ProjectID != "mer" || intent.SessionDisplayName != "checkout-flow" {
+		t.Fatalf("intent = %+v", intent)
+	}
+}
+
+// The user answering the agent is what resolves a needs-input notification —
+// there is no manual acknowledgement anywhere in the flow.
+func TestActivity_LeavingNeedsInputResolvesNotification(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		next domain.ActivityState
+	}{
+		{name: "answered", next: domain.ActivityActive},
+		{name: "went idle", next: domain.ActivityIdle},
+		{name: "agent exited", next: domain.ActivityExited},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer",
+				Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)},
+				FirstSignalAt: now.Add(-time.Minute),
+			}
+
+			if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: tt.next}); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != 1 {
+				t.Fatalf("resolutions = %+v, want 1", sink.resolutions)
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationNeedsInput || got.SessionID != "mer-1" || !got.ResolvedAt.Equal(now) {
+				t.Fatalf("resolution = %+v", got)
+			}
+		})
+	}
+}
+
+// An in-family escalation is still the same pause: nothing was answered, so
+// there is nothing to resolve.
+func TestActivity_WaitingInputToBlockedDoesNotResolve(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now},
+		FirstSignalAt: now,
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 0 {
+		t.Fatalf("resolutions = %+v, want none", sink.resolutions)
+	}
+}
+
+// Terminating a paused session also clears its ping: nobody is waiting on the
+// user any more.
+func TestMarkTerminated_ResolvesNeedsInputNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now},
+	}
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 1 || sink.resolutions[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("resolutions = %+v", sink.resolutions)
+	}
+}
+
+func TestActivity_WaitingInputSameStateDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("same-state waiting_input emitted %+v", sink.intents)
+	}
+}
+
+func TestActivity_BlockedTransitionEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1 (blocked is a needs-input entry)", len(sink.intents))
+	}
+	if sink.intents[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("intent type = %q, want needs_input", sink.intents[0].Type)
+	}
+}
+
+func TestActivity_WaitingInputToBlockedDoesNotReNotify(t *testing.T) {
+	// waiting_input -> blocked is an in-family escalation: the user was already
+	// pinged once for this pause, so no second notification and no telemetry
+	// entry/exit pair.
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	tele := &telemetrySink{}
+	m := New(st, nil, WithNotificationSink(sink), WithTelemetry(tele))
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("in-family escalation emitted notification: %+v", sink.intents)
+	}
+	if len(tele.events) != 0 {
+		t.Fatalf("in-family escalation emitted telemetry: %+v", tele.events)
+	}
+}
+
+func TestActivity_BlockedEntryAndExitEmitTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want entered/exited", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v (family events keep the waiting_input_* names)", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[0].Payload["state"]; got != "blocked" {
+		t.Fatalf("entered payload state = %#v, want blocked", got)
+	}
+}
+
+func TestSCMObservation_ReadyToMergeSuppressedWhileBlocked(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	st.sessions["mer-1"] = rec
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("blocked session emitted ready notification: %+v", sink.intents)
+	}
+}
+
+// blockOnNthGetStore wraps fakeStore and flips a session to ActivityBlocked on
+// the Nth GetSession call, reproducing the reactions TOCTOU: the handler's
+// entry guard (1st read) sees the session working, but a permission hook stores
+// blocked before sendOnce's just-in-time re-read (2nd read).
+type blockOnNthGetStore struct {
+	*fakeStore
+	id     domain.SessionID
+	reads  int
+	flipAt int
+}
+
+func (s *blockOnNthGetStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	s.reads++
+	if s.reads == s.flipAt {
+		if rec, ok := s.sessions[s.id]; ok {
+			rec.Activity.State = domain.ActivityBlocked
+			s.sessions[s.id] = rec
+		}
+	}
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func TestSendOnce_NoNudgeWhenBlockedAppearsBeforeSend(t *testing.T) {
+	// The entry guard in ApplyPRObservation reads the session working (read #1);
+	// a permission dialog then stores blocked before sendOnce's just-in-time
+	// re-read (read #2), which must suppress the paste+Enter into the dialog.
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	bst := &blockOnNthGetStore{fakeStore: st, id: "mer-1", flipAt: 2}
+	msg := &fakeMessenger{}
+	m := New(bst, msg)
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudge sent into a session that went blocked before send: %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_NudgesSuppressedWhileBlocked(t *testing.T) {
+	// A blocked session must not receive automated CI/review nudges: injected
+	// text could interact with the pending permission dialog.
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	st.sessions["mer-1"] = rec
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("blocked session got nudged: %v", msg.msgs)
+	}
+}
+
+func TestActivity_TerminatedSessionDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("terminated session emitted %+v", sink.intents)
+	}
+}
+
+func TestSCMObservation_Notifications(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obs  ports.SCMObservation
+		want domain.NotificationType
+	}{
+		{
+			name: "ready",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, Title: "checkout"}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+			want: domain.NotificationReadyToMerge,
+		},
+		{
+			name: "merged",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/2", Number: 2, Merged: true}},
+			want: domain.NotificationPRMerged,
+		},
+		{
+			name: "closed",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/3", Number: 3, Closed: true}},
+			want: domain.NotificationPRClosedUnmerged,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			st.sessions["mer-1"] = working("mer-1")
+			if err := m.ApplySCMObservation(ctx, "mer-1", tc.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.intents) != 1 {
+				t.Fatalf("intents = %d, want 1", len(sink.intents))
+			}
+			if got := sink.intents[0]; got.Type != tc.want || got.PRURL != tc.obs.PR.URL || got.PRNumber != tc.obs.PR.Number {
+				t.Fatalf("intent = %+v, want type %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// Merging the PR is what resolves a ready-to-merge ping. So is the PR ceasing
+// to be mergeable — either way there is nothing left for the user to merge.
+func TestSCMObservation_ResolvesReadyToMergeWhenNoLongerReady(t *testing.T) {
+	ready := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	merged := ready
+	merged.PR.Merged = true
+	ciBroke := ready
+	ciBroke.CI.Summary = string(domain.CIFailing)
+
+	for _, tt := range []struct {
+		name string
+		obs  ports.SCMObservation
+		want int
+	}{
+		{name: "still ready", obs: ready, want: 0},
+		{name: "merged", obs: merged, want: 1},
+		{name: "ci went red", obs: ciBroke, want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			st.sessions["mer-1"] = working("mer-1")
+
+			if err := m.ApplySCMObservation(ctx, "mer-1", tt.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != tt.want {
+				t.Fatalf("resolutions = %+v, want %d", sink.resolutions, tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationReadyToMerge || got.PRURL != tt.obs.PR.URL {
+				t.Fatalf("resolution = %+v", got)
+			}
+		})
+	}
+}
+
+func TestSCMObservation_NotReadyWhenCIOrReviewBlocks(t *testing.T) {
+	for _, obs := range []ports.SCMObservation{
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIFailing)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIPending)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIUnknown)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewChangesRequest)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+	} {
+		st := newFakeStore()
+		sink := &fakeNotificationSink{}
+		m := New(st, nil, WithNotificationSink(sink))
+		st.sessions["mer-1"] = working("mer-1")
+		if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.intents) != 0 {
+			t.Fatalf("blocked PR emitted %+v", sink.intents)
+		}
+	}
+}
+
+func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	st.sessions["mer-1"] = rec
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
+	}
+}
+
+func TestActivity_WorkerIdleDoesNotNudgeOrchestrator(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-8"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("worker activity = %q, want idle", got)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("orchestrator nudges = %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_OrchestratorIdleDoesNotNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-orch"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("orchestrator activity = %q, want idle", got)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("orchestrator idle self-nudged: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerWaitingToIdleDoesNotNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("waiting_input->idle nudged: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerIdleOrchestratorBlockedSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged a blocked orchestrator: %d, want 0", len(msg.msgs))
+	}
+}
+
+func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
+	m, st, msg := newManager()
+	now := time.Now()
+	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudged a busy orchestrator: %d, want 0", len(msg.msgs))
+	}
+}
+
+// fakeLifecycleContainerReaper is a minimal ports.ContainerReaper test double.
+type fakeLifecycleContainerReaper struct {
+	sessions []domain.SessionID
+	removed  int
+	err      error
+}
+
+func (f *fakeLifecycleContainerReaper) ReapSessionContainers(_ context.Context, id domain.SessionID) (int, error) {
+	f.sessions = append(f.sessions, id)
+	return f.removed, f.err
+}
+
+// fakeProjectConfigLoader is a minimal projectConfigLoader test double.
+type fakeProjectConfigLoader struct {
+	projects map[string]domain.ProjectRecord
+	err      error
+}
+
+func (f *fakeProjectConfigLoader) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	if f.err != nil {
+		return domain.ProjectRecord{}, false, f.err
+	}
+	rec, ok := f.projects[id]
+	return rec, ok, nil
+}
+
+func newManagerWithContainerReaper(cr ports.ContainerReaper, pl projectConfigLoader) (*Manager, *fakeStore, *fakeMessenger) {
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithContainerReaper(cr, pl))
+	return m, st, msg
+}
+
+// TestMarkTerminated_ReapsContainers is the #2652 regression for hooking the
+// shared teardown path: MarkTerminated must reap the terminated session's
+// containers, covering every terminal-state path (Kill, daemon shutdown,
+// Cleanup, RetireForReplacement, tracker-driven termination) through this one
+// choke point rather than only explicit ao session kill.
+func TestMarkTerminated_ReapsContainers(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{removed: 2}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1, got %v", cr.sessions)
+	}
+}
+
+// TestMarkTerminated_ContainerReapFailureDoesNotFailTermination asserts the
+// best-effort contract: a container reaper error must never fail
+// MarkTerminated, matching every other best-effort teardown step in AO.
+func TestMarkTerminated_ContainerReapFailureDoesNotFailTermination(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{err: errors.New("docker rm: permission denied")}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatalf("a container reap failure must not fail MarkTerminated: %v", err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated {
+		t.Fatal("session must still be marked terminated despite the reap failure")
+	}
+	if len(cr.sessions) != 1 {
+		t.Fatalf("expected container reap to still be attempted, got %v", cr.sessions)
+	}
+}
+
+// TestMarkTerminated_SkipsReapWhenProjectDisables covers the project-level
+// opt-out: ContainerReap.Disabled must suppress the reap without affecting
+// termination.
+func TestMarkTerminated_SkipsReapWhenProjectDisables(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{ContainerReap: domain.ContainerReapConfig{Disabled: true}}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("expected no reap call when project disables container reap, got %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when reap is disabled")
+	}
+}
+
+// TestMarkTerminated_ProjectLoadErrorSkipsRatherThanReaps is the regression
+// for failing open: a project-config load error must skip reaping rather than
+// guess and reap anyway. This package's stated bias throughout is to spare on
+// ambiguity, never to reap on it.
+func TestMarkTerminated_ProjectLoadErrorSkipsRatherThanReaps(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{err: errors.New("db unavailable")}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("a project-load error must skip reaping (spare on ambiguity), got calls: %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when the project lookup fails")
+	}
+}
+
+// TestMarkTerminated_NilReaperSkipsWithoutProjectLookup confirms nil wiring
+// (the common case — most AO installs run without Docker) skips reaping
+// cleanly without even attempting a project lookup.
+func TestMarkTerminated_NilReaperSkipsWithoutProjectLookup(t *testing.T) {
+	m, st, _ := newManager() // newManager wires no container reaper at all
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated with no reaper wired")
+	}
+}
+
+// TestMarkTerminated_MissingProjectSkipsRatherThanReaps is the regression for
+// failing open on a missing project record: GetProject returning ok=false,
+// err=nil is ambiguity (AO cannot know whether ContainerReap.Disabled would
+// have applied), not a green light to reap. Must be treated the same as the
+// error path.
+func TestMarkTerminated_MissingProjectSkipsRatherThanReaps(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{}} // no "mer" entry: ok=false, err=nil
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("a missing project record must skip reaping (spare on ambiguity), got calls: %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when the project record is missing")
+	}
+}
+
+// TestRuntimeObservation_ConfirmedDeathReapsContainers is the regression for
+// the review finding that ApplyRuntimeObservation's reaper-driven terminal
+// transition (crash/SIGKILL detected by the runtime reaper) bypassed
+// MarkTerminated entirely and left containers unreaped. This confirms the
+// container leg of #2652 now fires on this path too, not just explicit kill.
+func TestRuntimeObservation_ConfirmedDeathReapsContainers(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{removed: 1}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1 on reaper-observed death, got %v", cr.sessions)
+	}
+}
+
+// TestRuntimeObservation_WorkloadDeathAloneDoesNotReap confirms the
+// non-terminal workload-dead branch (runtime alive, workload dead) does NOT
+// trigger a container reap — only a confirmed session termination should.
+func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{LaunchID: "launch-1", Runtime: ports.ProbeAlive, Workload: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated {
+		t.Fatal("workload death alone must not terminate the session")
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
+	}
+}

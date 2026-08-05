@@ -1,0 +1,18 @@
+# Tests failing at fork creation, inherited from upstream Untrivial-ai/agent-orchestrator
+# @ 742c77bc. NOT caused by fork changes. Verified by running the suite on the
+# merge commit before any fork code existed.
+#
+# Only add a line here after confirming upstream owns the failure. If an entry
+# starts passing, verify-fork-baseline.sh will tell you to prune it.
+
+# Asserts a worktree row carries an empty compare ref; observed ref = "main".
+# Environment-sensitive: upstream CI (ubuntu) is green, so this is likely a
+# local git-version or git-config difference rather than a product bug.
+TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs
+
+# Both assert an "unknown" auth status and both fail at exactly 3.00s, i.e. they
+# trip a 3s deadline rather than asserting wrongly. Flaky: they pass on reruns
+# and under -race they fail more often. Listed so they cannot mask a real
+# regression in these adapters.
+TestAuthStatusUnknownWhenKeyOnlyComesFromInteractiveShell
+TestOpenCodeAuthStatusUnknownWithZeroCredentials

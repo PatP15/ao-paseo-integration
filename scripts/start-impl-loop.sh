@@ -26,6 +26,46 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+WORKER_PROVIDER="${WORKER_PROVIDER:-codex/gpt-5.6-sol}"
+VERIFY_PROVIDER="${VERIFY_PROVIDER:-claude/claude-opus-5}"
+
+# Preflight: an unknown model wedges the loop instead of failing.
+#
+# The first run of this script used codex/gpt-5.4, which does not exist. Paseo
+# minted a worker agent id, recorded it on iteration 1, and then reported
+# "Agent not found" for that same id — leaving the loop in `running` with no
+# worker, no outcome, and no error, where it would have sat until --max-time.
+# Exactly the orphan class documented in docs/paseo-integration/RECOVERY.md §1.2:
+# an id exists in one system and not the other, and nothing reconciles them.
+#
+# So validate before launching. `paseo provider models <p>` is the authority;
+# hardcoded model names in skills and docs go stale.
+check_model() {
+    local spec="$1" label="$2" provider model
+    provider="${spec%%/*}"
+    model="${spec#*/}"
+    if [ "${provider}" = "${model}" ]; then
+        printf 'refusing: %s provider %q has no model; use provider/model\n' "${label}" "${spec}" >&2
+        exit 1
+    fi
+    if ! paseo provider models "${provider}" --json 2>/dev/null \
+         | python3 -c 'import json,sys
+rows = json.load(sys.stdin)
+rows = rows if isinstance(rows, list) else rows.get("models", [])
+sys.exit(0 if sys.argv[1] in {r.get("id") for r in rows} else 1)' "${model}"; then
+        printf 'refusing: %s model %q is not available from provider %q.\n' \
+            "${label}" "${model}" "${provider}" >&2
+        printf 'available:\n' >&2
+        paseo provider models "${provider}" 2>/dev/null | sed 's/^/  /' >&2
+        exit 1
+    fi
+    printf '  ok  %s: %s\n' "${label}" "${spec}"
+}
+
+printf 'Preflight\n'
+check_model "${WORKER_PROVIDER}" worker
+check_model "${VERIFY_PROVIDER}" verifier
+
 # Single-quoted on purpose: the backticks below are literal prompt text naming
 # shell commands for the agent to run, not command substitutions for this script.
 # shellcheck disable=SC2016
@@ -80,8 +120,8 @@ Report done=false with specific evidence if any check fails, and state plainly w
 
 exec paseo loop run \
     --name ao-paseo-prs \
-    --provider codex/gpt-5.4 \
-    --verify-provider claude/opus \
+    --provider "${WORKER_PROVIDER}" \
+    --verify-provider "${VERIFY_PROVIDER}" \
     --max-iterations 8 \
     --max-time 3h \
     --archive \

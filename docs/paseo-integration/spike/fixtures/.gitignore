@@ -1,0 +1,4 @@
+# Fixtures are captured by run-spike.sh and are version-specific artifacts.
+# The redacted JSON IS committed (it is the version contract); transient files are not.
+*.stderr.txt
+*.redacted

@@ -105,12 +105,29 @@ fi
 # --- generated-artifact drift ---------------------------------------------
 if [ "${WHAT}" = "all" ] || [ "${WHAT}" = "drift" ]; then
     hdr "generated artifact drift"
-    if git -C "${REPO}" diff --quiet -- \
-        backend/internal/storage/sqlite/gen frontend/src/api/schema.ts \
-        backend/internal/httpd/apispec/openapi.yaml 2>/dev/null; then
-        ok "no uncommitted generated drift"
+    # Regenerate and compare, rather than inspecting git state.
+    #
+    # The first version of this check was `git diff --quiet -- gen/`, which only
+    # sees UNSTAGED changes. A worker that had staged everything sailed through
+    # it vacuously — the check could not have caught stale generated code, which
+    # was its entire purpose. Worse, checking against HEAD instead would fail
+    # every legitimate in-progress storage PR, i.e. exactly when it needs to pass.
+    #
+    # Regenerating is the only formulation independent of staging state: if sqlc
+    # output changes, gen/ was stale relative to the .sql sources, full stop. It
+    # is idempotent when correct, and when it is not, it leaves the corrected
+    # files in the tree, which is the fix anyway.
+    before="$(git -C "${REPO}" status --porcelain -- backend/internal/storage/sqlite/gen)"
+    if (cd "${REPO}" && npm run sqlc >/dev/null 2>&1); then
+        after="$(git -C "${REPO}" status --porcelain -- backend/internal/storage/sqlite/gen)"
+        if [ "${before}" = "${after}" ]; then
+            ok "sqlc output matches queries (gen/ not stale)"
+        else
+            bad "gen/ was STALE — regenerating changed it. Review and commit gen/ with the query change."
+            git -C "${REPO}" status --porcelain -- backend/internal/storage/sqlite/gen | sed 's/^/       /'
+        fi
     else
-        bad "generated artifacts differ from committed state — run 'npm run sqlc' / 'npm run api' and commit together"
+        bad "npm run sqlc failed"
     fi
 fi
 

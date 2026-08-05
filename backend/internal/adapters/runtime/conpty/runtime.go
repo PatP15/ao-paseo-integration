@@ -17,6 +17,15 @@ import (
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
 
+// SupervisedProcessInspector is discovered by type assertion in
+// observe/reaper.New, so losing it degrades workload-exit detection silently.
+// Asserted here so that cannot happen without a build failure.
+//
+// This adapter intentionally does NOT implement ports.RuntimeRestarter:
+// session_manager.restartRuntime falls back to Destroy+Create when the
+// assertion fails, which is the correct behaviour on Windows.
+var _ ports.SupervisedProcessInspector = (*Runtime)(nil)
+
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 

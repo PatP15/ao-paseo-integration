@@ -70,6 +70,12 @@ func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimePro
 		clock:    cfg.Clock,
 		logger:   cfg.Logger,
 	}
+	// Optional capability, probed by type assertion on the concrete value. A
+	// runtime that does not implement it leaves r.workload nil, which silently
+	// disables Runtime=ProbeAlive/Workload=ProbeDead facts — so a session whose
+	// agent process exits inside a still-live pane never leaves "working".
+	// runtimeselect.Runtime keeps this method in its union interface, and
+	// runtimeselect's tests assert it, so a decorator cannot drop it unnoticed.
 	if workload, ok := runtime.(ports.SupervisedProcessInspector); ok {
 		r.workload = workload
 	}

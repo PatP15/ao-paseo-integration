@@ -73,6 +73,14 @@ type Runtime struct {
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.Attacher = (*Runtime)(nil)
 
+// Optional capabilities. Both are discovered by type assertion on the concrete
+// value rather than by a declared parameter type — SupervisedProcessInspector in
+// observe/reaper.New, RuntimeRestarter in session_manager.restartRuntime — so
+// dropping either one degrades behaviour silently instead of failing to build.
+// Asserting them here makes the contract explicit and load-bearing.
+var _ ports.SupervisedProcessInspector = (*Runtime)(nil)
+var _ ports.RuntimeRestarter = (*Runtime)(nil)
+
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 }

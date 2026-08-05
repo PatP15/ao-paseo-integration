@@ -694,6 +694,15 @@ func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, st
 	return nil
 }
 
+// IsSupervisedProcessAlive keeps this double honest about the capability the
+// real runtimes carry. observe/reaper probes it by type assertion, so a double
+// that omits it silently exercises the workload=nil path instead of the wired
+// one — which is the difference between "process exited inside a live pane" and
+// "session renders working forever" going untested.
+func (r *selectableRuntime) IsSupervisedProcessAlive(context.Context, ports.RuntimeHandle, ports.SupervisedProcessRef) (bool, error) {
+	return true, nil
+}
+
 func writeFakeExecutable(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {

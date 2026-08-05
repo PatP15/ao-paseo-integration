@@ -95,8 +95,11 @@ if env -u PASEO_PASSWORD "${PASEO_BIN}" --host "${SPIKE_HOST}" ls --json >/dev/n
 else
     pass S7a "unauthenticated request rejected"
 fi
-capture s7-ls-authed pz ls -a -g --json && pass S7b "host:port + PASEO_PASSWORD works" \
-    || fail S7b "authenticated ls failed"
+if capture s7-ls-authed pz ls -a -g --json; then
+    pass S7b "host:port + PASEO_PASSWORD works"
+else
+    fail S7b "authenticated ls failed"
+fi
 
 # tcp:// form with an inline password.
 if env -u PASEO_PASSWORD "${PASEO_BIN}" \

@@ -29,6 +29,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 WORKER_PROVIDER="${WORKER_PROVIDER:-codex/gpt-5.6-sol}"
 VERIFY_PROVIDER="${VERIFY_PROVIDER:-claude/claude-opus-5}"
 
+# Fallback worker for when the primary provider runs out of credit or hits a
+# usage limit. `paseo loop run` has no built-in provider failover — a usage
+# error simply fails the iteration — so this is a re-launch target, not an
+# automatic switch:
+#
+#   WORKER_PROVIDER="${FALLBACK_WORKER_PROVIDER}" ./scripts/start-impl-loop.sh
+#
+# Work already committed by earlier iterations is picked up automatically: the
+# worker prompt reads git log and IMPLEMENTATION_PLAN.md to choose the next
+# unblocked PR, so a re-launch resumes rather than restarts.
+#
+# Note this makes worker and verifier the same provider, losing the
+# cross-provider blind-spot coverage. Acceptable as a fallback; not a default.
+FALLBACK_WORKER_PROVIDER="${FALLBACK_WORKER_PROVIDER:-claude/claude-opus-5}"
+
 # Preflight: an unknown model wedges the loop instead of failing.
 #
 # The first run of this script used codex/gpt-5.4, which does not exist. Paseo

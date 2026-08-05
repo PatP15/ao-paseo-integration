@@ -12,6 +12,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AuditEvent struct {
+	ID          string
+	EventType   string
+	ActorType   string
+	ActorID     string
+	SubjectType string
+	SubjectID   string
+	DetailJson  string
+	CreatedAt   string
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
@@ -19,6 +30,82 @@ type ChangeLog struct {
 	EventType cdc.EventType
 	Payload   string
 	CreatedAt time.Time
+}
+
+type ExecutionCommand struct {
+	ID             string
+	SessionID      string
+	HostID         string
+	CommandType    string
+	PayloadJson    string
+	IdempotencyKey string
+	Sequence       int64
+	State          string
+	AttemptCount   int64
+	NextAttemptAt  string
+	LastError      string
+	CreatedAt      string
+	AcknowledgedAt string
+}
+
+type ExecutionEvent struct {
+	ID              string
+	SessionID       string
+	HostID          string
+	LaunchID        string
+	ProtocolEventID string
+	ProtocolSeq     sql.NullInt64
+	EventType       string
+	Transport       string
+	PayloadJson     string
+	PayloadSha256   string
+	RawLine         string
+	ObservedAt      string
+	IngestedAt      string
+	Applied         int64
+}
+
+type ExecutionHost struct {
+	ID                    string
+	Name                  string
+	BackendType           string
+	Transport             string
+	Endpoint              string
+	EndpointSecretRef     string
+	TrustZone             string
+	Enabled               int64
+	MaxConcurrentSessions int64
+	ServerID              string
+	PaseoVersion          string
+	RequiresNoMcp         int64
+	RequiresNoRelay       int64
+	LastSuccessfulProbeAt string
+	LastFailedProbeAt     string
+	LastProbeError        string
+	CreatedAt             string
+	UpdatedAt             string
+}
+
+type ExecutionHostCapability struct {
+	HostID     string
+	Capability string
+}
+
+type HumanQuestion struct {
+	ID                 string
+	SessionID          string
+	WorkItemID         sql.NullString
+	Source             string
+	ExternalQuestionID string
+	Question           string
+	Recommendation     string
+	OptionsJson        string
+	State              string
+	Answer             string
+	AnsweredBy         string
+	AnsweredAt         string
+	DeliveryCommandID  sql.NullString
+	CreatedAt          string
 }
 
 type Notification struct {
@@ -136,6 +223,18 @@ type Project struct {
 	Kind          string
 }
 
+type ProjectHostBinding struct {
+	ProjectID    string
+	HostID       string
+	HostRepoPath string
+	BaseBranch   string
+	Priority     int64
+	Enabled      int64
+	SetupProfile string
+	CreatedAt    string
+	UpdatedAt    string
+}
+
 type Review struct {
 	ID               string
 	SessionID        domain.SessionID
@@ -192,6 +291,31 @@ type Session struct {
 	DiffBaseRef        string
 }
 
+type SessionBrief struct {
+	ID                string
+	SessionID         string
+	Version           int64
+	SchemaVersion     string
+	BriefJson         string
+	BriefSha256       string
+	ReportNonce       string
+	CreatedAt         string
+	SupersedesBriefID sql.NullString
+}
+
+type SessionCheckpoint struct {
+	ID                 string
+	SessionID          string
+	Sequence           int64
+	Summary            string
+	CompletedStepsJson string
+	RemainingStepsJson string
+	TestEvidenceJson   string
+	CommitSha          string
+	BranchPushed       int64
+	CreatedAt          string
+}
+
 type SessionCleanupFact struct {
 	SessionID            domain.SessionID
 	SessionGeneration    int64
@@ -201,6 +325,35 @@ type SessionCleanupFact struct {
 	LastAttemptAt        sql.NullTime
 	NextAttemptAt        sql.NullTime
 	FailureCode          string
+}
+
+type SessionExecutionBinding struct {
+	SessionID              string
+	WorkItemID             sql.NullString
+	BackendType            string
+	HostID                 string
+	ExternalWorkspaceID    string
+	ExternalAgentID        string
+	ExternalParentAgentID  string
+	BoundServerID          string
+	WorkspaceTitle         string
+	IntentID               string
+	Attempt                int64
+	LabelsWrittenJson      string
+	BranchName             string
+	HostWorkspacePath      string
+	Provider               string
+	Model                  string
+	Mode                   string
+	DispatchGeneration     int64
+	LaunchID               string
+	TranscriptBytes        int64
+	TranscriptPrefixSha256 string
+	TerminalID             string
+	TerminalLinesConsumed  int64
+	LastObservedAt         string
+	CreatedAt              string
+	ArchivedAt             string
 }
 
 type SessionWorktree struct {
@@ -233,6 +386,44 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type WorkItem struct {
+	ID                     string
+	ProjectID              string
+	ParentWorkItemID       sql.NullString
+	Title                  string
+	Body                   string
+	AcceptanceCriteriaJson string
+	AllowedScopeJson       string
+	ExcludedScopeJson      string
+	RiskLevel              string
+	PolicyProfileID        string
+	ApprovalState          string
+	LifecycleFact          string
+	Priority               int64
+	CreatedByType          string
+	CreatedByID            string
+	ApprovedBy             string
+	ApprovedAt             string
+	CreatedAt              string
+	UpdatedAt              string
+}
+
+type WorkItemDep struct {
+	WorkItemID        string
+	RelatedWorkItemID string
+	Relationship      string
+}
+
+type WorkItemSession struct {
+	WorkItemID    string
+	SessionID     string
+	Role          string
+	AttemptNumber int64
+	IsActiveOwner int64
+	CreatedAt     string
+	ReleasedAt    string
 }
 
 type WorkspaceRepo struct {

@@ -168,6 +168,8 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		facts.Runtime = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
+	case !alive && r.externalDeadProbeIsAmbiguous(ctx, sess.ID):
+		facts.Runtime = ports.ProbeFailed
 	case !alive:
 		facts.Runtime = ports.ProbeDead
 	default:

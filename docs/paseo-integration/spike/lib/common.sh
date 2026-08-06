@@ -45,15 +45,48 @@ pz() {
         *) die "SPIKE_HOST='${SPIKE_HOST}' has no colon; paseo would silently use the LOCAL daemon." ;;
     esac
 
+    # Target the throwaway daemon via PASEO_HOST rather than the --host flag.
+    #
+    # --host is a PER-SUBCOMMAND option, not a global one: `paseo --host X ls`
+    # fails with "unknown option '--host'", while `paseo ls --host X` works.
+    # The first version of this wrapper used the former and every authenticated
+    # call in the spike failed — which read as an auth failure and sent me
+    # debugging Paseo's password handling, which was fine all along.
+    #
+    # The env var sidesteps positioning entirely, including for two-word
+    # subcommands like `workspace create` and commands taking positionals like
+    # `terminal capture <id>`. It is an explicit override here, not an inherited
+    # value; every other PASEO_* variable is still scrubbed so a leaked
+    # PASEO_AGENT_ID cannot silently reparent agents.
     env -u PASEO_AGENT_ID -u PASEO_WORKSPACE_ID -u PASEO_HOME -u PASEO_LISTEN \
-        -u PASEO_SERVER_ID -u PASEO_HOST \
+        -u PASEO_SERVER_ID \
+        PASEO_HOST="${SPIKE_HOST}" \
         PASEO_PASSWORD="${SPIKE_PASSWORD}" \
-        "${PASEO_BIN}" --host "${SPIKE_HOST}" "$@"
+        "${PASEO_BIN}" "$@"
 }
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+
+# jcheck <step-id> <pass-msg> <fail-msg> <<'PY' … PY
+#
+# Runs an inline python assertion and distinguishes THREE outcomes, not two:
+# pass (0), a real negative finding (1), and a HARNESS ERROR (2) — a traceback,
+# a missing env var, malformed JSON. The distinction matters because the first
+# spike run reported "S3 --title did NOT round-trip" and "S2a label lookup did
+# not return exactly one agent" when the truth was a KeyError on an unexported
+# shell variable. Both read as damning findings about Paseo. Neither was.
+jcheck() {
+    local id="$1" passmsg="$2" failmsg="$3" out rc
+    out="$(python3 2>&1)" && rc=0 || rc=$?
+    case "${rc}" in
+        0) pass "${id}" "${passmsg}" ;;
+        1) fail "${id}" "${failmsg}" ;;
+        *) fail "${id}" "HARNESS ERROR (not a Paseo finding): ${out##*$'\n'}"
+           printf '%s\n' "${out}" | sed 's/^/       /' >&2 ;;
+    esac
+}
 
 log()  { printf '  %s\n' "$*"; }
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }

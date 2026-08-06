@@ -31,8 +31,14 @@ SPIKE_HOST="127.0.0.1:${SPIKE_PORT}"
 SPIKE_PASSWORD="${SPIKE_PASSWORD:-spike-$$-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')}"
 FIXTURES="${HERE}/fixtures"
 VERDICTS="${SPIKE_ROOT}/verdicts.tsv"
+# Exported, not merely readonly: the inline python3 heredocs below read FIXTURES
+# and VERDICTS via os.environ, and a shell variable that is not exported is
+# invisible to a child process. Without this they raise KeyError and the step
+# reports FAIL — which reads as "Paseo does not support this" rather than
+# "the harness could not find its own fixture directory".
 readonly PASEO_BIN SPIKE_ROOT SPIKE_HOME SPIKE_REPO SPIKE_PORT SPIKE_HOST
 readonly SPIKE_PASSWORD FIXTURES VERDICTS
+export FIXTURES VERDICTS SPIKE_ROOT SPIKE_HOST
 
 # shellcheck source=lib/common.sh
 . "${HERE}/lib/common.sh"
@@ -79,7 +85,9 @@ for _ in $(seq 1 40); do
 done
 curl -fsS "http://${SPIKE_HOST}/api/health" >"${FIXTURES}/s6-health.json" \
     || die "throwaway daemon did not come up; see ${SPIKE_ROOT}/daemon.out"
-curl -fsS "http://${SPIKE_HOST}/api/status" >"${FIXTURES}/s6-status.json" || true
+# /api/health is the ONLY auth-exempt route; /api/status needs the bearer token.
+curl -fsS -H "Authorization: Bearer ${SPIKE_PASSWORD}" \
+    "http://${SPIKE_HOST}/api/status" >"${FIXTURES}/s6-status.json" || true
 
 SPIKE_SERVER_ID=$(python3 -c 'import json;print(json.load(open("'"${FIXTURES}"'/s6-status.json")).get("serverId",""))' 2>/dev/null || echo "")
 log "throwaway serverId=${SPIKE_SERVER_ID:-unknown}"
@@ -88,12 +96,20 @@ pass S6a "throwaway daemon up on ${SPIKE_HOST}"
 # --- S7: auth behaviour ----------------------------------------------------
 step "S7  Remote targeting and auth"
 
-# Without a password the request should be rejected. If it is NOT, that is a
-# finding: it means the password did not take.
-if env -u PASEO_PASSWORD "${PASEO_BIN}" --host "${SPIKE_HOST}" ls --json >/dev/null 2>&1; then
+# Without a password the request must be rejected. Assert on the REASON, not
+# merely on a non-zero exit: the first run of this spike "passed" this check
+# because every invocation was dying on `unknown option '--host'` (the flag is
+# per-subcommand, not global), which is indistinguishable from an auth rejection
+# if you only look at the exit status.
+s7a_out="$(env -u PASEO_PASSWORD -u PASEO_HOST "${PASEO_BIN}" ls --host "${SPIKE_HOST}" --json 2>&1 || true)"
+if printf '%s' "${s7a_out}" | grep -qi "unknown option"; then
+    fail S7a "harness bug, not an auth result: ${s7a_out}"
+elif printf '%s' "${s7a_out}" | grep -qiE "auth|unauthor|401|password"; then
+    pass S7a "unauthenticated request rejected with an auth error"
+elif [ "${s7a_out}" = "[]" ]; then
     fail S7a "unauthenticated request SUCCEEDED against a password-protected daemon"
 else
-    pass S7a "unauthenticated request rejected"
+    pass S7a "unauthenticated request rejected: ${s7a_out}"
 fi
 if capture s7-ls-authed pz ls -a -g --json; then
     pass S7b "host:port + PASEO_PASSWORD works"
@@ -101,9 +117,11 @@ else
     fail S7b "authenticated ls failed"
 fi
 
-# tcp:// form with an inline password.
-if env -u PASEO_PASSWORD "${PASEO_BIN}" \
-       --host "tcp://${SPIKE_HOST}?password=${SPIKE_PASSWORD}" ls --json >/dev/null 2>&1; then
+# tcp:// form carrying the password inline, with no PASEO_PASSWORD in the
+# environment — this is the form AO would use for a remote host whose credential
+# comes from a secret reference rather than the ambient environment.
+if env -u PASEO_PASSWORD -u PASEO_HOST "${PASEO_BIN}" \
+       ls --host "tcp://${SPIKE_HOST}?password=${SPIKE_PASSWORD}" --json >/dev/null 2>&1; then
     pass S7c "tcp://host:port?password= works"
 else
     fail S7c "tcp:// form rejected"
@@ -134,16 +152,18 @@ WS_ID=$(python3 -c 'import json;print(json.load(open("'"${FIXTURES}"'/s3-workspa
 log "workspaceId=${WS_ID}"
 
 capture s3-workspace-ls pz workspace ls --json
-if python3 - "$WS_ID" "$WS_TITLE" <<'PY'
-import json, sys
-ws, title = sys.argv[1], sys.argv[2]
-rows = json.load(open(__import__("os").environ["FIXTURES"] + "/s3-workspace-ls.json"))
-hit = next((r for r in rows if r.get("workspaceId") == ws), None)
-sys.exit(0 if hit and hit.get("name") == title else 1)
+WS_ID="${WS_ID}" WS_TITLE="${WS_TITLE}" jcheck S3 \
+    "workspace --title round-trips as ls .name" \
+    "--title did NOT round-trip (name is a derived fallback)" <<'PY'
+import json, os, sys
+try:
+    rows = json.load(open(os.environ["FIXTURES"] + "/s3-workspace-ls.json"))
+    hit = next((r for r in rows if r.get("workspaceId") == os.environ["WS_ID"]), None)
+except Exception as exc:                      # harness fault, not a finding
+    print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+    sys.exit(2)
+sys.exit(0 if hit and hit.get("name") == os.environ["WS_TITLE"] else 1)
 PY
-then pass S3 "workspace --title round-trips as ls .name"
-else fail S3 "--title did NOT round-trip (name is a derived fallback)"
-fi
 
 # ===========================================================================
 step "S1  Event transport — the decisive experiment"
@@ -205,20 +225,34 @@ if [ -n "${SPIKE_PROVIDER:-}" ]; then
 
     # S2: label discovery — the only reconciliation handle that exists.
     capture s2-ls-by-intent pz ls -a -g --json --label ao.intent="intent-$$"
-    if python3 -c 'import json,os,sys; sys.exit(0 if len(json.load(open(os.environ["FIXTURES"]+"/s2-ls-by-intent.json")))==1 else 1)'; then
-        pass S2a "ls -ag --label found exactly the intended agent"
-    else
-        fail S2a "label lookup did not return exactly one agent"
-    fi
+    jcheck S2a "ls -ag --label found exactly the intended agent" \
+               "label lookup did not return exactly one agent" <<'PY'
+import json, os, sys
+try:
+    rows = json.load(open(os.environ["FIXTURES"] + "/s2-ls-by-intent.json"))
+except Exception as exc:
+    print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+    sys.exit(2)
+print(f"  matched {len(rows)} agent(s)", file=sys.stderr)
+sys.exit(0 if len(rows) == 1 else 1)
+PY
 
     # S2b: the fail-open bug. A malformed label (no '=') must NOT be used, because
     # `ls` applies zero filters and returns every agent on the daemon.
     capture s2-ls-malformed pz ls -a -g --json --label ao-malformed || true
-    if python3 -c 'import json,os,sys; sys.exit(0 if len(json.load(open(os.environ["FIXTURES"]+"/s2-ls-malformed.json")))>0 else 1)'; then
-        pass S2b "CONFIRMED fail-open: malformed label returned unfiltered results"
-    else
-        skip S2b "malformed label returned nothing on this daemon"
-    fi
+    jcheck S2b "CONFIRMED fail-open: malformed label returned unfiltered results" \
+               "malformed label returned nothing — fail-open NOT reproduced here" <<'PY'
+import json, os, sys
+try:
+    rows = json.load(open(os.environ["FIXTURES"] + "/s2-ls-malformed.json"))
+except Exception as exc:
+    print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+    sys.exit(2)
+# A PASS here is bad news about Paseo: a label with no '=' applied zero filters
+# and returned everything the daemon knows about.
+print(f"  malformed-label query returned {len(rows)} agent(s)", file=sys.stderr)
+sys.exit(0 if len(rows) > 0 else 1)
+PY
 
     # S2c: does inspect echo our label back via the dead `paseo.worktree` key?
     if grep -q "spike-$$:1" "${FIXTURES}/s1a-inspect.json" 2>/dev/null; then

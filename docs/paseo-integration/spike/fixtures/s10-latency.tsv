@@ -1,0 +1,4 @@
+command	seconds
+ls -a -g --json	0.962
+workspace ls --json	0.878
+provider ls --json	0.899

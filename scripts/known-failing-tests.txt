@@ -4,6 +4,10 @@
 #
 # Only add a line here after confirming upstream owns the failure. If an entry
 # starts passing, verify-fork-baseline.sh will tell you to prune it.
+#
+# Prefix an entry with `flaky:` when it passes intermittently. It still
+# suppresses a failure, but stops the "now passing, prune me" note firing on
+# every green run.
 
 # Asserts a worktree row carries an empty compare ref; observed ref = "main".
 # Environment-sensitive: upstream CI (ubuntu) is green, so this is likely a
@@ -14,5 +18,5 @@ TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs
 # trip a 3s deadline rather than asserting wrongly. Flaky: they pass on reruns
 # and under -race they fail more often. Listed so they cannot mask a real
 # regression in these adapters.
-TestAuthStatusUnknownWhenKeyOnlyComesFromInteractiveShell
-TestOpenCodeAuthStatusUnknownWithZeroCredentials
+flaky:TestAuthStatusUnknownWhenKeyOnlyComesFromInteractiveShell
+flaky:TestOpenCodeAuthStatusUnknownWithZeroCredentials

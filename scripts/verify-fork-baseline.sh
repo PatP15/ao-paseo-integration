@@ -55,8 +55,16 @@ if [ "${WHAT}" = "all" ] || [ "${WHAT}" = "tests" ]; then
     actual="$(grep -Eo '^--- FAIL: [A-Za-z0-9_/]+' "${out}" | sed 's/^--- FAIL: //' | sort -u)"
     buildfail="$(grep -E '\[build failed\]' "${out}" || true)"
 
+    # Entries prefixed `flaky:` are expected to pass sometimes. They still
+    # suppress a failure, but they do NOT trigger the "now passing, prune me"
+    # note — otherwise a flaky test nags on every green run, and a gate that
+    # cries wolf every time is a gate people stop reading.
     expected=""
-    [ -f "${BASELINE}" ] && expected="$(grep -Ev '^\s*(#|$)' "${BASELINE}" | sort -u)"
+    flaky=""
+    if [ -f "${BASELINE}" ]; then
+        expected="$(grep -Ev '^\s*(#|$)' "${BASELINE}" | sed 's/^flaky://' | sort -u)"
+        flaky="$(grep -E '^flaky:' "${BASELINE}" | sed 's/^flaky://' | sort -u)"
+    fi
 
     new="$(comm -23 <(printf '%s\n' "${actual}") <(printf '%s\n' "${expected}") | grep -v '^$' || true)"
     fixed="$(comm -13 <(printf '%s\n' "${actual}") <(printf '%s\n' "${expected}") | grep -v '^$' || true)"
@@ -73,10 +81,11 @@ if [ "${WHAT}" = "all" ] || [ "${WHAT}" = "tests" ]; then
     elif [ -z "${buildfail}" ]; then
         ok "no new test failures"
     fi
-    if [ -n "${fixed}" ]; then
+    stale="$(comm -23 <(printf '%s\n' "${fixed}") <(printf '%s\n' "${flaky}") | grep -v '^$' || true)"
+    if [ -n "${stale}" ]; then
         printf '  \033[33mNOTE\033[0m baseline entries now PASSING (prune them from %s):\n' \
             "scripts/known-failing-tests.txt"
-        printf '%s\n' "${fixed}" | sed 's/^/       /'
+        printf '%s\n' "${stale}" | sed 's/^/       /'
     fi
     rm -f "${out}"
 fi

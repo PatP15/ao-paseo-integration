@@ -75,8 +75,15 @@ esac
 # 4. Prove the operator's daemon is untouched.
 before="${FIXTURES}/s0-operator-status-before.json"
 if [ -f "${before}" ]; then
-    if curl -fsS "http://127.0.0.1:${OPERATOR_PORT}/api/status" -o "${SPIKE_ROOT:-/tmp}/after.json" 2>/dev/null; then
-        if python3 - "${before}" "${SPIKE_ROOT:-/tmp}/after.json" <<'PY'
+    # Write the "after" snapshot OUTSIDE SPIKE_ROOT: step 3 above just deleted
+    # that directory, so `curl -o "${SPIKE_ROOT}/after.json"` cannot create its
+    # output file and fails — which this block then reported as "operator daemon
+    # not responding". It fired on all three spike runs while the daemon was
+    # provably healthy, i.e. a false alarm on the one check whose entire job is
+    # to prove we did no harm.
+    after_file="$(mktemp -t ao-spike-after)"
+    if curl -fsS "http://127.0.0.1:${OPERATOR_PORT}/api/status" -o "${after_file}" 2>/dev/null; then
+        if python3 - "${before}" "${after_file}" <<'PY'
 import json, sys
 a = json.load(open(sys.argv[1])); b = json.load(open(sys.argv[2]))
 same = a.get("serverId") == b.get("serverId")
@@ -85,7 +92,7 @@ print(("  OK   operator daemon unchanged (serverId %s)" % a.get("serverId"))
 sys.exit(0 if same else 1)
 PY
         then :; else printf '  investigate before trusting the fixtures\n'; fi
-        rm -f "${SPIKE_ROOT:-/tmp}/after.json"
+        rm -f "${after_file}"
     else
         printf '  NOTE operator daemon not responding now; it was up at S0\n'
     fi

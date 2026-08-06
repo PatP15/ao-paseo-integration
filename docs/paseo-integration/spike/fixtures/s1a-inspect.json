@@ -1,0 +1,51 @@
+{
+  "Id": "cf9a357f-869f-4606-b2e8-6bc4da69b32c",
+  "Name": "ao-spike-44494",
+  "Provider": "claude",
+  "Model": "claude-opus-5",
+  "Thinking": "auto",
+  "Status": "idle",
+  "Archived": false,
+  "ArchivedAt": null,
+  "Mode": "auto",
+  "Cwd": "/private/var/folders/4q/_mr1kbyx3hj3j1xbqv071trh0000gn/T/ao-paseo-spike/paseo-home/worktrees/2uo2uwvu/ao-spike-44494",
+  "CreatedAt": "2026-08-05T23:44:00.758Z",
+  "UpdatedAt": "2026-08-05T23:44:06.422Z",
+  "LastUsage": {
+    "InputTokens": 2,
+    "OutputTokens": 72,
+    "CachedTokens": 17202,
+    "CostUsd": 0.07477200000000002
+  },
+  "Capabilities": {
+    "Streaming": true,
+    "Persistence": true,
+    "DynamicModes": true,
+    "McpServers": true
+  },
+  "AvailableModes": [
+    {
+      "id": "plan",
+      "label": "Plan Mode"
+    },
+    {
+      "id": "default",
+      "label": "Always Ask"
+    },
+    {
+      "id": "acceptEdits",
+      "label": "Accept File Edits"
+    },
+    {
+      "id": "auto",
+      "label": "Auto mode"
+    },
+    {
+      "id": "bypassPermissions",
+      "label": "Bypass"
+    }
+  ],
+  "PendingPermissions": [],
+  "Worktree": "spike-44494:1",
+  "ParentAgentId": null
+}

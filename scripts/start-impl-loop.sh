@@ -29,6 +29,35 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 WORKER_PROVIDER="${WORKER_PROVIDER:-codex/gpt-5.6-sol}"
 VERIFY_PROVIDER="${VERIFY_PROVIDER:-claude/claude-opus-5}"
 
+# Both providers expose an "auto" mode id. Verified in
+# packages/server/.../codex-app-server-agent.ts:216 (id: "auto", alongside
+# "auto-review", "full-access", "read-only") and from `provider ls --json`,
+# where claude already reports defaultMode=auto. Setting it explicitly rather
+# than relying on the default, because the live daemon reports codex
+# defaultMode=auto-review while the source constant is "auto" — a discrepancy
+# worth not depending on.
+WORKER_MODE="${WORKER_MODE:-auto}"
+VERIFY_MODE="${VERIFY_MODE:-auto}"
+
+# THINKING EFFORT CANNOT BE SET ON A LOOP AT PASEO 0.2.5.
+#
+# This is a protocol limitation, not a missing CLI flag. packages/protocol/src/
+# loop/rpc-schemas.ts carries model, modeId, workerModel, verifierModel and
+# verifierModeId — and no thinking field at all. `paseo run --thinking <id>`
+# exists; `paseo loop run` has no equivalent and nothing to forward it to.
+#
+# So loop agents run at each model's DEFAULT effort: gpt-5.6-sol defaults to
+# `medium` (of low/medium/high/xhigh/max/ultra). The requested worker=high and
+# verifier=xhigh are not reachable through `paseo loop`.
+#
+# To actually get them, the loop primitive has to be replaced with a driver that
+# calls `paseo run --thinking high ...` per iteration and runs the verify gate
+# between runs. That is a real piece of work, not a flag — tracked separately.
+# These vars are recorded so the intent is not lost, and are deliberately NOT
+# passed to `paseo loop run`, which would reject them.
+DESIRED_WORKER_THINKING="${DESIRED_WORKER_THINKING:-high}"
+DESIRED_VERIFY_THINKING="${DESIRED_VERIFY_THINKING:-xhigh}"
+
 # Fallback worker for when the primary provider runs out of credit or hits a
 # usage limit. `paseo loop run` has no built-in provider failover — a usage
 # error simply fails the iteration — so this is a re-launch target, not an
@@ -153,7 +182,9 @@ Report done=false with specific evidence if any check fails, and state plainly w
 exec paseo loop run \
     --name ao-paseo-prs \
     --provider "${WORKER_PROVIDER}" \
+    --mode "${WORKER_MODE}" \
     --verify-provider "${VERIFY_PROVIDER}" \
+    --verify-mode "${VERIFY_MODE}" \
     --max-iterations "${MAX_ITERATIONS}" \
     --max-time "${MAX_TIME}" \
     --archive \

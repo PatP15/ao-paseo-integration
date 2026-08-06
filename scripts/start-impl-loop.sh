@@ -44,6 +44,14 @@ VERIFY_PROVIDER="${VERIFY_PROVIDER:-claude/claude-opus-5}"
 # cross-provider blind-spot coverage. Acceptable as a fallback; not a default.
 FALLBACK_WORKER_PROVIDER="${FALLBACK_WORKER_PROVIDER:-claude/claude-opus-5}"
 
+# Bounds. The first run hit --max-time mid-iteration with PR 2 uncommitted;
+# nothing was lost (the files stay in the tree) but the iteration's work was
+# unverified and unattributed until the next run picked it up. Storage and
+# adapter PRs take well over an hour each, so budget generously and rely on the
+# verifier's done=true to exit early when no unblocked work remains.
+MAX_ITERATIONS="${MAX_ITERATIONS:-12}"
+MAX_TIME="${MAX_TIME:-6h}"
+
 # Preflight: an unknown model wedges the loop instead of failing.
 #
 # The first run of this script used codex/gpt-5.4, which does not exist. Paseo
@@ -92,9 +100,18 @@ START by reading, in this order:
   docs/paseo-integration/DATA_MODEL.md            (exact DDL, if you are doing storage)
   AGENTS.md                                       (repo hard rules)
 
-STATE OF PLAY. PR 0 (docs + spike) is committed. A runtime-capability fix landed in 8cc3fe71. A verification gate landed in d9de2578. The next unblocked PRs are PR 1 (ExecutionBackend port and fork-owned vocabulary) then PR 2 (execution and work-graph tables in the 0900 migration block). Run `git log --oneline -8` to see what has actually landed before assuming.
+STATE OF PLAY. Landed: PR 0 (docs + spike), a runtime-capability fix (8cc3fe71), the verification gate (d9de2578), PR 1 (1898cc85, the ExecutionBackend port), PR 2 (d80eb1fc, the 0900 migration block), and the EXECUTED spike (49f062ec). Run `git log --oneline -12` to confirm before assuming.
 
-PICK the smallest unblocked PR not yet done. A PR is BLOCKED if it needs spike fixtures (docs/paseo-integration/spike/fixtures/ is empty until a human runs the spike, which gates PR 4 onward) or a human decision.
+The spike has run, so docs/paseo-integration/spike/fixtures/ is now POPULATED and PR 4 onward is UNBLOCKED. Read docs/paseo-integration/spike/FINDINGS.md before writing the Paseo adapter — it contains empirically verified behaviour that contradicts naive expectations.
+
+PICK the smallest unblocked PR not yet done. A PR is BLOCKED only if it needs a human decision.
+
+SPIKE FINDINGS THE ADAPTER MUST HONOUR (all verified against a real Paseo 0.2.5, fixtures in spike/fixtures/):
+- `--host` is a PER-SUBCOMMAND option, not global. `paseo --host X ls` fails with "unknown option". Emit `paseo ls --host X`, or set PASEO_HOST in the environment.
+- A malformed `--label` (no `=`) makes `ls` return the FULL UNFILTERED agent list. Confirmed on a real daemon. Validate exactly one `=`, non-empty key AND value, in Go before exec.
+- `terminal capture --start/--end --json` returns {terminalId, lines[], totalLines} with a real monotonic cursor, but `lines[]` are SCREEN lines hard-wrapped at 80 columns. A 200-byte payload came back as three lines. Reassembly via 76-char base64 chunks with a k/n header is mandatory.
+- `inspect --json .Worktree` echoes labels["paseo.worktree"], which is how an orphan is verified before adoption.
+- Each paseo invocation costs ~0.9s (shell shim to an Electron helper). Budget polling accordingly; prefer one inspect per session over ls-then-inspect fan-out.
 
 HARD RULES:
 - Prefer new files in new packages. This fork rebases weekly against an upstream doing ~16 commits/day, so every edit to an existing upstream file is future conflict.
@@ -119,7 +136,7 @@ Check facts. Do not suggest fixes. Cite the exact commands you ran and their out
 
 Return done=true ONLY if BOTH hold:
 
-(A) No unblocked code work remains in docs/paseo-integration/IMPLEMENTATION_PLAN.md. Remaining PRs are blocked if they depend on spike fixtures (PR 4 onward needs docs/paseo-integration/spike/fixtures/, empty until a human runs the spike) or on a human decision. If unblocked work remains, done=false.
+(A) No unblocked code work remains in docs/paseo-integration/IMPLEMENTATION_PLAN.md. The spike has already run, so spike fixtures exist and PR 4 onward is unblocked; a PR is blocked only if it needs a human decision. If unblocked work remains, done=false.
 
 (B) The most recent commit is a complete, coherent PR from that plan whose stated acceptance criteria are all met.
 
@@ -137,8 +154,8 @@ exec paseo loop run \
     --name ao-paseo-prs \
     --provider "${WORKER_PROVIDER}" \
     --verify-provider "${VERIFY_PROVIDER}" \
-    --max-iterations 8 \
-    --max-time 3h \
+    --max-iterations "${MAX_ITERATIONS}" \
+    --max-time "${MAX_TIME}" \
     --archive \
     --verify-check './scripts/verify-fork-baseline.sh' \
     --verify "${VERIFY_PROMPT}" \

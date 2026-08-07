@@ -383,10 +383,21 @@ func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// Codex sessions are AO-managed and run headlessly inside a terminal
-		// mux pane; default to no approval prompts unless project settings
-		// explicitly choose a more restrictive mode.
-		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
+		// Upstream defaults this arm to
+		// --dangerously-bypass-approvals-and-sandbox, on the reasoning that an
+		// AO-managed pane has no human to answer prompts. This fork does not
+		// take that default, because it also removes the sandbox, and the
+		// integration this fork exists for puts attacker-authored text (PR
+		// comments, tracker issues, CI logs) in front of the same worker that
+		// holds the operator's forge credentials. "No human is watching" argues
+		// for more confinement, not less.
+		//
+		// on-request matches the accept-edits arm: the worker proceeds unaided
+		// for ordinary edits and blocks on anything that leaves the sandbox,
+		// which AO already surfaces as needs-input rather than silently
+		// stalling. Operators who want the old behavior ask for it by name, by
+		// setting the project's permission mode to bypassPermissions below.
+		*cmd = append(*cmd, "--ask-for-approval", "on-request")
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--ask-for-approval", "on-request")
 	case ports.PermissionModeAuto:

@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/untrusted"
 )
 
 const (
@@ -29,6 +30,16 @@ const (
 
 	intakePromptTruncationNotice = "\n\n[Issue content truncated to fit the session prompt limit. Open the linked issue for the full details.]\n"
 	intakePromptFooter           = "\nImplement the requested change in this repository, run the relevant checks, and open or update a pull request when ready."
+
+	// intakeBodySource labels the fence around the issue body. It is AO-authored
+	// and fixed, never derived from the issue.
+	intakeBodySource = "tracker issue body"
+	intakeBodyLabel  = "\nBody:\n"
+	// minIntakeBodyLen is the smallest body excerpt worth fencing. Below it the
+	// body is dropped outright rather than reduced to a fence wrapped around a
+	// few words, which reads as if the issue said almost nothing.
+	minIntakeBodyLen        = 256
+	intakeBodyOmittedNotice = "\n[Issue body omitted: the issue's own title, labels, and assignees already fill the session prompt limit. Open the linked issue for the full details.]\n"
 )
 
 // Store is the durable read surface the observer needs.
@@ -266,24 +277,40 @@ func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
 }
 
 // BuildIssuePrompt turns normalized issue facts into the worker's initial task.
+//
+// Every field here is authored by whoever opened the issue. Intake is the
+// highest-leverage injection surface AO has, because this string is not a nudge
+// into an existing conversation — it is the entire task a fresh worker wakes up
+// with, and on a project configured with assignee "*" the author need not be
+// trusted at all. The body is fenced; the short scalar fields are sanitized
+// inline, since a fence per label would drown the prompt.
 func BuildIssuePrompt(issue domain.Issue) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", CanonicalIssueID(issue.ID))
 	if issue.Title != "" {
-		fmt.Fprintf(&b, "Title: %s\n", issue.Title)
+		fmt.Fprintf(&b, "Title: %s\n", domain.SanitizeControlChars(issue.Title))
 	}
 	if issue.URL != "" {
-		fmt.Fprintf(&b, "URL: %s\n", issue.URL)
+		fmt.Fprintf(&b, "URL: %s\n", domain.SanitizeControlChars(issue.URL))
 	}
 	if len(issue.Labels) > 0 {
-		fmt.Fprintf(&b, "Labels: %s\n", strings.Join(issue.Labels, ", "))
+		fmt.Fprintf(&b, "Labels: %s\n", domain.SanitizeControlChars(strings.Join(issue.Labels, ", ")))
 	}
 	if len(issue.Assignees) > 0 {
-		fmt.Fprintf(&b, "Assignees: %s\n", strings.Join(issue.Assignees, ", "))
+		fmt.Fprintf(&b, "Assignees: %s\n", domain.SanitizeControlChars(strings.Join(issue.Assignees, ", ")))
 	}
-	body := strings.TrimSpace(issue.Body)
-	if body != "" {
-		fmt.Fprintf(&b, "\nBody:\n%s\n", body)
+	if body := strings.TrimSpace(issue.Body); body != "" {
+		// Size the body against what the metadata above already spent, so the
+		// closing marker is always inside the prompt limit. Letting
+		// capIntakePrompt cut the fence instead would leave the worker holding
+		// an unterminated BEGIN marker, and every line after it — including
+		// intakePromptFooter — would read as issue-authored text.
+		spent := b.Len() + len(intakeBodyLabel) + len("\n") + len(intakePromptFooter) + untrusted.Overhead(intakeBodySource)
+		if budget := maxIntakePromptLen - spent; budget >= minIntakeBodyLen {
+			fmt.Fprintf(&b, "%s%s\n", intakeBodyLabel, untrusted.Block(intakeBodySource, body, budget))
+		} else {
+			b.WriteString(intakeBodyOmittedNotice)
+		}
 	}
 	b.WriteString(intakePromptFooter)
 	return capIntakePrompt(b.String())

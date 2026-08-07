@@ -20,3 +20,11 @@ func redact(value string, secrets ...string) string {
 	}
 	return value
 }
+
+// Redact strips credentials from a string bound for a log or an error.
+//
+// Exported because the daemon logs failures from constructing a client, and the
+// endpoint it was given may carry ?password= — SECURITY.md §9 forbids that
+// reaching a log line. Callers outside this package cannot reach the unexported
+// helper, and "the caller will remember" is not a control.
+func Redact(value string, secrets ...string) string { return redact(value, secrets...) }

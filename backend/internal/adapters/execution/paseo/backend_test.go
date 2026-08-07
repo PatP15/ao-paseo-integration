@@ -441,21 +441,60 @@ func TestBackendRefusesUnsafeHostIdentity(t *testing.T) {
 	}
 }
 
-func TestBackendStatusCommandsPlaceHostOnSubcommand(t *testing.T) {
+func TestWorkspaceListPlacesHostOnSubcommand(t *testing.T) {
 	t.Parallel()
-	status, err := statusArgs("worker:6767")
-	if err != nil {
-		t.Fatal(err)
-	}
 	workspaces, err := workspaceListArgs("worker:6767")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(status, []string{"status", "--host", "worker:6767", "--json"}) {
-		t.Fatalf("status args=%v", status)
-	}
 	if !reflect.DeepEqual(workspaces, []string{"workspace", "ls", "--host", "worker:6767", "--json"}) {
 		t.Fatalf("workspace args=%v", workspaces)
+	}
+}
+
+// TestStatusProbesOverHTTPNotTheCLI pins the surface a host identity probe uses.
+//
+// This test previously asserted `status --host <host> --json`, which is not a
+// command that exists: `paseo status` takes --home and rejects --host with
+// "unknown option '--host' (Did you mean --home?)". spike/FINDINGS.md recorded
+// that, but the test was written from the assumption rather than the finding, so
+// it passed while guaranteeing every remote host probed permanently offline.
+// The bug only surfaced when the observer was wired into the daemon and pointed
+// at a real worker.
+//
+// GET /api/status is the supported remote surface. Only /api/health is exempt
+// from the bearer token, so the password must travel in a header — never in the
+// URL, which lands in logs and error strings.
+func TestStatusProbesOverHTTPNotTheCLI(t *testing.T) {
+	t.Parallel()
+
+	endpoint, password, err := statusURL("worker:6767")
+	if err != nil {
+		t.Fatalf("plain host:port: %v", err)
+	}
+	if endpoint != "http://worker:6767/api/status" || password != "" {
+		t.Fatalf("endpoint=%q password=%q", endpoint, password)
+	}
+
+	endpoint, password, err = statusURL("tcp://worker:6767?ssl=true&password=hunter2")
+	if err != nil {
+		t.Fatalf("tcp form: %v", err)
+	}
+	if endpoint != "https://worker:6767/api/status" {
+		t.Fatalf("ssl=true must select https, got %q", endpoint)
+	}
+	if password != "hunter2" {
+		t.Fatalf("password not extracted, got %q", password)
+	}
+	if strings.Contains(endpoint, "hunter2") {
+		t.Fatal("credential leaked into the URL; it belongs in the Authorization header")
+	}
+
+	// A colonless host must be refused, not defaulted. Paseo resolves one to the
+	// LOCAL daemon, so accepting it would make a remote host's probe report the
+	// operator's own machine as healthy.
+	if _, _, err := statusURL("worker"); err == nil {
+		t.Fatal("colonless host accepted; it would silently target the local daemon")
 	}
 }
 

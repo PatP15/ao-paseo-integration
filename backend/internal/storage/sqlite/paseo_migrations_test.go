@@ -129,3 +129,59 @@ func columnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	}
 	return found
 }
+
+// TestExecutionZonesReplaceTheTrustZoneEnum pins 0942. The enum it supersedes
+// fused autonomy with isolation, which made every "work" project look like it
+// needed its own uid; zones carry autonomy, and isolation moves to the host
+// where the operating system actually decides it.
+func TestExecutionZonesReplaceTheTrustZoneEnum(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate fresh database: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'execution_zones'`).Scan(&count); err != nil {
+		t.Fatalf("find execution_zones: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("execution_zones count = %d, want 1", count)
+	}
+
+	for _, col := range []string{"zone_id", "isolated", "isolation_note"} {
+		if !columnExists(t, db, "execution_hosts", col) {
+			t.Errorf("execution_hosts is missing %s", col)
+		}
+	}
+	if !columnExists(t, db, "project_host_bindings", "required_zone_id") {
+		t.Error("project_host_bindings is missing required_zone_id")
+	}
+
+	// The legacy enum column stays, unread. Dropping it would need a table
+	// rebuild of something session_execution_bindings references, which is not
+	// worth it for a column we can simply stop consulting.
+	if !columnExists(t, db, "execution_hosts", "trust_zone") {
+		t.Error("trust_zone was dropped; a rebuild of execution_hosts was not intended")
+	}
+
+	// Isolation must default to FALSE. A host is not isolated until an operator
+	// asserts it, because AO cannot verify the claim: no Paseo CLI surface
+	// reports the uid a remote daemon runs as. Defaulting true would let an
+	// unreviewed host masquerade as a boundary.
+	if _, err := db.Exec(`INSERT INTO execution_zones (id, name, description, created_at, updated_at)
+	                      VALUES ('z1', 'research', '', '2026-01-01', '2026-01-01')`); err != nil {
+		t.Fatalf("insert zone: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO execution_hosts
+	    (id, name, backend_type, transport, trust_zone, enabled, max_concurrent_sessions, zone_id, created_at, updated_at)
+	    VALUES ('h1','mac','paseo','local','work',1,1,'z1','2026-01-01','2026-01-01')`); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+	var isolated int
+	if err := db.QueryRow(`SELECT isolated FROM execution_hosts WHERE id = 'h1'`).Scan(&isolated); err != nil {
+		t.Fatalf("read isolated: %v", err)
+	}
+	if isolated != 0 {
+		t.Errorf("isolated defaulted to %d, want 0 — isolation must be asserted, never assumed", isolated)
+	}
+}

@@ -259,7 +259,7 @@ func (q *Queries) GetExecutionCommandByIdempotencyKey(ctx context.Context, idemp
 }
 
 const getExecutionHost = `-- name: GetExecutionHost :one
-SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at FROM execution_hosts WHERE id = ?
+SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts WHERE id = ?
 `
 
 func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHost, error) {
@@ -284,6 +284,9 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 		&i.LastProbeError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ZoneID,
+		&i.Isolated,
+		&i.IsolationNote,
 	)
 	return i, err
 }
@@ -366,7 +369,7 @@ func (q *Queries) GetLatestSessionBrief(ctx context.Context, sessionID string) (
 }
 
 const getProjectHostBinding = `-- name: GetProjectHostBinding :one
-SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at FROM project_host_bindings WHERE project_id = ? AND host_id = ?
+SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at, required_zone_id FROM project_host_bindings WHERE project_id = ? AND host_id = ?
 `
 
 type GetProjectHostBindingParams struct {
@@ -387,6 +390,7 @@ func (q *Queries) GetProjectHostBinding(ctx context.Context, arg GetProjectHostB
 		&i.SetupProfile,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequiredZoneID,
 	)
 	return i, err
 }
@@ -924,7 +928,7 @@ func (q *Queries) ListExecutionHostCapabilities(ctx context.Context, hostID stri
 }
 
 const listExecutionHosts = `-- name: ListExecutionHosts :many
-SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at FROM execution_hosts ORDER BY name, id
+SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts ORDER BY name, id
 `
 
 func (q *Queries) ListExecutionHosts(ctx context.Context) ([]ExecutionHost, error) {
@@ -955,6 +959,9 @@ func (q *Queries) ListExecutionHosts(ctx context.Context) ([]ExecutionHost, erro
 			&i.LastProbeError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ZoneID,
+			&i.Isolated,
+			&i.IsolationNote,
 		); err != nil {
 			return nil, err
 		}
@@ -1012,7 +1019,7 @@ func (q *Queries) ListOpenHumanQuestions(ctx context.Context) ([]HumanQuestion, 
 }
 
 const listProjectHostBindings = `-- name: ListProjectHostBindings :many
-SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at FROM project_host_bindings WHERE project_id = ? ORDER BY priority, host_id
+SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at, required_zone_id FROM project_host_bindings WHERE project_id = ? ORDER BY priority, host_id
 `
 
 func (q *Queries) ListProjectHostBindings(ctx context.Context, projectID string) ([]ProjectHostBinding, error) {
@@ -1034,6 +1041,7 @@ func (q *Queries) ListProjectHostBindings(ctx context.Context, projectID string)
 			&i.SetupProfile,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RequiredZoneID,
 		); err != nil {
 			return nil, err
 		}

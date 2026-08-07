@@ -62,3 +62,44 @@ type ExecutionHostStatus struct {
 	RelayEnabled   bool
 	ObservedAt     time.Time
 }
+
+// ExecutionZoneID identifies a named execution zone.
+type ExecutionZoneID string
+
+// ExecutionZone is an operator-named grouping that carries AUTONOMY policy.
+//
+// It deliberately carries no isolation setting. Isolation is a property of a
+// host (ExecutionHost.Isolated), because whether one agent can read another's
+// transcript depends on the operating system the two share, not on any label AO
+// applies. A zone can say "do not auto-dispatch"; only a uid or a machine
+// boundary can say "cannot read".
+//
+// Replaces ExecutionTrustZone, whose hobby|work|mixed enum fused those two
+// axes and so made every "work" project look like it needed its own uid.
+type ExecutionZone struct {
+	ID                ExecutionZoneID
+	Name              string
+	Description       string
+	AutoDispatch      bool
+	MaxRepairAttempts int
+	MayPushBranch     bool
+	MayCreateDraftPR  bool
+	MaxRuntimeMinutes int
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// Isolation reports whether a host is asserted to share no uid with any other
+// zone's hosts.
+//
+// OPERATOR-ASSERTED AND UNVERIFIABLE. No Paseo CLI surface reports the uid a
+// remote daemon runs as, so AO records the claim and displays it as a claim.
+// The value of writing it down is that a wrong assumption becomes visible
+// instead of implicit.
+type Isolation struct {
+	Isolated bool
+	// Note records HOW isolation is achieved — "separate OS user", "dedicated
+	// machine", "shares uid with hobby zone" — so a reviewer can judge the
+	// claim rather than trust the boolean.
+	Note string
+}

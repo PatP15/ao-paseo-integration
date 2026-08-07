@@ -84,11 +84,27 @@ type ExecutionHost struct {
 	LastProbeError        string
 	CreatedAt             string
 	UpdatedAt             string
+	ZoneID                sql.NullString
+	Isolated              int64
+	IsolationNote         string
 }
 
 type ExecutionHostCapability struct {
 	HostID     string
 	Capability string
+}
+
+type ExecutionZone struct {
+	ID                string
+	Name              string
+	Description       string
+	AutoDispatch      int64
+	MaxRepairAttempts int64
+	MayPushBranch     int64
+	MayCreateDraftPR  int64
+	MaxRuntimeMinutes int64
+	CreatedAt         string
+	UpdatedAt         string
 }
 
 type HumanQuestion struct {
@@ -224,15 +240,16 @@ type Project struct {
 }
 
 type ProjectHostBinding struct {
-	ProjectID    string
-	HostID       string
-	HostRepoPath string
-	BaseBranch   string
-	Priority     int64
-	Enabled      int64
-	SetupProfile string
-	CreatedAt    string
-	UpdatedAt    string
+	ProjectID      string
+	HostID         string
+	HostRepoPath   string
+	BaseBranch     string
+	Priority       int64
+	Enabled        int64
+	SetupProfile   string
+	CreatedAt      string
+	UpdatedAt      string
+	RequiredZoneID sql.NullString
 }
 
 type Review struct {

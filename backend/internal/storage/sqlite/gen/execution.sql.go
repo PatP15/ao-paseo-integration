@@ -324,11 +324,12 @@ func (q *Queries) GetSessionExecutionBinding(ctx context.Context, sessionID stri
 	return i, err
 }
 
-const insertAuditEvent = `-- name: InsertAuditEvent :exec
+const insertAuditEvent = `-- name: InsertAuditEvent :execrows
 INSERT INTO audit_events (
     id, event_type, actor_type, actor_id, subject_type, subject_id,
     detail_json, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING
 `
 
 type InsertAuditEventParams struct {
@@ -342,8 +343,11 @@ type InsertAuditEventParams struct {
 	CreatedAt   string
 }
 
-func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
-	_, err := q.db.ExecContext(ctx, insertAuditEvent,
+// Recurring observations (an orphan is re-seen on every sweep) derive a
+// deterministic id so the audit log records the finding once instead of once
+// per poll. One-shot callers pass a unique id and are unaffected.
+func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertAuditEvent,
 		arg.ID,
 		arg.EventType,
 		arg.ActorType,
@@ -353,7 +357,10 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 		arg.DetailJson,
 		arg.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const insertExecutionCommand = `-- name: InsertExecutionCommand :exec
@@ -462,12 +469,13 @@ func (q *Queries) InsertExecutionHostCapability(ctx context.Context, arg InsertE
 	return err
 }
 
-const insertHumanQuestion = `-- name: InsertHumanQuestion :exec
+const insertHumanQuestion = `-- name: InsertHumanQuestion :execrows
 INSERT INTO human_questions (
     id, session_id, work_item_id, source, external_question_id, question,
     recommendation, options_json, state, answer, answered_by, answered_at,
     delivery_command_id, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING
 `
 
 type InsertHumanQuestionParams struct {
@@ -487,8 +495,11 @@ type InsertHumanQuestionParams struct {
 	CreatedAt          string
 }
 
-func (q *Queries) InsertHumanQuestion(ctx context.Context, arg InsertHumanQuestionParams) error {
-	_, err := q.db.ExecContext(ctx, insertHumanQuestion,
+// Callers derive the id from the fact's identity (session plus external request
+// id), so re-observing an unanswered request is a no-op rather than a duplicate
+// inbox entry. :execrows lets the caller tell "opened" from "already open".
+func (q *Queries) InsertHumanQuestion(ctx context.Context, arg InsertHumanQuestionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertHumanQuestion,
 		arg.ID,
 		arg.SessionID,
 		arg.WorkItemID,
@@ -504,7 +515,10 @@ func (q *Queries) InsertHumanQuestion(ctx context.Context, arg InsertHumanQuesti
 		arg.DeliveryCommandID,
 		arg.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const insertSessionBrief = `-- name: InsertSessionBrief :exec
@@ -970,6 +984,24 @@ func (q *Queries) NextExecutionCommandSequence(ctx context.Context, sessionID st
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const touchSessionExecutionBinding = `-- name: TouchSessionExecutionBinding :execrows
+UPDATE session_execution_bindings SET last_observed_at = ?
+WHERE session_id = ? AND archived_at = ''
+`
+
+type TouchSessionExecutionBindingParams struct {
+	LastObservedAt string
+	SessionID      string
+}
+
+func (q *Queries) TouchSessionExecutionBinding(ctx context.Context, arg TouchSessionExecutionBindingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, touchSessionExecutionBinding, arg.LastObservedAt, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateExecutionCommandDelivery = `-- name: UpdateExecutionCommandDelivery :execrows

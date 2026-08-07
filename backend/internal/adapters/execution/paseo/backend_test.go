@@ -71,6 +71,8 @@ type fakeExecutionClient struct {
 	runResult       RunResult
 	runErr          error
 	agents          []Agent
+	listLabels      []string
+	listErr         error
 	details         map[string]AgentDetail
 	inspectErr      error
 	logs            string
@@ -133,8 +135,12 @@ func (c *fakeExecutionClient) Run(context.Context, RunRequest) (RunResult, error
 	return c.runResult, c.runErr
 }
 
-func (c *fakeExecutionClient) ListAgents(context.Context, string) ([]Agent, error) {
+func (c *fakeExecutionClient) ListAgents(_ context.Context, label string) ([]Agent, error) {
 	c.record("list-agents")
+	c.listLabels = append(c.listLabels, label)
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
 	return append([]Agent(nil), c.agents...), nil
 }
 

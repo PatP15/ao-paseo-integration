@@ -99,6 +99,10 @@ ON CONFLICT (session_id) DO UPDATE SET
 -- name: GetSessionExecutionBinding :one
 SELECT * FROM session_execution_bindings WHERE session_id = ?;
 
+-- name: TouchSessionExecutionBinding :execrows
+UPDATE session_execution_bindings SET last_observed_at = ?
+WHERE session_id = ? AND archived_at = '';
+
 -- name: FindSessionExecutionBindingsByIntent :many
 SELECT * FROM session_execution_bindings WHERE intent_id = ? ORDER BY session_id;
 
@@ -183,12 +187,16 @@ ON CONFLICT DO NOTHING;
 -- name: ListExecutionEventsBySession :many
 SELECT * FROM execution_events WHERE session_id = ? ORDER BY ingested_at, id;
 
--- name: InsertHumanQuestion :exec
+-- Callers derive the id from the fact's identity (session plus external request
+-- id), so re-observing an unanswered request is a no-op rather than a duplicate
+-- inbox entry. :execrows lets the caller tell "opened" from "already open".
+-- name: InsertHumanQuestion :execrows
 INSERT INTO human_questions (
     id, session_id, work_item_id, source, external_question_id, question,
     recommendation, options_json, state, answer, answered_by, answered_at,
     delivery_command_id, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING;
 
 -- name: AnswerHumanQuestion :execrows
 UPDATE human_questions
@@ -208,8 +216,12 @@ INSERT INTO session_checkpoints (
 -- name: ListSessionCheckpoints :many
 SELECT * FROM session_checkpoints WHERE session_id = ? ORDER BY sequence;
 
--- name: InsertAuditEvent :exec
+-- Recurring observations (an orphan is re-seen on every sweep) derive a
+-- deterministic id so the audit log records the finding once instead of once
+-- per poll. One-shot callers pass a unique id and are unaffected.
+-- name: InsertAuditEvent :execrows
 INSERT INTO audit_events (
     id, event_type, actor_type, actor_id, subject_type, subject_id,
     detail_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING;

@@ -202,13 +202,24 @@ func (b *Backend) Launch(ctx context.Context, req ports.ExecutionLaunchRequest) 
 	return agentFromRun(binding, req, result, b.now().UTC()), nil
 }
 
-func (b *Backend) guardHost(ctx context.Context, hostID domain.ExecutionHostID, sessionID domain.SessionID) (DaemonStatus, error) {
+// registeredHost is the cheap, purely local half of the host check: the row
+// exists, is enabled, and is ours. Read paths stop here; mutating paths
+// continue through guardHost, which additionally probes the live daemon.
+func (b *Backend) registeredHost(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHost, error) {
 	host, _, found, err := b.store.GetExecutionHost(ctx, hostID)
 	if err != nil {
-		return DaemonStatus{}, fmt.Errorf("load execution host %s: %w", hostID, err)
+		return domain.ExecutionHost{}, fmt.Errorf("load execution host %s: %w", hostID, err)
 	}
 	if !found || !host.Enabled || host.BackendType != domain.ExecutionBackendPaseo {
-		return DaemonStatus{}, fmt.Errorf("execution host %s is not an enabled Paseo host", hostID)
+		return domain.ExecutionHost{}, fmt.Errorf("execution host %s is not an enabled Paseo host", hostID)
+	}
+	return host, nil
+}
+
+func (b *Backend) guardHost(ctx context.Context, hostID domain.ExecutionHostID, sessionID domain.SessionID) (DaemonStatus, error) {
+	host, err := b.registeredHost(ctx, hostID)
+	if err != nil {
+		return DaemonStatus{}, err
 	}
 	status, err := b.client.Status(ctx)
 	if err != nil {

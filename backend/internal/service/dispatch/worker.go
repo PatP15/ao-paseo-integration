@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runtimehandle"
 )
@@ -26,6 +27,13 @@ type commandStore interface {
 	RetryExecutionCommand(context.Context, domain.ExecutionCommand, time.Time, error) error
 	FailExecutionCommand(context.Context, domain.ExecutionCommand, error) error
 	AcknowledgeExecutionStart(context.Context, string, domain.SessionID, string, string, time.Time) error
+}
+
+// BriefWriter commits the immutable instruction package for a launch. It is
+// optional: without one the agent is launched on the bare work prompt and has no
+// way to report back, which is the transport ladder's floor.
+type BriefWriter interface {
+	Ensure(context.Context, paseoevent.BriefRequest) (paseoevent.Brief, error)
 }
 
 // BackendResolver returns the host-scoped execution backend used for a
@@ -57,6 +65,7 @@ const (
 type Worker struct {
 	store       commandStore
 	backends    BackendResolver
+	briefs      BriefWriter
 	now         func() time.Time
 	lease       time.Duration
 	baseBackoff time.Duration
@@ -67,8 +76,14 @@ type Worker struct {
 // NewWorker constructs the outbox drain. It performs no I/O; call Drain to run
 // one pass over due commands.
 func NewWorker(store commandStore, backends BackendResolver) *Worker {
+	return NewWorkerWithBriefs(store, backends, nil)
+}
+
+// NewWorkerWithBriefs constructs an outbox drain that commits each launch's
+// brief before the launch happens.
+func NewWorkerWithBriefs(store commandStore, backends BackendResolver, briefs BriefWriter) *Worker {
 	return &Worker{
-		store: store, backends: backends, now: time.Now, lease: defaultLease,
+		store: store, backends: backends, briefs: briefs, now: time.Now, lease: defaultLease,
 		baseBackoff: defaultBaseBackoff, maxAttempts: defaultMaxAttempts,
 	}
 }
@@ -97,6 +112,19 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
 	}
+	// The brief is committed before anything remote exists. It is what carries
+	// the launch's report contract and its nonce, so it cannot be minted after
+	// the agent has started: a crash in between would leave a running agent
+	// reporting under a nonce AO never recorded. Re-delivery replays onto the
+	// same brief rather than issuing a second one.
+	prompt := payload.Prompt
+	if w.briefs != nil {
+		brief, err := w.briefs.Ensure(ctx, briefRequest(command, payload))
+		if err != nil {
+			return true, w.retryOrFail(ctx, command, err)
+		}
+		prompt = brief.Prompt()
+	}
 	workspace, err := backend.Provision(ctx, ports.ExecutionProvisionRequest{
 		SessionID: command.SessionID, ProjectID: payload.ProjectID, HostID: command.HostID,
 		WorkspaceTitle: fmt.Sprintf("ao:%s:%d", command.SessionID, payload.Attempt),
@@ -111,7 +139,7 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	}
 	agent, err := backend.Launch(ctx, ports.ExecutionLaunchRequest{
 		SessionID: command.SessionID, HostID: command.HostID, WorkspaceID: workspace.WorkspaceID,
-		IntentID: payload.IntentID, Prompt: payload.Prompt,
+		IntentID: payload.IntentID, Prompt: prompt,
 		Labels: map[string]string{
 			"ao.session": string(command.SessionID), "ao.attempt": strconv.Itoa(payload.Attempt),
 			"ao.intent": string(payload.IntentID), "paseo.worktree": fmt.Sprintf("%s:%d", command.SessionID, payload.Attempt),
@@ -154,6 +182,15 @@ func (w *Worker) atCheckpoint(checkpoint deliveryCheckpoint) error {
 		return nil
 	}
 	return w.checkpoint(checkpoint)
+}
+
+func briefRequest(command domain.ExecutionCommand, payload domain.ExecutionStartPayload) paseoevent.BriefRequest {
+	return paseoevent.BriefRequest{
+		SessionID: command.SessionID, ProjectID: payload.ProjectID, HostID: command.HostID,
+		LaunchID: payload.LaunchID, Attempt: payload.Attempt, Branch: payload.Branch,
+		BaseBranch: payload.BaseBranch, Provider: payload.Provider, Model: payload.Model,
+		Mode: payload.Mode, Goal: payload.Prompt, Policy: paseoevent.DefaultPolicy(),
+	}
 }
 
 func decodeStartPayload(raw string) (domain.ExecutionStartPayload, error) {

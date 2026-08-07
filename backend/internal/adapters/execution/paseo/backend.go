@@ -35,6 +35,7 @@ type executionClient interface {
 	Delete(context.Context, string) error
 	Logs(context.Context, string) (string, error)
 	Send(context.Context, string, string) error
+	CaptureTerminal(context.Context, string, int, int) (TerminalCapture, error)
 }
 
 // Backend implements AO's remote execution port using the pinned Paseo CLI

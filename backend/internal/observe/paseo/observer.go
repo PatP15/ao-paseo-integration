@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
+	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -49,6 +50,13 @@ type Lifecycle interface {
 	ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error
 }
 
+// ReportIngestor reads a session's agent-authored reports. It is optional: with
+// no ingestor configured AO still derives almost every session fact from
+// inspection alone, which is the floor the design deliberately keeps working.
+type ReportIngestor interface {
+	IngestSession(context.Context, domain.SessionExecutionBinding) (paseoevent.Result, error)
+}
+
 // ObserverResolver returns the read-only remote surface for one host.
 type ObserverResolver interface {
 	ResolveExecutionObserver(domain.ExecutionHostID) (ports.ExecutionObserver, bool)
@@ -72,6 +80,7 @@ type Observer struct {
 	store     Store
 	lifecycle Lifecycle
 	observers ObserverResolver
+	reports   ReportIngestor
 	logger    *slog.Logger
 	now       func() time.Time
 
@@ -84,11 +93,26 @@ type Observer struct {
 // New constructs the observer. It performs no I/O; call Poll for one pass or
 // Start for the supervised loop.
 func New(store Store, lifecycle Lifecycle, observers ObserverResolver, logger *slog.Logger) *Observer {
+	return NewWithReports(store, lifecycle, observers, nil, logger)
+}
+
+// NewWithReports constructs an observer that also ingests agent-authored
+// reports. Reading reports costs a second remote invocation per session, so it
+// halves how many sessions one host tick can cover; the budget below accounts
+// for that rather than quietly overrunning the interval.
+func NewWithReports(
+	store Store,
+	lifecycle Lifecycle,
+	observers ObserverResolver,
+	reports ReportIngestor,
+	logger *slog.Logger,
+) *Observer {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Observer{
-		store: store, lifecycle: lifecycle, observers: observers, logger: logger, now: time.Now,
+		store: store, lifecycle: lifecycle, observers: observers, reports: reports,
+		logger: logger, now: time.Now,
 		hot: hotTick, cold: coldTick, sweepEvery: sweepInterval, latency: commandLatency,
 		due: make(map[domain.SessionID]time.Time), lastSweep: make(map[domain.ExecutionHostID]time.Time),
 	}
@@ -173,6 +197,7 @@ func (o *Observer) pollHost(ctx context.Context, host domain.ExecutionHost) erro
 		return fmt.Errorf("list bindings for host %s: %w", host.ID, err)
 	}
 	budget := o.inspectBudget()
+	cost := o.sessionCost()
 	var errs []error
 	deferred := 0
 	for _, binding := range bindings {
@@ -183,11 +208,11 @@ func (o *Observer) pollHost(ctx context.Context, host domain.ExecutionHost) erro
 		if !o.isDue(binding.SessionID, now) {
 			continue
 		}
-		if budget <= 0 {
+		if budget < cost {
 			deferred++
 			continue
 		}
-		budget--
+		budget -= cost
 		if err := o.observeSession(ctx, remote, host, status, binding, now); err != nil {
 			errs = append(errs, err)
 		}
@@ -279,6 +304,18 @@ func (o *Observer) observeSession(
 	}
 	if err := o.store.MarkSessionExecutionObserved(ctx, binding.SessionID, now); err != nil {
 		errs = append(errs, err)
+	}
+	// Reports are read after the inspection they accompany, and their failures
+	// are logged rather than returned: an unreadable report channel says nothing
+	// about the session, whose facts this tick already established.
+	if o.reports != nil {
+		if result, err := o.reports.IngestSession(ctx, binding); err != nil {
+			o.logger.Warn("paseo observer: report ingest failed; session facts unchanged",
+				"session", binding.SessionID, "err", err)
+		} else if result.Applied > 0 || result.Malformed > 0 || result.Gaps > 0 {
+			o.logger.Debug("paseo observer: reports ingested", "session", binding.SessionID,
+				"applied", result.Applied, "malformed", result.Malformed, "gaps", result.Gaps)
+		}
 	}
 
 	next := o.cold
@@ -444,14 +481,23 @@ func (v *orphanVerifier) verify(ctx context.Context, agentID domain.ExecutionAge
 	return detail, true
 }
 
-// inspectBudget is how many agent reads fit in one tick, minus the host status
-// probe that every tick already spends.
+// inspectBudget is how many remote invocations fit in one tick, minus the host
+// status probe that every tick already spends.
 func (o *Observer) inspectBudget() int {
 	budget := int(o.hot/o.latency) - 1
 	if budget < 1 {
 		return 1
 	}
 	return budget
+}
+
+// sessionCost is how many invocations one due session spends: its inspect, plus
+// a report read when reports are configured.
+func (o *Observer) sessionCost() int {
+	if o.reports == nil {
+		return 1
+	}
+	return 2
 }
 
 func (o *Observer) isDue(sessionID domain.SessionID, now time.Time) bool {

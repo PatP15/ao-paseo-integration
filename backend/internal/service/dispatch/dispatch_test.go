@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -183,6 +185,8 @@ type idempotentBackend struct {
 	agents             map[domain.ExecutionIntentID]domain.ExecutionAgent
 	workspaceCreations int
 	agentCreations     int
+	prompts            []string
+	onLaunch           func()
 }
 
 func newIdempotentBackend() *idempotentBackend {
@@ -208,8 +212,12 @@ func (b *idempotentBackend) Provision(_ context.Context, req ports.ExecutionProv
 }
 
 func (b *idempotentBackend) Launch(_ context.Context, req ports.ExecutionLaunchRequest) (domain.ExecutionAgent, error) {
+	if b.onLaunch != nil {
+		b.onLaunch()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.prompts = append(b.prompts, req.Prompt)
 	if agent, ok := b.agents[req.IntentID]; ok {
 		return agent, nil
 	}
@@ -220,4 +228,76 @@ func (b *idempotentBackend) Launch(_ context.Context, req ports.ExecutionLaunchR
 	}
 	b.agents[req.IntentID] = agent
 	return agent, nil
+}
+
+func TestDeliveryCommitsOneBriefBeforeTheLaunchItAuthorizes(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 7, 5, 0, 0, 0, time.UTC)
+	store := newDispatchTestStore(t, now)
+	dispatched, err := New(store).Dispatch(ctx, testDispatchRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backend := newIdempotentBackend()
+	backend.onLaunch = func() {
+		// The brief carries the launch's report nonce. Minting it after the agent
+		// starts would leave a running agent reporting under a nonce AO never
+		// recorded, and those reports would be unreadable forever.
+		if _, found, err := store.GetLatestSessionBrief(ctx, dispatched.Session.ID); err != nil || !found {
+			t.Fatalf("launch began with no committed brief: found=%v err=%v", found, err)
+		}
+	}
+	worker := NewWorkerWithBriefs(store, BackendResolverFunc(func(domain.ExecutionHostID) (ports.ExecutionBackend, bool) {
+		return backend, true
+	}), paseoevent.NewBriefs(store))
+	worker.now = func() time.Time { return now }
+	worker.lease = time.Second
+
+	// Crash after the workspace exists, then replay the whole delivery.
+	worker.checkpoint = func(got deliveryCheckpoint) error {
+		if got == checkpointProvisioned {
+			return errSimulatedCrash
+		}
+		return nil
+	}
+	if delivered, err := worker.DeliverOne(ctx); !delivered || !errors.Is(err, errSimulatedCrash) {
+		t.Fatalf("first delivery = (%v, %v), want the simulated crash", delivered, err)
+	}
+	now = now.Add(2 * time.Second)
+	worker.checkpoint = nil
+	if delivered, err := worker.DeliverOne(ctx); err != nil || !delivered {
+		t.Fatalf("replayed delivery = (%v, %v)", delivered, err)
+	}
+
+	row, found, err := store.GetLatestSessionBrief(ctx, dispatched.Session.ID)
+	if err != nil || !found {
+		t.Fatalf("brief after replay: found=%v err=%v", found, err)
+	}
+	// One brief, one nonce: a redelivery must not supersede the contract the
+	// first attempt may already have handed to an agent.
+	if row.Version != 1 || row.SupersedesBriefID != "" {
+		t.Fatalf("brief = %#v, want a single version", row)
+	}
+	brief, err := paseoevent.DecodeBrief(row.BriefJSON)
+	if err != nil {
+		t.Fatalf("decode brief: %v", err)
+	}
+	if brief.LaunchID != dispatched.Binding.LaunchID || brief.ReportNonce != row.ReportNonce {
+		t.Fatalf("brief = %#v, want it bound to this launch", brief)
+	}
+	if len(backend.prompts) == 0 {
+		t.Fatal("no launch prompt recorded")
+	}
+	for _, prompt := range backend.prompts {
+		if prompt != brief.Prompt() {
+			t.Fatalf("launch prompt is not the brief's:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, row.ReportNonce) {
+			t.Fatal("the launched agent was never told its report nonce")
+		}
+		if !strings.Contains(prompt, testDispatchRequest().Prompt) {
+			t.Fatal("the brief dropped the approved work prompt")
+		}
+	}
 }

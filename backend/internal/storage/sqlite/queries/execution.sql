@@ -103,6 +103,19 @@ SELECT * FROM session_execution_bindings WHERE session_id = ?;
 UPDATE session_execution_bindings SET last_observed_at = ?
 WHERE session_id = ? AND archived_at = '';
 
+-- The report cursor only ever moves forward on the terminal it was measured
+-- against: a stale pass must not rewind a cursor a later one already advanced,
+-- and a cursor read from a replaced terminal addresses nothing. Zero is the one
+-- allowed rewind, which is how a caller that saw the cursor move backwards
+-- restarts from the beginning.
+-- name: AdvanceExecutionEventCursor :execrows
+UPDATE session_execution_bindings
+SET terminal_lines_consumed = sqlc.arg(consumed)
+WHERE session_id = sqlc.arg(session_id)
+  AND archived_at = ''
+  AND terminal_id = sqlc.arg(terminal_id)
+  AND (terminal_lines_consumed < sqlc.arg(consumed) OR sqlc.arg(consumed) = 0);
+
 -- name: FindSessionExecutionBindingsByIntent :many
 SELECT * FROM session_execution_bindings WHERE intent_id = ? ORDER BY session_id;
 
@@ -119,6 +132,12 @@ INSERT INTO session_briefs (
     id, session_id, version, schema_version, brief_json, brief_sha256,
     report_nonce, created_at, supersedes_brief_id
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- The highest version is the current contract; earlier versions stay readable
+-- because a brief is never rewritten.
+-- name: GetLatestSessionBrief :one
+SELECT * FROM session_briefs
+WHERE session_id = ? ORDER BY version DESC LIMIT 1;
 
 -- name: InsertExecutionCommand :exec
 INSERT INTO execution_commands (
@@ -187,6 +206,16 @@ ON CONFLICT DO NOTHING;
 -- name: ListExecutionEventsBySession :many
 SELECT * FROM execution_events WHERE session_id = ? ORDER BY ingested_at, id;
 
+-- Agent-authored reports are recorded before they are applied, so the applied
+-- flag is what a replay after a crash reads to know it still owes the apply.
+-- name: GetExecutionReportApplied :one
+SELECT applied FROM execution_events
+WHERE session_id = ? AND protocol_event_id = ?;
+
+-- name: MarkExecutionReportApplied :execrows
+UPDATE execution_events SET applied = 1
+WHERE session_id = ? AND protocol_event_id = ? AND applied = 0;
+
 -- Callers derive the id from the fact's identity (session plus external request
 -- id), so re-observing an unanswered request is a no-op rather than a duplicate
 -- inbox entry. :execrows lets the caller tell "opened" from "already open".
@@ -206,12 +235,15 @@ WHERE id = ? AND state = 'open';
 -- name: ListOpenHumanQuestions :many
 SELECT * FROM human_questions WHERE state = 'open' ORDER BY created_at, id;
 
--- name: InsertSessionCheckpoint :exec
+-- A replayed report lands on the row its sequence already owns, so ingesting the
+-- same checkpoint twice is a no-op rather than a duplicate progress entry.
+-- name: InsertSessionCheckpoint :execrows
 INSERT INTO session_checkpoints (
     id, session_id, sequence, summary, completed_steps_json,
     remaining_steps_json, test_evidence_json, commit_sha, branch_pushed,
     created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING;
 
 -- name: ListSessionCheckpoints :many
 SELECT * FROM session_checkpoints WHERE session_id = ? ORDER BY sequence;

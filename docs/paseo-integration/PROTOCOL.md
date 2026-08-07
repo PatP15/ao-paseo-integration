@@ -58,8 +58,16 @@ heuristics. Critically, **no LLM is in the byte path**: an AO-installed reporter
 the PTY, so framing does not depend on model compliance.
 
 Constraints, all **[SPIKE]**: it is a PTY, so `lines` are *screen* lines hard-wrapped at `COLS`
-(mitigated by emitting 76-char base64 chunks with a `k/n` header); scrollback depth is bounded; and
-the terminal is a workspace resource that dies with the workspace.
+(mitigated by chunking, below); scrollback depth is bounded; and the terminal is a workspace resource
+that dies with the workspace.
+
+**Frame geometry.** The mitigation is that no emitted line can wrap, so the fixed quantity is the
+*line* width, not the chunk width: `AO_EVENT_<nonce> kkk/nnn <crc32> <chunk>;` at **76 columns**,
+leaving 36 base64 characters per chunk after the 39-column header and the terminator. An earlier
+draft of this section specified 76-character *chunks*; with any header that exceeds the measured
+80-column limit and wraps, which is the exact failure chunking exists to prevent. The `k/n` header
+is zero-padded so every frame in a group is the same width, and the trailing `;` is what distinguishes
+a truncated line from a short final chunk.
 
 ### Rung 1 — the `AO_EVENT` sentinel (advisory only)
 

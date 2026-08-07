@@ -3,6 +3,7 @@ package paseo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -77,6 +78,8 @@ type fakeExecutionClient struct {
 	inspectErr      error
 	logs            string
 	logsErr         error
+	capture         TerminalCapture
+	captureErr      error
 	stopErr         error
 	sendErr         error
 	calls           []string
@@ -174,6 +177,18 @@ func (c *fakeExecutionClient) Logs(_ context.Context, id string) (string, error)
 func (c *fakeExecutionClient) Send(_ context.Context, id, message string) error {
 	c.record("send:" + id + ":" + message)
 	return c.sendErr
+}
+
+func (c *fakeExecutionClient) CaptureTerminal(_ context.Context, id string, start, end int) (TerminalCapture, error) {
+	c.record(fmt.Sprintf("capture:%s:%d:%d", id, start, end))
+	if c.captureErr != nil {
+		return TerminalCapture{}, c.captureErr
+	}
+	capture := c.capture
+	if capture.TerminalID == "" {
+		capture.TerminalID = id
+	}
+	return capture, nil
 }
 
 func provisionRequest() ports.ExecutionProvisionRequest {

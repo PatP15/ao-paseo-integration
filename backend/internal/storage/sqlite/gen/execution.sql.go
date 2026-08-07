@@ -29,6 +29,34 @@ func (q *Queries) AcknowledgeExecutionCommand(ctx context.Context, arg Acknowled
 	return result.RowsAffected()
 }
 
+const advanceExecutionEventCursor = `-- name: AdvanceExecutionEventCursor :execrows
+UPDATE session_execution_bindings
+SET terminal_lines_consumed = ?1
+WHERE session_id = ?2
+  AND archived_at = ''
+  AND terminal_id = ?3
+  AND (terminal_lines_consumed < ?1 OR ?1 = 0)
+`
+
+type AdvanceExecutionEventCursorParams struct {
+	Consumed   int64
+	SessionID  string
+	TerminalID string
+}
+
+// The report cursor only ever moves forward on the terminal it was measured
+// against: a stale pass must not rewind a cursor a later one already advanced,
+// and a cursor read from a replaced terminal addresses nothing. Zero is the one
+// allowed rewind, which is how a caller that saw the cursor move backwards
+// restarts from the beginning.
+func (q *Queries) AdvanceExecutionEventCursor(ctx context.Context, arg AdvanceExecutionEventCursorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, advanceExecutionEventCursor, arg.Consumed, arg.SessionID, arg.TerminalID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const answerHumanQuestion = `-- name: AnswerHumanQuestion :execrows
 UPDATE human_questions
 SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?, delivery_command_id = ?
@@ -256,6 +284,49 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 		&i.LastProbeError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getExecutionReportApplied = `-- name: GetExecutionReportApplied :one
+SELECT applied FROM execution_events
+WHERE session_id = ? AND protocol_event_id = ?
+`
+
+type GetExecutionReportAppliedParams struct {
+	SessionID       string
+	ProtocolEventID string
+}
+
+// Agent-authored reports are recorded before they are applied, so the applied
+// flag is what a replay after a crash reads to know it still owes the apply.
+func (q *Queries) GetExecutionReportApplied(ctx context.Context, arg GetExecutionReportAppliedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionReportApplied, arg.SessionID, arg.ProtocolEventID)
+	var applied int64
+	err := row.Scan(&applied)
+	return applied, err
+}
+
+const getLatestSessionBrief = `-- name: GetLatestSessionBrief :one
+SELECT id, session_id, version, schema_version, brief_json, brief_sha256, report_nonce, created_at, supersedes_brief_id FROM session_briefs
+WHERE session_id = ? ORDER BY version DESC LIMIT 1
+`
+
+// The highest version is the current contract; earlier versions stay readable
+// because a brief is never rewritten.
+func (q *Queries) GetLatestSessionBrief(ctx context.Context, sessionID string) (SessionBrief, error) {
+	row := q.db.QueryRowContext(ctx, getLatestSessionBrief, sessionID)
+	var i SessionBrief
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.Version,
+		&i.SchemaVersion,
+		&i.BriefJson,
+		&i.BriefSha256,
+		&i.ReportNonce,
+		&i.CreatedAt,
+		&i.SupersedesBriefID,
 	)
 	return i, err
 }
@@ -555,12 +626,13 @@ func (q *Queries) InsertSessionBrief(ctx context.Context, arg InsertSessionBrief
 	return err
 }
 
-const insertSessionCheckpoint = `-- name: InsertSessionCheckpoint :exec
+const insertSessionCheckpoint = `-- name: InsertSessionCheckpoint :execrows
 INSERT INTO session_checkpoints (
     id, session_id, sequence, summary, completed_steps_json,
     remaining_steps_json, test_evidence_json, commit_sha, branch_pushed,
     created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING
 `
 
 type InsertSessionCheckpointParams struct {
@@ -576,8 +648,10 @@ type InsertSessionCheckpointParams struct {
 	CreatedAt          string
 }
 
-func (q *Queries) InsertSessionCheckpoint(ctx context.Context, arg InsertSessionCheckpointParams) error {
-	_, err := q.db.ExecContext(ctx, insertSessionCheckpoint,
+// A replayed report lands on the row its sequence already owns, so ingesting the
+// same checkpoint twice is a no-op rather than a duplicate progress entry.
+func (q *Queries) InsertSessionCheckpoint(ctx context.Context, arg InsertSessionCheckpointParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertSessionCheckpoint,
 		arg.ID,
 		arg.SessionID,
 		arg.Sequence,
@@ -589,7 +663,10 @@ func (q *Queries) InsertSessionCheckpoint(ctx context.Context, arg InsertSession
 		arg.BranchPushed,
 		arg.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const listActiveSessionExecutionBindingsByHost = `-- name: ListActiveSessionExecutionBindingsByHost :many
@@ -973,6 +1050,24 @@ func (q *Queries) ListSessionCheckpoints(ctx context.Context, sessionID string) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const markExecutionReportApplied = `-- name: MarkExecutionReportApplied :execrows
+UPDATE execution_events SET applied = 1
+WHERE session_id = ? AND protocol_event_id = ? AND applied = 0
+`
+
+type MarkExecutionReportAppliedParams struct {
+	SessionID       string
+	ProtocolEventID string
+}
+
+func (q *Queries) MarkExecutionReportApplied(ctx context.Context, arg MarkExecutionReportAppliedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markExecutionReportApplied, arg.SessionID, arg.ProtocolEventID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const nextExecutionCommandSequence = `-- name: NextExecutionCommandSequence :one

@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/execution/fake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -644,5 +645,94 @@ func TestObserverSkipsDisabledAndLocalHosts(t *testing.T) {
 	}
 	if len(operations(remote)) != 0 {
 		t.Fatalf("calls = %v, want none", operations(remote))
+	}
+}
+
+type recordingIngestor struct {
+	sessions []domain.SessionID
+	err      error
+	result   paseoevent.Result
+}
+
+func (i *recordingIngestor) IngestSession(_ context.Context, binding domain.SessionExecutionBinding) (paseoevent.Result, error) {
+	i.sessions = append(i.sessions, binding.SessionID)
+	return i.result, i.err
+}
+
+func newReportingObserver(store *memoryStore, reports ReportIngestor, remote ports.ExecutionObserver) *Observer {
+	observer := NewWithReports(store, &fakeLifecycle{}, ObserverResolverFunc(
+		func(domain.ExecutionHostID) (ports.ExecutionObserver, bool) { return remote, true },
+	), reports, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	observer.now = func() time.Time { return observerNow }
+	for _, host := range store.hosts {
+		observer.lastSweep[host.ID] = observerNow
+	}
+	return observer
+}
+
+func TestObserverReadsReportsAfterInspectingASession(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	store.bindings["host-1"] = []domain.SessionExecutionBinding{binding("session-1", "agent-1")}
+	remote := newRemote()
+	remote.SetAgent(detail("agent-1", domain.ExecutionAgentRunning), true)
+	reports := &recordingIngestor{result: paseoevent.Result{Applied: 1}}
+
+	if err := newReportingObserver(store, reports, remote).Poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if len(reports.sessions) != 1 || reports.sessions[0] != "session-1" {
+		t.Fatalf("ingested sessions = %v", reports.sessions)
+	}
+	if _, observed := store.observedAt["session-1"]; !observed {
+		t.Fatal("the session's own facts were not recorded")
+	}
+}
+
+func TestObserverBudgetsTheExtraReportRead(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	remote := newRemote()
+	var bindings []domain.SessionExecutionBinding
+	for _, id := range []domain.SessionID{"s1", "s2", "s3", "s4"} {
+		agentID := domain.ExecutionAgentID("agent-" + string(id))
+		bindings = append(bindings, binding(id, agentID))
+		remote.SetAgent(detail(agentID, domain.ExecutionAgentRunning), true)
+	}
+	store.bindings["host-1"] = bindings
+	reports := &recordingIngestor{}
+
+	if err := newReportingObserver(store, reports, remote).Poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	// Four invocations fit in a hot tick after the status probe, and a session
+	// that also has its reports read costs two of them. Spending more would push
+	// the tick past its interval instead of deferring work to the next one.
+	if got, want := inspectCount(remote), 2; got != want {
+		t.Fatalf("inspected %d sessions, want %d: %v", got, want, operations(remote))
+	}
+	if len(reports.sessions) != 2 {
+		t.Fatalf("ingested %v, want two sessions", reports.sessions)
+	}
+}
+
+func TestObserverKeepsSessionFactsWhenReportIngestFails(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	store.bindings["host-1"] = []domain.SessionExecutionBinding{binding("session-1", "agent-1")}
+	remote := newRemote()
+	remote.SetAgent(detail("agent-1", domain.ExecutionAgentRunning), true)
+	reports := &recordingIngestor{err: errors.New("capture failed")}
+
+	// An unreadable report channel says nothing about the session, whose facts
+	// this tick already established from its inspect.
+	if err := newReportingObserver(store, reports, remote).Poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if len(store.observations) != 1 {
+		t.Fatalf("observations = %#v", store.observations)
+	}
+	if _, observed := store.observedAt["session-1"]; !observed {
+		t.Fatal("a report failure discarded the session's observation")
 	}
 }

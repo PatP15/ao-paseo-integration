@@ -41,6 +41,29 @@ type ExecutionObserver interface {
 	Inspect(ctx context.Context, hostID domain.ExecutionHostID, agentID domain.ExecutionAgentID) (domain.ExecutionAgentDetail, error)
 }
 
+// ExecutionTerminalReader is the cursored read surface agent-authored reports
+// arrive on. start and end are line addresses into a monotonic cursor, so a
+// caller reads forward without re-parsing what it already consumed.
+//
+// Implementations must be read-only and must return an error rather than an
+// empty window when the host cannot be reached: an empty window is
+// indistinguishable from a quiet agent.
+type ExecutionTerminalReader interface {
+	CaptureTerminal(ctx context.Context, hostID domain.ExecutionHostID, terminalID string, start, end int64) (domain.ExecutionEventWindow, error)
+}
+
+// ExecutionTranscriptReader is the uncursored fallback: the whole rendered
+// transcript, every call.
+//
+// There is no cursor and no server-side filter to ask for, which is what makes
+// full replay safe — a caller cannot miss a report that is still on the
+// transcript. Implementations must not narrow the read (no filter, no tail, no
+// follow): each of those drops or reorders entries and would silently discard
+// reports AO has not seen.
+type ExecutionTranscriptReader interface {
+	Transcript(ctx context.Context, hostID domain.ExecutionHostID, agentID domain.ExecutionAgentID) (string, error)
+}
+
 // ExecutionProvisionRequest is AO's request to materialize one remote workspace.
 type ExecutionProvisionRequest struct {
 	SessionID      domain.SessionID

@@ -307,6 +307,40 @@ func (q *Queries) GetExecutionReportApplied(ctx context.Context, arg GetExecutio
 	return applied, err
 }
 
+const getHumanQuestion = `-- name: GetHumanQuestion :one
+SELECT id, session_id, work_item_id, source, external_question_id, question, recommendation, options_json, state, answer, answered_by, answered_at, delivery_command_id, created_at FROM human_questions WHERE id = ?
+`
+
+// Fetched by id rather than filtered out of the open list, so a stale id is a
+// clean "not found" while an already-answered one is a clean "not open". Those
+// are different answers to a human clicking twice, and a scan of the open list
+// cannot tell them apart.
+//
+// Keep every comment in this file ASCII: sqlc's query rewriter offsets by byte
+// but counts by rune, so one multi-byte character above a query corrupts the
+// SQL it generates for the queries below it.
+func (q *Queries) GetHumanQuestion(ctx context.Context, id string) (HumanQuestion, error) {
+	row := q.db.QueryRowContext(ctx, getHumanQuestion, id)
+	var i HumanQuestion
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.WorkItemID,
+		&i.Source,
+		&i.ExternalQuestionID,
+		&i.Question,
+		&i.Recommendation,
+		&i.OptionsJson,
+		&i.State,
+		&i.Answer,
+		&i.AnsweredBy,
+		&i.AnsweredAt,
+		&i.DeliveryCommandID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLatestSessionBrief = `-- name: GetLatestSessionBrief :one
 SELECT id, session_id, version, schema_version, brief_json, brief_sha256, report_nonce, created_at, supersedes_brief_id FROM session_briefs
 WHERE session_id = ? ORDER BY version DESC LIMIT 1

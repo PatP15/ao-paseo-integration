@@ -79,6 +79,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "execution"}).WithDescription(
+			"Remote execution hosts, work dispatch, and the human inbox of questions and permission decisions"),
 	}
 
 	for _, op := range operations() {
@@ -217,6 +219,21 @@ var schemaNames = map[string]string{
 	"ControllersShellTerminalResponse":      "ShellTerminalResponse",
 	"ControllersListShellTerminalsResponse": "ListShellTerminalsResponse",
 	"ControllersShellTerminalEnvelope":      "ShellTerminalEnvelope",
+	// httpd/controllers — remote-execution wire envelopes. The path-param
+	// containers and the domain id/enum aliases are absent on purpose: swaggest
+	// inlines both rather than emitting a component, so an entry for one would be
+	// a name this map can never be asked for.
+	"ControllersExecutionHostResponse":            "ExecutionHostResponse",
+	"ControllersListExecutionHostsResponse":       "ListExecutionHostsResponse",
+	"ControllersExecutionHostEnvelope":            "ExecutionHostEnvelope",
+	"ControllersRegisterExecutionHostRequest":     "RegisterExecutionHostRequest",
+	"ControllersDispatchExecutionRequest":         "DispatchExecutionRequest",
+	"ControllersDispatchExecutionResponse":        "DispatchExecutionResponse",
+	"ControllersExecutionQuestionResponse":        "ExecutionQuestionResponse",
+	"ControllersListExecutionQuestionsResponse":   "ListExecutionQuestionsResponse",
+	"ControllersAnswerExecutionQuestionRequest":   "AnswerExecutionQuestionRequest",
+	"ControllersDecideExecutionPermissionRequest": "DecideExecutionPermissionRequest",
+	"ControllersExecutionDecisionResponse":        "ExecutionDecisionResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -347,7 +364,95 @@ func operations() []operation {
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, executionOperations()...)
 	return ops
+}
+
+// executionOperations declares the remote-execution control plane. Must stay 1:1
+// with the routes ExecutionController.Register mounts (enforced by the parity
+// test).
+//
+// Answering a question and deciding a permission are separate operations over one
+// storage table, because the two are answerable in different ways and the split
+// is what stops a client replying to a host permission request with prose.
+func executionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts", id: "listExecutionHosts", tag: "execution",
+			summary: "List registered remote execution hosts with capabilities and load",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionHostsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/execution/hosts/{hostId}", id: "registerExecutionHost", tag: "execution",
+			summary:    "Register or replace one remote execution host",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			reqBody:    controllers.RegisterExecutionHostRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/dispatch", id: "dispatchExecution", tag: "execution",
+			summary: "Dispatch one approved work-item attempt to a routed host",
+			reqBody: controllers.DispatchExecutionRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.DispatchExecutionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/questions", id: "listExecutionQuestions", tag: "execution",
+			summary: "List open agent questions and pending host permission requests",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionQuestionsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/questions/{questionId}/answer",
+			id: "answerExecutionQuestion", tag: "execution",
+			summary:    "Answer an agent-authored question with text",
+			pathParams: []any{controllers.ExecutionQuestionIDParam{}},
+			reqBody:    controllers.AnswerExecutionQuestionRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.ExecutionDecisionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict covers both "already answered" and "this item is a host
+				// permission request, which text cannot discharge".
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/permissions/{questionId}/decision",
+			id: "decideExecutionPermission", tag: "execution",
+			summary:    "Allow or deny a pending host permission request",
+			pathParams: []any{controllers.ExecutionQuestionIDParam{}},
+			reqBody:    controllers.DecideExecutionPermissionRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.ExecutionDecisionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {

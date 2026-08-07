@@ -235,6 +235,17 @@ WHERE id = ? AND state = 'open';
 -- name: ListOpenHumanQuestions :many
 SELECT * FROM human_questions WHERE state = 'open' ORDER BY created_at, id;
 
+-- Fetched by id rather than filtered out of the open list, so a stale id is a
+-- clean "not found" while an already-answered one is a clean "not open". Those
+-- are different answers to a human clicking twice, and a scan of the open list
+-- cannot tell them apart.
+--
+-- Keep every comment in this file ASCII: sqlc's query rewriter offsets by byte
+-- but counts by rune, so one multi-byte character above a query corrupts the
+-- SQL it generates for the queries below it.
+-- name: GetHumanQuestion :one
+SELECT * FROM human_questions WHERE id = ?;
+
 -- A replayed report lands on the row its sequence already owns, so ingesting the
 -- same checkpoint twice is a no-op rather than a duplicate progress entry.
 -- name: InsertSessionCheckpoint :execrows

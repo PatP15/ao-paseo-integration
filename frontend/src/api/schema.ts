@@ -123,6 +123,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch one approved work-item attempt to a routed host */
+        post: operations["dispatchExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered remote execution hosts with capabilities and load */
+        get: operations["listExecutionHosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts/{hostId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Register or replace one remote execution host */
+        put: operations["registerExecutionHost"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/permissions/{questionId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Allow or deny a pending host permission request */
+        post: operations["decideExecutionPermission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List open agent questions and pending host permission requests */
+        get: operations["listExecutionQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/questions/{questionId}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer an agent-authored question with text */
+        post: operations["answerExecutionQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import": {
         parameters: {
             query?: never;
@@ -900,6 +1002,11 @@ export interface components {
             id: string;
             label: string;
         };
+        AnswerExecutionQuestionRequest: {
+            answer: string;
+            /** @description Recorded in the audit log. Defaults to "human". */
+            answeredBy?: string;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -976,6 +1083,15 @@ export interface components {
             data: string;
             mimeType?: string;
         };
+        DecideExecutionPermissionRequest: {
+            /** @description Recorded in the audit log. Defaults to "human". */
+            decidedBy?: string;
+            /** @enum {string} */
+            decision: "allow" | "deny";
+            note?: string;
+            /** @description Optional confirmation. Must equal the full host request id AO observed; a truncated id is rejected. */
+            requestId?: string;
+        };
         DegradedProject: {
             id: string;
             /** @enum {string} */
@@ -1007,6 +1123,34 @@ export interface components {
         DevImportProjectsResponse: {
             report: components["schemas"]["DevImportProjectsReport"];
         };
+        DispatchExecutionRequest: {
+            branch: string;
+            displayName?: string;
+            /** @description AO harness recorded for the session. Must be one AO already supports. */
+            harness: string;
+            issueId?: string;
+            mode?: string;
+            model?: string;
+            projectId: string;
+            prompt: string;
+            /** @description Remote provider to launch, e.g. claude or codex. */
+            provider: string;
+            requiredCapabilities?: string[];
+            /** @enum {string} */
+            trustZone: "hobby" | "work" | "mixed";
+            workItemId: string;
+        };
+        DispatchExecutionResponse: {
+            attempt: number;
+            commandId: string;
+            /** @enum {string} */
+            commandState: "pending" | "delivering" | "acknowledged" | "failed";
+            hostId: string;
+            /** @description Correlates the launch with later reconciliation if AO dies mid-create. */
+            intentId: string;
+            sessionId: string;
+            workspaceTitle: string;
+        };
         DomainActivity: {
             /** Format: date-time */
             lastActivityAt: string;
@@ -1014,6 +1158,67 @@ export interface components {
         };
         DomainReviewerConfig: {
             harness: string;
+        };
+        ExecutionDecisionResponse: {
+            commandId: string;
+            /** @enum {string} */
+            commandState: "pending" | "delivering" | "acknowledged" | "failed";
+            /** @enum {string} */
+            commandType: "send_message" | "answer_permission" | "deny_permission";
+            questionId: string;
+            sessionId: string;
+        };
+        ExecutionHostEnvelope: {
+            host: components["schemas"]["ExecutionHostResponse"];
+        };
+        ExecutionHostResponse: {
+            /** @description Live bindings on this host, counted at read time. */
+            activeSessions: number;
+            /** @description Execution substrate that owns sessions on this host. */
+            backendType: string;
+            capabilities: string[];
+            enabled: boolean;
+            /** @description Host string used to reach the remote daemon. Always contains a colon. */
+            endpoint: string;
+            /** @description Reference to the stored credential. Never the credential itself. */
+            endpointSecretRef: string;
+            id: string;
+            /** Format: date-time */
+            lastFailedProbeAt?: string;
+            lastProbeError?: string;
+            /** Format: date-time */
+            lastSuccessfulProbeAt?: string;
+            maxConcurrentSessions: number;
+            name: string;
+            paseoVersion: string;
+            /** @description Derived from the most recent probe. Unreachable is a fact about the host only; it never implies its sessions are dead. */
+            reachable: boolean;
+            /** @description Always true: AO only drives hosts whose daemon disables agent-control tool injection. */
+            requiresNoMcp: boolean;
+            requiresNoRelay: boolean;
+            /** @description Server identity observed by a probe. A change invalidates every agent id AO holds for this host. */
+            serverId: string;
+            /** @enum {string} */
+            transport: "local" | "tailscale" | "lan" | "paseo_relay";
+            /** @enum {string} */
+            trustZone: "hobby" | "work" | "mixed";
+        };
+        ExecutionQuestionResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            /** @description Source identifier: the report event id, or the host's full permission request id. */
+            externalId: string;
+            id: string;
+            options: string[];
+            question: string;
+            recommendation?: string;
+            sessionId: string;
+            /**
+             * @description agent_event is answerable with text; paseo_permission requires an allow/deny decision.
+             * @enum {string}
+             */
+            source: "agent_event" | "paseo_permission";
+            workItemId?: string;
         };
         ImportReport: {
             dryRun: boolean;
@@ -1046,6 +1251,12 @@ export interface components {
             installed: components["schemas"]["AgentInfo"][];
             /** @description Agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
+        };
+        ListExecutionHostsResponse: {
+            hosts: components["schemas"]["ExecutionHostResponse"][];
+        };
+        ListExecutionQuestionsResponse: {
+            questions: components["schemas"]["ExecutionQuestionResponse"][];
         };
         ListNotificationsResponse: {
             nextCursor?: string;
@@ -1240,6 +1451,24 @@ export interface components {
             lastSeenAt: string;
             platform?: string;
             token: string;
+        };
+        RegisterExecutionHostRequest: {
+            /** @description Routable capabilities, matched exactly during host selection. */
+            capabilities?: string[];
+            enabled: boolean;
+            /** @description Host string for the remote daemon. Must contain a colon and must not embed a credential. */
+            endpoint: string;
+            /** @description Reference to a stored credential. Pass a reference, never a password or offer URL. */
+            endpointSecretRef?: string;
+            maxConcurrentSessions: number;
+            name: string;
+            /** @description Must be true. AO refuses hosts whose daemon injects agent-control tools. */
+            requiresNoMcp: boolean;
+            requiresNoRelay?: boolean;
+            /** @enum {string} */
+            transport: "local" | "tailscale" | "lan" | "paseo_relay";
+            /** @enum {string} */
+            trustZone: "hobby" | "work" | "mixed";
         };
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
@@ -1962,6 +2191,349 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    dispatchExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispatchExecutionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DispatchExecutionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionHosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListExecutionHostsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    registerExecutionHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Execution host identifier. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterExecutionHostRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionHostEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    decideExecutionPermission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Human-inbox question identifier. */
+                questionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecideExecutionPermissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionDecisionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListExecutionQuestionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    answerExecutionQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Human-inbox question identifier. */
+                questionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerExecutionQuestionRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionDecisionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -33,6 +33,8 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
+	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
+	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -278,6 +280,12 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		// Remote execution is served read/write from the store alone: the host
+		// registry and the human inbox are durable facts, and a dispatch commits
+		// facts plus an outbox command. Neither path contacts a host, so both work
+		// with no execution backend registered yet.
+		Execution:         executionsvc.New(store),
+		ExecutionDispatch: dispatchsvc.New(store),
 	})
 	if err != nil {
 		stop()

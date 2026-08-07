@@ -301,6 +301,264 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/execution/dispatch:
+    post:
+      operationId: dispatchExecution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DispatchExecutionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchExecutionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Dispatch one approved work-item attempt to a routed host
+      tags:
+      - execution
+  /api/v1/execution/hosts:
+    get:
+      operationId: listExecutionHosts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExecutionHostsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List registered remote execution hosts with capabilities and load
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}:
+    put:
+      operationId: registerExecutionHost
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterExecutionHostRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionHostEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Register or replace one remote execution host
+      tags:
+      - execution
+  /api/v1/execution/permissions/{questionId}/decision:
+    post:
+      operationId: decideExecutionPermission
+      parameters:
+      - description: Human-inbox question identifier.
+        in: path
+        name: questionId
+        required: true
+        schema:
+          description: Human-inbox question identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideExecutionPermissionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionDecisionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Allow or deny a pending host permission request
+      tags:
+      - execution
+  /api/v1/execution/questions:
+    get:
+      operationId: listExecutionQuestions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExecutionQuestionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List open agent questions and pending host permission requests
+      tags:
+      - execution
+  /api/v1/execution/questions/{questionId}/answer:
+    post:
+      operationId: answerExecutionQuestion
+      parameters:
+      - description: Human-inbox question identifier.
+        in: path
+        name: questionId
+        required: true
+        schema:
+          description: Human-inbox question identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerExecutionQuestionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionDecisionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer an agent-authored question with text
+      tags:
+      - execution
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -2650,6 +2908,16 @@ components:
       - id
       - label
       type: object
+    AnswerExecutionQuestionRequest:
+      properties:
+        answer:
+          type: string
+        answeredBy:
+          description: Recorded in the audit log. Defaults to "human".
+          type: string
+      required:
+      - answer
+      type: object
     BrowserCommandRequest:
       properties:
         action:
@@ -2861,6 +3129,25 @@ components:
       required:
       - data
       type: object
+    DecideExecutionPermissionRequest:
+      properties:
+        decidedBy:
+          description: Recorded in the audit log. Defaults to "human".
+          type: string
+        decision:
+          enum:
+          - allow
+          - deny
+          type: string
+        note:
+          type: string
+        requestId:
+          description: Optional confirmation. Must equal the full host request id
+            AO observed; a truncated id is rejected.
+          type: string
+      required:
+      - decision
+      type: object
     DegradedProject:
       properties:
         id:
@@ -2945,6 +3232,82 @@ components:
       required:
       - report
       type: object
+    DispatchExecutionRequest:
+      properties:
+        branch:
+          type: string
+        displayName:
+          type: string
+        harness:
+          description: AO harness recorded for the session. Must be one AO already
+            supports.
+          type: string
+        issueId:
+          type: string
+        mode:
+          type: string
+        model:
+          type: string
+        projectId:
+          type: string
+        prompt:
+          type: string
+        provider:
+          description: Remote provider to launch, e.g. claude or codex.
+          type: string
+        requiredCapabilities:
+          items:
+            type: string
+          type: array
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+        workItemId:
+          type: string
+      required:
+      - workItemId
+      - projectId
+      - trustZone
+      - harness
+      - branch
+      - provider
+      - prompt
+      type: object
+    DispatchExecutionResponse:
+      properties:
+        attempt:
+          type: integer
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        hostId:
+          type: string
+        intentId:
+          description: Correlates the launch with later reconciliation if AO dies
+            mid-create.
+          type: string
+        sessionId:
+          type: string
+        workspaceTitle:
+          type: string
+      required:
+      - sessionId
+      - hostId
+      - workspaceTitle
+      - intentId
+      - attempt
+      - commandId
+      - commandState
+      type: object
     DomainActivity:
       properties:
         lastActivityAt:
@@ -2962,6 +3325,162 @@ components:
           type: string
       required:
       - harness
+      type: object
+    ExecutionDecisionResponse:
+      properties:
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        commandType:
+          enum:
+          - send_message
+          - answer_permission
+          - deny_permission
+          type: string
+        questionId:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - questionId
+      - sessionId
+      - commandId
+      - commandType
+      - commandState
+      type: object
+    ExecutionHostEnvelope:
+      properties:
+        host:
+          $ref: '#/components/schemas/ExecutionHostResponse'
+      required:
+      - host
+      type: object
+    ExecutionHostResponse:
+      properties:
+        activeSessions:
+          description: Live bindings on this host, counted at read time.
+          type: integer
+        backendType:
+          description: Execution substrate that owns sessions on this host.
+          type: string
+        capabilities:
+          items:
+            type: string
+          type: array
+        enabled:
+          type: boolean
+        endpoint:
+          description: Host string used to reach the remote daemon. Always contains
+            a colon.
+          type: string
+        endpointSecretRef:
+          description: Reference to the stored credential. Never the credential itself.
+          type: string
+        id:
+          type: string
+        lastFailedProbeAt:
+          format: date-time
+          type: string
+        lastProbeError:
+          type: string
+        lastSuccessfulProbeAt:
+          format: date-time
+          type: string
+        maxConcurrentSessions:
+          type: integer
+        name:
+          type: string
+        paseoVersion:
+          type: string
+        reachable:
+          description: Derived from the most recent probe. Unreachable is a fact about
+            the host only; it never implies its sessions are dead.
+          type: boolean
+        requiresNoMcp:
+          description: 'Always true: AO only drives hosts whose daemon disables agent-control
+            tool injection.'
+          type: boolean
+        requiresNoRelay:
+          type: boolean
+        serverId:
+          description: Server identity observed by a probe. A change invalidates every
+            agent id AO holds for this host.
+          type: string
+        transport:
+          enum:
+          - local
+          - tailscale
+          - lan
+          - paseo_relay
+          type: string
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+      required:
+      - id
+      - name
+      - backendType
+      - transport
+      - endpoint
+      - endpointSecretRef
+      - trustZone
+      - enabled
+      - maxConcurrentSessions
+      - activeSessions
+      - capabilities
+      - reachable
+      - serverId
+      - paseoVersion
+      - requiresNoMcp
+      - requiresNoRelay
+      type: object
+    ExecutionQuestionResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        externalId:
+          description: 'Source identifier: the report event id, or the host''s full
+            permission request id.'
+          type: string
+        id:
+          type: string
+        options:
+          items:
+            type: string
+          type: array
+        question:
+          type: string
+        recommendation:
+          type: string
+        sessionId:
+          type: string
+        source:
+          description: agent_event is answerable with text; paseo_permission requires
+            an allow/deny decision.
+          enum:
+          - agent_event
+          - paseo_permission
+          type: string
+        workItemId:
+          type: string
+      required:
+      - id
+      - sessionId
+      - source
+      - externalId
+      - question
+      - options
+      - createdAt
       type: object
     ImportReport:
       properties:
@@ -3047,6 +3566,24 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListExecutionHostsResponse:
+      properties:
+        hosts:
+          items:
+            $ref: '#/components/schemas/ExecutionHostResponse'
+          type: array
+      required:
+      - hosts
+      type: object
+    ListExecutionQuestionsResponse:
+      properties:
+        questions:
+          items:
+            $ref: '#/components/schemas/ExecutionQuestionResponse'
+          type: array
+      required:
+      - questions
       type: object
     ListNotificationsResponse:
       properties:
@@ -3532,6 +4069,57 @@ components:
       - token
       - createdAt
       - lastSeenAt
+      type: object
+    RegisterExecutionHostRequest:
+      properties:
+        capabilities:
+          description: Routable capabilities, matched exactly during host selection.
+          items:
+            type: string
+          type: array
+        enabled:
+          type: boolean
+        endpoint:
+          description: Host string for the remote daemon. Must contain a colon and
+            must not embed a credential.
+          type: string
+        endpointSecretRef:
+          description: Reference to a stored credential. Pass a reference, never a
+            password or offer URL.
+          type: string
+        maxConcurrentSessions:
+          maximum: 64
+          minimum: 1
+          type: integer
+        name:
+          type: string
+        requiresNoMcp:
+          description: Must be true. AO refuses hosts whose daemon injects agent-control
+            tools.
+          type: boolean
+        requiresNoRelay:
+          type: boolean
+        transport:
+          enum:
+          - local
+          - tailscale
+          - lan
+          - paseo_relay
+          type: string
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+      required:
+      - name
+      - transport
+      - endpoint
+      - trustZone
+      - enabled
+      - maxConcurrentSessions
+      - requiresNoMcp
       type: object
     RegisterPushDeviceRequest:
       properties:
@@ -4452,3 +5040,6 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Remote execution hosts, work dispatch, and the human inbox of questions
+    and permission decisions
+  name: execution

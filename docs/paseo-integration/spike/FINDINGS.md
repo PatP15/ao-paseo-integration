@@ -133,9 +133,7 @@ Nothing in the design docs was contradicted.
 
 ## Follow-up work
 
-- **F1 (highest value)** — re-run S1a with a **hard** case: a long agent reply with interleaved tool
-  calls and reasoning, at 200 B / 2 KB / 8 KB, ten times, measuring the shred rate. This is the only
-  remaining unknown behind the transport decision.
+- ~~**F1**~~ — **DONE. See §F1 below.**
 - **F2** — run the whole spike with `SPIKE_PROVIDER=codex`. Codex emits one timeline row per
   `agent_message_delta` where Claude emits arbitrary byte slices, so its shred behaviour should
   differ and it is the likely workhorse provider.
@@ -166,3 +164,66 @@ than the individual bugs — every one failed *open*, reporting success or a con
 4. **Cleanup's operator-daemon check wrote its snapshot inside the directory it had just deleted**,
    so it reported *"operator daemon not responding"* on all three runs while the daemon was provably
    healthy — a false alarm on the one check whose entire job is proving no harm was done.
+
+---
+
+## F1 — the sentinel hard case (EXECUTED)
+
+S1a only ever proved the *easy* case: one short reply, no interleaved rows, which is precisely when
+`mergeAssistantChunks` succeeds. F1 forces the hard case — a shell command **between** every
+emission, so `tool_call` rows break the seq adjacency the merge depends on.
+
+**Setup.** Nine emissions at 200 B / 2 KB / 8 KB (three each), one `echo` between each, provider
+`claude`, throwaway daemon, 32 KB prompt, 69 KB transcript.
+
+### Result 1 — the sentinel survived, 9/9
+
+| | |
+|---|---|
+| Emissions | 9 |
+| Recovered intact (parsed as JSON) | **9** |
+| Shredded / malformed | **0** |
+
+**The predicted delta-boundary shredding did not reproduce**, at any of the three sizes, under the
+condition designed to trigger it. `PROTOCOL.md` §0 is more pessimistic than this provider warrants.
+
+Do not over-read it: one provider, one run, nine samples. Codex emits one timeline row per
+`agent_message_delta` where Claude emits larger slices, so its behaviour should differ — that is F2,
+and it is now the interesting one. Rung 1 stays **advisory** on this evidence.
+
+### Result 2 — self-poisoning, measured (the more valuable finding)
+
+**18 mentions for 9 emissions**: exactly 9 before the first `tool_call` and 9 after.
+
+- 9 are the **prompt's own examples**, echoed back in the transcript
+- 9 are the agent's real emissions
+- They are **byte-identical**
+
+The `[User] ` prefix lands only on line 1 of a multi-line message, so every example line appears bare
+and indistinguishable from a real event. A naive ingester records **double**, half of them AO's own
+instructions fed back to it.
+
+This is `PROTOCOL.md` §5.2 confirmed with a number, and it makes the **per-launch nonce mandatory
+rather than advisable**. The harness walked straight into it by using the same nonce in the examples
+and the expected output — exactly the mistake the mitigation exists to prevent. The brief's example
+must use a literal `<NONCE>` placeholder that can never match.
+
+### Harness bugs found while running F1
+
+Four, in one small script — and **three were things already documented elsewhere in these docs**:
+
+1. `--prompt-file` passed to `paseo run`, which takes the prompt **positionally** (`--prompt-file` is
+   `send`-only). No agent was created.
+2. **The first run reported "0% survival" for a run where no agent existed** — a harness error
+   wearing the costume of a finding, and the single most dangerous bug here: that number would have
+   read as decisive evidence to delete rung 1. Now exits 2 with `HARNESS ERROR`.
+3. `PASEO_AGENT_ID` not scrubbed. This session runs inside a Paseo agent, so the harness inherited
+   its id — `DECISIONS.md` D23 biting the very script written to test the docs that describe it.
+4. stdout and stderr merged with `2>&1`, so `Using workspace <id>` (stderr) landed on line 1 and
+   every JSON parse failed — the exact split the spike's `capture()` helper already handles.
+
+**Refinement to D23 worth recording.** `SECURITY.md` §6 says a leaked `PASEO_AGENT_ID` "silently
+makes every `paseo run` a child agent sharing the parent's workspace." True — but only against the
+*same* daemon. Against a **different** daemon it hard-fails with `Caller agent … not found`, as it
+did here. So the hazard has two faces, and the quiet one is the dangerous one: a developer testing
+against a throwaway daemon sees this instantly, then has it bite silently in production.

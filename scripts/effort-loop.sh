@@ -175,6 +175,7 @@ fi
 
 # --- the loop --------------------------------------------------------------
 consecutive_gate_failures=0
+consecutive_launch_failures=0
 for (( i = 1; i <= MAX_ITERATIONS; i++ )); do
     hdr "Iteration ${i}/${MAX_ITERATIONS}"
     head_before="$(git -C "${REPO}" rev-parse --short HEAD)"
@@ -188,8 +189,24 @@ for (( i = 1; i <= MAX_ITERATIONS; i++ )); do
         "${WORKER_PROMPT}" 2>"${LOGDIR}/worker-${i}.err")" || {
             bad "worker launch failed; see ${LOGDIR}/worker-${i}.err"; break; }
 
-    agent_id="$(printf '%s' "${run_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("agentId",""))')"
-    [ -n "${agent_id}" ] || { bad "no agentId returned"; break; }
+    agent_id="$(printf '%s' "${run_json}" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("agentId",""))
+except Exception: print("")' 2>/dev/null)"
+    if [ -z "${agent_id}" ]; then
+        # A launch that never produced an agent is usually a usage limit or an
+        # unavailable provider — a condition that will not clear by retrying in
+        # a tight loop. `paseo loop` has no such guard and burned 12 iterations
+        # in two minutes against exactly this error.
+        bad "no agent created (usage limit? provider down?)"
+        sed -n '1,4p' "${LOGDIR}/worker-${i}.err" 2>/dev/null | sed 's/^/       /'
+        consecutive_launch_failures=$(( consecutive_launch_failures + 1 ))
+        if [ "${consecutive_launch_failures}" -ge 2 ]; then
+            bad "worker failed to launch twice — stopping rather than burning iterations"
+            exit 1
+        fi
+        continue
+    fi
+    consecutive_launch_failures=0
     info "worker agent ${agent_id:0:12} (visible in paseo ls, unlike loop-managed agents)"
 
     paseo wait "${agent_id}" --timeout "${WORKER_TIMEOUT_S}" >/dev/null 2>&1

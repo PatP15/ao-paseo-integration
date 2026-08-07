@@ -114,8 +114,17 @@ Read first, in order:
   docs/paseo-integration/ARCHITECTURE.md
   AGENTS.md
 
-Run `git log --oneline -12` to see what has landed. Pick the smallest unblocked
-PR not yet done. A PR is blocked only if it needs a human decision.
+FIRST run BOTH `git log --oneline -12` AND `git status --short`.
+
+If `git status` shows uncommitted work, a previous iteration was cut off
+mid-PR — by a usage limit, a timeout, or an error. FINISH THAT WORK. Do not
+start a different PR on top of it and do not discard it. Run
+./scripts/verify-fork-baseline.sh to see exactly what is broken; a half-finished
+storage PR typically needs `npm run sqlc` plus whatever the build reports. Only
+once the tree is clean and committed should you pick new work.
+
+If the tree IS clean, pick the smallest unblocked PR not yet done. A PR is
+blocked only if it needs a human decision.
 
 HARD RULES:
 - Prefer new files in new packages. This fork rebases weekly against an upstream

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimerouter"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -129,7 +130,8 @@ func Run() error {
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
-	runtimeAdapter := runtimeselect.New(log)
+	localRuntime := runtimeselect.New(log)
+	runtimeAdapter := runtimerouter.New(localRuntime, nil)
 	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()

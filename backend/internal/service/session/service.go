@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runtimehandle"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
@@ -704,11 +705,15 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	prs = deduplicatePRFacts(prs)
+	terminalHandleID := rec.Metadata.RuntimeHandleID
+	if runtimehandle.IsNamespaced(terminalHandleID) {
+		terminalHandleID = ""
+	}
 	return domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
 		SCMStatus:        deriveSCMStatus(prs),
-		TerminalHandleID: rec.Metadata.RuntimeHandleID,
+		TerminalHandleID: terminalHandleID,
 		PRs:              prs,
 	}, nil
 }

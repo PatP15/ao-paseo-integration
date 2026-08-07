@@ -33,6 +33,8 @@ type executionClient interface {
 	Inspect(context.Context, string) (AgentDetail, error)
 	Stop(context.Context, string) error
 	Delete(context.Context, string) error
+	Logs(context.Context, string) (string, error)
+	Send(context.Context, string, string) error
 }
 
 // Backend implements AO's remote execution port using the pinned Paseo CLI
@@ -44,6 +46,7 @@ type Backend struct {
 }
 
 var _ ports.ExecutionBackend = (*Backend)(nil)
+var _ ports.ExecutionRuntime = (*Backend)(nil)
 
 // NewBackend returns a Paseo execution backend. The client is already pinned
 // to a supported CLI version by NewClient.

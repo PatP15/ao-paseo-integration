@@ -64,6 +64,7 @@ func (s *memoryExecutionStore) UpsertSessionExecutionBinding(_ context.Context, 
 
 type fakeExecutionClient struct {
 	status          DaemonStatus
+	statusErr       error
 	workspaces      []Workspace
 	workspaceResult Workspace
 	workspaceErr    error
@@ -71,6 +72,11 @@ type fakeExecutionClient struct {
 	runErr          error
 	agents          []Agent
 	details         map[string]AgentDetail
+	inspectErr      error
+	logs            string
+	logsErr         error
+	stopErr         error
+	sendErr         error
 	calls           []string
 	events          *[]string
 	onCreate        func()
@@ -103,7 +109,7 @@ func (c *fakeExecutionClient) Version() string { return SupportedVersion }
 
 func (c *fakeExecutionClient) Status(context.Context) (DaemonStatus, error) {
 	c.record("status")
-	return c.status, nil
+	return c.status, c.statusErr
 }
 
 func (c *fakeExecutionClient) CreateWorkspace(context.Context, WorkspaceCreateRequest) (Workspace, error) {
@@ -134,6 +140,9 @@ func (c *fakeExecutionClient) ListAgents(context.Context, string) ([]Agent, erro
 
 func (c *fakeExecutionClient) Inspect(_ context.Context, id string) (AgentDetail, error) {
 	c.record("inspect:" + id)
+	if c.inspectErr != nil {
+		return AgentDetail{}, c.inspectErr
+	}
 	detail, found := c.details[id]
 	if !found {
 		return AgentDetail{}, errors.New("missing fake detail")
@@ -143,12 +152,22 @@ func (c *fakeExecutionClient) Inspect(_ context.Context, id string) (AgentDetail
 
 func (c *fakeExecutionClient) Stop(_ context.Context, id string) error {
 	c.record("stop:" + id)
-	return nil
+	return c.stopErr
 }
 
 func (c *fakeExecutionClient) Delete(_ context.Context, id string) error {
 	c.record("delete:" + id)
 	return nil
+}
+
+func (c *fakeExecutionClient) Logs(_ context.Context, id string) (string, error) {
+	c.record("logs:" + id)
+	return c.logs, c.logsErr
+}
+
+func (c *fakeExecutionClient) Send(_ context.Context, id, message string) error {
+	c.record("send:" + id + ":" + message)
+	return c.sendErr
 }
 
 func provisionRequest() ports.ExecutionProvisionRequest {

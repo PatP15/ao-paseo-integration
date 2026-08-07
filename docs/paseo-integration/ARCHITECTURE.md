@@ -222,7 +222,14 @@ attach errors, and the reconnect loop flaps forever. Suppress for namespaced han
 
 ### 5.5 Three explicit refusals
 
-Each currently **misbehaves silently** rather than erroring, which is worse than being unsupported:
+Enforced by `backend/internal/execpolicy`, which owns the shared predicate (durable execution binding
+first, namespaced runtime handle second) and the `ErrRemoteUnsupported` sentinel every refusal
+carries. The binding is consulted as well as the handle because the hazard window opens **before**
+launch: a dispatched-but-not-yet-launched session has a binding row, no handle, and an empty
+`WorkspacePath` — exactly the state a local fallback fires on.
+
+Each site currently **misbehaves silently** rather than erroring, which is worse than being
+unsupported:
 
 - **`review/review.go:183`** — the reviewer engine is local-worktree-bound. Remote review needs a
   separate path; today it returns `ErrInvalid`.
@@ -240,7 +247,10 @@ the local path). No reviewer engine. No spawn attachments. **No AO system prompt
 a local file the argv references. No `restore` / `resume-agent`. No `no_signal` for remote sessions
 (`FirstSignalAt` is set on the first observation, making it unreachable).
 
-Each is a documented refusal with an error, not a silent degradation.
+Each is a documented refusal with an error, not a silent degradation. The three in §5.5 are the ones
+that would otherwise degrade *silently*, so they are fenced in code; the rest already fail on their
+own (`workspace_files.go` `os.Stat`s `""`, `restore`/`resume-agent` reject an empty `WorkspacePath`
+with `ErrIncompleteHandle`) and need no separate gate.
 
 ---
 

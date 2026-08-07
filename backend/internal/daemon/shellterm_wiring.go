@@ -32,7 +32,7 @@ func startShellTerminals(
 		runtime,
 		store,
 		&projectRootLocator{projects: projects},
-		&sessionWorkspaceLocator{sessions: sessions},
+		newSessionWorkspaceLocator(sessions, store),
 		cfg.DataDir,
 		cfg.AppRunID,
 		log,

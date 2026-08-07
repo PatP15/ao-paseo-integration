@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type ExecutionService interface {
 	ListQuestions(ctx context.Context) ([]domain.ExecutionInboxQuestion, error)
 	Answer(ctx context.Context, in executionsvc.AnswerInput) (domain.ExecutionCommand, error)
 	Decide(ctx context.Context, in executionsvc.DecisionInput) (domain.ExecutionCommand, error)
+	BindProject(ctx context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -50,6 +52,7 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/hosts", c.listHosts)
 	r.Put("/execution/hosts/{hostId}", c.registerHost)
 	r.Post("/execution/dispatch", c.dispatch)
+	r.Put("/execution/projects/{projectId}/hosts/{hostId}", c.bindProject)
 	r.Get("/execution/questions", c.listQuestions)
 	r.Post("/execution/questions/{questionId}/answer", c.answerQuestion)
 	r.Post("/execution/permissions/{questionId}/decision", c.decidePermission)
@@ -105,6 +108,67 @@ func (c *ExecutionController) registerHost(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, http.StatusOK, ExecutionHostEnvelope{Host: executionHostResponse(host)})
 }
 
+// BindProjectPathParams names the path parameters for the bind route. The spec
+// generator validates that every {placeholder} in a path has a declared
+// parameter, which is what caught this route being added without them.
+type BindProjectPathParams struct {
+	ProjectID string `path:"projectId" description:"AO project id"`
+	HostID    string `path:"hostId" description:"Registered execution host id"`
+}
+
+// BindProjectRequest records where a project is checked out on one host.
+type BindProjectRequest struct {
+	HostRepoPath string `json:"hostRepoPath"`
+	BaseBranch   string `json:"baseBranch,omitempty"`
+	Priority     int    `json:"priority,omitempty"`
+	SetupProfile string `json:"setupProfile,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
+}
+
+// BindProjectResponse echoes the stored binding.
+type BindProjectResponse struct {
+	ProjectID    string `json:"projectId"`
+	HostID       string `json:"hostId"`
+	HostRepoPath string `json:"hostRepoPath"`
+	BaseBranch   string `json:"baseBranch"`
+	Priority     int    `json:"priority"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// bindProject records a project's checkout path on a host.
+//
+// Dispatch routes over bindings, so an unbound project has no candidate hosts
+// at all and fails with ErrNoEligibleHost no matter how many hosts are online.
+func (c *ExecutionController) bindProject(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPut, "/api/v1/execution/projects/{projectId}/hosts/{hostId}")
+		return
+	}
+	var in BindProjectRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	binding, err := c.Svc.BindProject(r.Context(), executionsvc.BindingInput{
+		ProjectID:    domain.ProjectID(chi.URLParam(r, "projectId")),
+		HostID:       domain.ExecutionHostID(chi.URLParam(r, "hostId")),
+		HostRepoPath: in.HostRepoPath,
+		BaseBranch:   in.BaseBranch,
+		Priority:     in.Priority,
+		SetupProfile: in.SetupProfile,
+		Disabled:     in.Disabled,
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, BindProjectResponse{
+		ProjectID: string(binding.ProjectID), HostID: string(binding.HostID),
+		HostRepoPath: binding.HostRepoPath, BaseBranch: binding.BaseBranch,
+		Priority: binding.Priority, Enabled: binding.Enabled,
+	})
+}
+
 func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 	if c.Dispatch == nil {
 		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/dispatch")
@@ -134,6 +198,20 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 		Prompt:               in.Prompt,
 	})
 	if err != nil {
+		// "No eligible host" is an expected scheduling outcome, not a server
+		// fault: every host may be offline, at capacity, in another zone, or
+		// simply not bound to this project. Returning 500 told the caller AO
+		// had broken and buried the actual reason, which is how an unbound
+		// project looked like an internal error.
+		if errors.Is(err, dispatchsvc.ErrNoEligibleHost) {
+			envelope.WriteError(w, r, apierr.Conflict(
+				"NO_ELIGIBLE_HOST",
+				"No registered host is eligible: check that the project is bound to a host in "+
+					"the requested trust zone, that the host is enabled and online, and that it "+
+					"has free capacity.",
+				nil))
+			return
+		}
 		envelope.WriteError(w, r, err)
 		return
 	}

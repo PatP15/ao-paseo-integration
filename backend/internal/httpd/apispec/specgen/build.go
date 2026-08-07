@@ -399,6 +399,20 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPut, path: "/api/v1/execution/projects/{projectId}/hosts/{hostId}",
+			id: "bindProjectHost", tag: "execution",
+			summary:    "Bind a project to a host by its checkout path there",
+			pathParams: []any{controllers.BindProjectPathParams{}},
+			reqBody:    controllers.BindProjectRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BindProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/execution/dispatch", id: "dispatchExecution", tag: "execution",
 			summary: "Dispatch one approved work-item attempt to a routed host",
 			reqBody: controllers.DispatchExecutionRequest{},

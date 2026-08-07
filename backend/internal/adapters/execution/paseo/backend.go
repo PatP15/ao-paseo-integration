@@ -109,9 +109,24 @@ func (b *Backend) Provision(ctx context.Context, req ports.ExecutionProvisionReq
 	if matched {
 		return b.bindWorkspace(ctx, &binding, req, workspace)
 	}
-	if !fresh {
-		return domain.ExecutionWorkspace{}, fmt.Errorf("workspace create outcome is unknown; refusing to create a second worktree for session %s", req.SessionID)
-	}
+	// Safe to create: this binding carries no workspace id, and the remote list
+	// above found nothing under our title.
+	//
+	// This used to refuse whenever a binding row already existed
+	// (`fresh := !found`), which made the happy path unreachable — the dispatch
+	// service commits the binding BEFORE enqueuing the command, precisely so a
+	// crash between the two replays rather than vanishes, so a binding always
+	// exists by the time Provision runs. Every dispatch therefore failed with
+	// "outcome is unknown" and no workspace was ever created.
+	//
+	// The title is what makes creating safe rather than reckless: it is
+	// "ao:<session>:<attempt>", unique per attempt, so a miss in the list means
+	// this attempt has not created anything — not merely that some earlier
+	// attempt's workspace was archived. An ambiguous outcome is still possible
+	// if a create is in flight and not yet listable, and that is handled where
+	// it actually arises: the post-create error path below re-lists once and
+	// adopts an exact title match rather than retrying the create.
+	_ = fresh
 
 	workspace, createErr := b.client.CreateWorkspace(ctx, WorkspaceCreateRequest{
 		RepoPath: req.RepoPath, Branch: req.Branch, BaseBranch: req.BaseBranch,
@@ -229,7 +244,19 @@ func (b *Backend) guardHost(ctx context.Context, hostID domain.ExecutionHostID, 
 	if err := validateDaemonStatus(status); err != nil {
 		return DaemonStatus{}, err
 	}
-	if *status.DesktopManaged {
+	// Refuse only when Paseo actually SAID the daemon is desktop-managed.
+	//
+	// GET /api/status — the only surface that reaches a remote host — omits
+	// desktopManaged entirely; `paseo status --json` reports it but cannot
+	// target a remote daemon. So for any remote host this is simply unknown,
+	// and treating unknown as "managed" would refuse every host while
+	// dereferencing it unconditionally panics the daemon, which is how this was
+	// found: one nil field took the whole process down mid-delivery.
+	//
+	// The hazard — AO driving the operator's own daemon — is caught below by
+	// the ServerID comparison, which identifies the specific daemon rather than
+	// a class of them and works over the surface that reaches a remote host.
+	if managed, known := status.IsDesktopManaged(); known && managed {
 		return DaemonStatus{}, fmt.Errorf("refusing desktop-managed Paseo host %s", hostID)
 	}
 	if status.Version != SupportedVersion || b.client.Version() != SupportedVersion {

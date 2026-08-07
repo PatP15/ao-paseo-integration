@@ -27,6 +27,16 @@ type fakeExecutionService struct {
 	answered   executionsvc.AnswerInput
 	decided    executionsvc.DecisionInput
 	err        error
+	bound      executionsvc.BindingInput
+}
+
+// BindProject records a project's checkout path on a host.
+func (f *fakeExecutionService) BindProject(_ context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error) {
+	f.bound = in
+	return domain.ProjectHostBinding{
+		ProjectID: in.ProjectID, HostID: in.HostID, HostRepoPath: in.HostRepoPath,
+		BaseBranch: "main", Priority: 100, Enabled: true,
+	}, nil
 }
 
 var _ controllers.ExecutionService = (*fakeExecutionService)(nil)

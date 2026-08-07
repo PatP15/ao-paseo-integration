@@ -144,10 +144,24 @@ func workspaceListArgs(host string) ([]string, error) {
 	return append(args, "--json"), nil
 }
 
-// validateDaemonStatus refuses a status reply that omits the fields AO routes
-// on. A missing desktopManaged is the important one: AO must never dispatch to
-// the operator's own desktop-managed daemon, and absent is not the same as
-// false.
+// validateDaemonStatus refuses a status reply missing the fields AO routes on.
+//
+// desktopManaged is deliberately NOT required, and that is a downgrade forced
+// by Paseo rather than a relaxation of the rule. Only two surfaces report
+// daemon identity, and neither does both halves of what AO needs:
+//
+//	GET /api/status        works remotely, omits desktopManaged
+//	paseo status --json    reports desktopManaged, takes --home and cannot
+//	                       target a remote host at all
+//
+// So for a REMOTE host, desktop ownership is unknowable in 0.2.5. Requiring it
+// made every remote host fail validation permanently, which is how this was
+// found.
+//
+// The hazard it guarded — AO driving the operator's own desktop daemon — is
+// better caught by comparing the probed ServerID against the local daemon's:
+// that identifies the specific daemon rather than a class of them, and it works
+// over the surface that actually reaches a remote host. See selfTargetingHost.
 func validateDaemonStatus(status DaemonStatus) error {
 	if status.ServerID == "" {
 		return fmt.Errorf("paseo daemon status omitted server id")
@@ -155,8 +169,17 @@ func validateDaemonStatus(status DaemonStatus) error {
 	if status.Version == "" {
 		return fmt.Errorf("paseo daemon status omitted version")
 	}
-	if status.DesktopManaged == nil {
-		return fmt.Errorf("paseo daemon status omitted desktop ownership")
-	}
 	return nil
+}
+
+// IsDesktopManaged reports desktop ownership when it is known.
+//
+// The bool is false when Paseo did not say, which is every remote probe. A
+// caller must not read "not known" as "not desktop managed"; that conflation is
+// exactly what the second return value exists to prevent.
+func (s DaemonStatus) IsDesktopManaged() (managed, known bool) {
+	if s.DesktopManaged == nil {
+		return false, false
+	}
+	return *s.DesktopManaged, true
 }

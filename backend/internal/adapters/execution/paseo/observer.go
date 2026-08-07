@@ -34,8 +34,11 @@ func (b *Backend) Status(ctx context.Context, hostID domain.ExecutionHostID) (do
 	if err := validateDaemonStatus(status); err != nil {
 		return domain.ExecutionHostStatus{}, err
 	}
+	// Unknown over HTTP, which is every remote probe. False here means "not
+	// reported", never "confirmed not desktop-managed".
+	desktopManaged, _ := status.IsDesktopManaged()
 	return domain.ExecutionHostStatus{
-		HostID: hostID, Reachable: true, DesktopManaged: *status.DesktopManaged,
+		HostID: hostID, Reachable: true, DesktopManaged: desktopManaged,
 		ServerID: status.ServerID, Version: status.Version, ObservedAt: b.now().UTC(),
 	}, nil
 }

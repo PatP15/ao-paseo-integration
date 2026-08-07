@@ -41,6 +41,8 @@ type Store interface {
 	ListOpenExecutionQuestions(context.Context) ([]domain.ExecutionInboxQuestion, error)
 	GetExecutionQuestion(context.Context, string) (domain.ExecutionInboxQuestion, bool, error)
 	ResolveExecutionQuestion(context.Context, domain.ExecutionQuestionResolution) (domain.ExecutionCommand, error)
+	UpsertProjectHostBinding(context.Context, domain.ProjectHostBinding) error
+	ListProjectHostBindings(context.Context, domain.ProjectID) ([]domain.ProjectHostBinding, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -443,4 +445,75 @@ func actor(name string) string {
 		return "human"
 	}
 	return name
+}
+
+// BindingInput is a project's machine-specific checkout on one host.
+type BindingInput struct {
+	ProjectID    domain.ProjectID
+	HostID       domain.ExecutionHostID
+	HostRepoPath string
+	BaseBranch   string
+	Priority     int
+	SetupProfile string
+	Disabled     bool
+}
+
+// BindProject records where a project is checked out on a host.
+//
+// Without a binding a project has no candidate hosts at all: the router
+// iterates bindings, so an unbound project produces zero candidates and
+// dispatch fails with ErrNoEligibleHost. The table, the store method and the
+// router all existed; nothing could write a row, so no dispatch could ever
+// succeed. Found by running a dispatch end to end.
+//
+// The repo path is per-host on purpose and cannot be inferred from the
+// project: the same repo is /home/u/x on one machine and C:\Projects\X on
+// another, which is the whole reason this is a binding rather than a project
+// field.
+func (s *Service) BindProject(ctx context.Context, in BindingInput) (domain.ProjectHostBinding, error) {
+	projectID := domain.ProjectID(strings.TrimSpace(string(in.ProjectID)))
+	if projectID == "" {
+		return domain.ProjectHostBinding{}, apierr.Invalid("PROJECT_ID_REQUIRED", "projectId is required", nil)
+	}
+	hostID := domain.ExecutionHostID(strings.TrimSpace(string(in.HostID)))
+	if hostID == "" {
+		return domain.ProjectHostBinding{}, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
+	}
+	repoPath := strings.TrimSpace(in.HostRepoPath)
+	if repoPath == "" {
+		return domain.ProjectHostBinding{}, apierr.Invalid(
+			"HOST_REPO_PATH_REQUIRED",
+			"hostRepoPath is required: it is the checkout path ON THE HOST, which AO cannot infer", nil)
+	}
+	if _, _, found, err := s.store.GetExecutionHost(ctx, hostID); err != nil {
+		return domain.ProjectHostBinding{}, err
+	} else if !found {
+		return domain.ProjectHostBinding{}, apierr.NotFound(
+			"HOST_NOT_FOUND", "register the host before binding a project to it")
+	}
+
+	baseBranch := strings.TrimSpace(in.BaseBranch)
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	priority := in.Priority
+	if priority <= 0 {
+		priority = 100
+	}
+	now := s.now().UTC()
+	binding := domain.ProjectHostBinding{
+		ProjectID: projectID, HostID: hostID, HostRepoPath: repoPath,
+		BaseBranch: baseBranch, Priority: priority, Enabled: !in.Disabled,
+		SetupProfile: strings.TrimSpace(in.SetupProfile),
+		CreatedAt:    now, UpdatedAt: now,
+	}
+	if err := s.store.UpsertProjectHostBinding(ctx, binding); err != nil {
+		return domain.ProjectHostBinding{}, err
+	}
+	return binding, nil
+}
+
+// ListBindings returns a project's host bindings.
+func (s *Service) ListBindings(ctx context.Context, projectID domain.ProjectID) ([]domain.ProjectHostBinding, error) {
+	return s.store.ListProjectHostBindings(ctx, domain.ProjectID(strings.TrimSpace(string(projectID))))
 }

@@ -477,6 +477,64 @@ paths:
       summary: Allow or deny a pending host permission request
       tags:
       - execution
+  /api/v1/execution/projects/{projectId}/hosts/{hostId}:
+    put:
+      operationId: bindProjectHost
+      parameters:
+      - description: AO project id
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: AO project id
+          type: string
+      - description: Registered execution host id
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersBindProjectRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersBindProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Bind a project to a host by its checkout path there
+      tags:
+      - execution
   /api/v1/execution/questions:
     get:
       operationId: listExecutionQuestions
@@ -3040,6 +3098,43 @@ components:
       properties:
         disabled:
           type: boolean
+      type: object
+    ControllersBindProjectRequest:
+      properties:
+        baseBranch:
+          type: string
+        disabled:
+          type: boolean
+        hostRepoPath:
+          type: string
+        priority:
+          type: integer
+        setupProfile:
+          type: string
+      required:
+      - hostRepoPath
+      type: object
+    ControllersBindProjectResponse:
+      properties:
+        baseBranch:
+          type: string
+        enabled:
+          type: boolean
+        hostId:
+          type: string
+        hostRepoPath:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+      required:
+      - projectId
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - priority
+      - enabled
       type: object
     ControllersSessionView:
       properties:

@@ -122,6 +122,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao remote":                 {},
 	"ao remote allow":           {},
 	"ao remote answer":          {},
+	"ao remote bind":            {},
 	"ao remote deny":            {},
 	"ao remote dispatch":        {},
 	"ao remote hosts":           {},

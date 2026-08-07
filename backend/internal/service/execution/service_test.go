@@ -25,6 +25,25 @@ type fakeStore struct {
 	upsertedCap []string
 	resolved    domain.ExecutionQuestionResolution
 	resolveErr  error
+
+	projectBindings map[domain.ProjectID][]domain.ProjectHostBinding
+	upsertedBinding domain.ProjectHostBinding
+}
+
+// UpsertProjectHostBinding records where a project is checked out on a host.
+// Without a binding the router has no candidates at all, so this is what makes
+// a project dispatchable.
+func (f *fakeStore) UpsertProjectHostBinding(_ context.Context, binding domain.ProjectHostBinding) error {
+	f.upsertedBinding = binding
+	if f.projectBindings == nil {
+		f.projectBindings = map[domain.ProjectID][]domain.ProjectHostBinding{}
+	}
+	f.projectBindings[binding.ProjectID] = append(f.projectBindings[binding.ProjectID], binding)
+	return nil
+}
+
+func (f *fakeStore) ListProjectHostBindings(_ context.Context, projectID domain.ProjectID) ([]domain.ProjectHostBinding, error) {
+	return f.projectBindings[projectID], nil
 }
 
 func newFakeStore() *fakeStore {
@@ -451,5 +470,46 @@ func TestListQuestionsReturnsBothSources(t *testing.T) {
 	}
 	if !sources[domain.ExecutionQuestionAgentEvent] || !sources[domain.ExecutionQuestionPaseoPermission] {
 		t.Fatalf("sources = %v, want both kinds in one queue", sources)
+	}
+}
+
+// TestBindProjectRequiresHostRepoPath pins the field AO cannot infer.
+//
+// The same repository is /home/u/x on one machine and C:\Projects\X on another,
+// which is why the path lives on the binding rather than the project. Accepting
+// an empty one would defer the failure to worktree creation on a remote host,
+// where it reads as a Paseo error rather than a missing registration.
+func TestBindProjectRequiresHostRepoPath(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{hosts: []domain.ExecutionHost{{ID: "h1", Name: "h1"}}}
+	svc := newTestService(store)
+
+	if _, err := svc.BindProject(context.Background(), BindingInput{
+		ProjectID: "p1", HostID: "h1",
+	}); err == nil {
+		t.Fatal("empty hostRepoPath accepted")
+	}
+
+	binding, err := svc.BindProject(context.Background(), BindingInput{
+		ProjectID: "p1", HostID: "h1", HostRepoPath: "/srv/p1",
+	})
+	if err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if binding.BaseBranch != "main" || binding.Priority != 100 || !binding.Enabled {
+		t.Fatalf("defaults not applied: %+v", binding)
+	}
+}
+
+// TestBindProjectRejectsUnregisteredHost keeps a binding from naming a host that
+// does not exist: the router would silently skip it, so dispatch would fail with
+// "no eligible host" and give no hint that the host id was simply wrong.
+func TestBindProjectRejectsUnregisteredHost(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(&fakeStore{})
+	if _, err := svc.BindProject(context.Background(), BindingInput{
+		ProjectID: "p1", HostID: "nope", HostRepoPath: "/srv/p1",
+	}); err == nil {
+		t.Fatal("binding to an unregistered host accepted")
 	}
 }

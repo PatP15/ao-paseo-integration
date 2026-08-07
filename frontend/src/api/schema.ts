@@ -191,6 +191,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/projects/{projectId}/hosts/{hostId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Bind a project to a host by its checkout path there */
+        put: operations["bindProjectHost"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/questions": {
         parameters: {
             query?: never;
@@ -1053,6 +1070,21 @@ export interface components {
         };
         ContainerReapConfig: {
             disabled?: boolean;
+        };
+        ControllersBindProjectRequest: {
+            baseBranch?: string;
+            disabled?: boolean;
+            hostRepoPath: string;
+            priority?: number;
+            setupProfile?: string;
+        };
+        ControllersBindProjectResponse: {
+            baseBranch: string;
+            enabled: boolean;
+            hostId: string;
+            hostRepoPath: string;
+            priority: number;
+            projectId: string;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -2424,6 +2456,71 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    bindProjectHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description AO project id */
+                projectId: string;
+                /** @description Registered execution host id */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersBindProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersBindProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

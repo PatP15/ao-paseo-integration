@@ -134,6 +134,7 @@ func newRemoteCommand(ctx *commandContext) *cobra.Command {
 
 	cmd.AddCommand(newRemoteHostsCommand(ctx, &jsonOutput))
 	cmd.AddCommand(newRemoteRegisterCommand(ctx, &jsonOutput))
+	cmd.AddCommand(newRemoteBindCommand(ctx, &jsonOutput))
 	cmd.AddCommand(newRemoteDispatchCommand(ctx, &jsonOutput))
 	cmd.AddCommand(newRemoteInboxCommand(ctx, &jsonOutput))
 	cmd.AddCommand(newRemoteAnswerCommand(ctx, &jsonOutput))
@@ -221,6 +222,67 @@ func newRemoteRegisterCommand(ctx *commandContext, jsonOutput *bool) *cobra.Comm
 	cmd.Flags().StringSliceVar(&req.Capabilities, "capability", nil, "routable capability (repeatable)")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "register the host without making it dispatchable")
 	cmd.Flags().BoolVar(&allowRelay, "allow-relay", false, "the host's daemon may keep its relay enabled")
+	return cmd
+}
+
+type bindRequest struct {
+	HostRepoPath string `json:"hostRepoPath"`
+	BaseBranch   string `json:"baseBranch,omitempty"`
+	Priority     int    `json:"priority,omitempty"`
+	SetupProfile string `json:"setupProfile,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
+}
+
+// bindEnvelope mirrors the flat bind response. It is deliberately NOT wrapped
+// in a "binding" key: this endpoint returns the object directly, and a wrapper
+// struct silently decodes to zero values rather than failing, which printed a
+// successful bind as "Bound  to  at ".
+type bindEnvelope struct {
+	ProjectID    string `json:"projectId"`
+	HostID       string `json:"hostId"`
+	HostRepoPath string `json:"hostRepoPath"`
+	BaseBranch   string `json:"baseBranch"`
+	Priority     int    `json:"priority"`
+	Enabled      bool   `json:"enabled"`
+}
+
+func newRemoteBindCommand(ctx *commandContext, jsonOutput *bool) *cobra.Command {
+	req := bindRequest{}
+	var disabled bool
+	cmd := &cobra.Command{
+		Use:   "bind <project-id> <host-id>",
+		Short: "Bind a project to a host by its checkout path there",
+		Long: "Record where a project is checked out ON THE HOST.\n\n" +
+			"Dispatch routes over bindings, so an unbound project has no candidate hosts\n" +
+			"and fails with NO_ELIGIBLE_HOST however many hosts are online. The path\n" +
+			"cannot be inferred: the same repo is /home/u/x on one machine and\n" +
+			"C:\\Projects\\X on another.",
+		Args: exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req.Disabled = disabled
+			projectID := strings.TrimSpace(args[0])
+			hostID := strings.TrimSpace(args[1])
+			if projectID == "" || hostID == "" {
+				return usageError{errors.New("project id and host id must not be empty")}
+			}
+			var out bindEnvelope
+			path := "execution/projects/" + url.PathEscape(projectID) + "/hosts/" + url.PathEscape(hostID)
+			if err := ctx.putJSON(cmd.Context(), path, req, &out); err != nil {
+				return err
+			}
+			if *jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), out)
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Bound %s to %s at %s (base %s)\n",
+				out.ProjectID, out.HostID, out.HostRepoPath, out.BaseBranch)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&req.HostRepoPath, "host-path", "", "absolute path to the repo ON THE HOST (required)")
+	cmd.Flags().StringVar(&req.BaseBranch, "base-branch", "", "base branch for new worktrees (default main)")
+	cmd.Flags().IntVar(&req.Priority, "priority", 0, "lower sorts first when several hosts qualify")
+	cmd.Flags().StringVar(&req.SetupProfile, "setup-profile", "", "named post-create setup profile")
+	cmd.Flags().BoolVar(&disabled, "disabled", false, "record the binding without making it routable")
 	return cmd
 }
 

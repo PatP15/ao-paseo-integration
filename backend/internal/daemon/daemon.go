@@ -189,7 +189,7 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
-	lcStack.executionDone = startExecutionObserver(ctx, store, lcStack.LCM, cfg.DataDir, log)
+	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, cfg.DataDir, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()

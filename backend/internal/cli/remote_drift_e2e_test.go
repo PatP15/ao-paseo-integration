@@ -37,6 +37,18 @@ type captureExecutionService struct {
 	registered executionsvc.HostInput
 	answered   executionsvc.AnswerInput
 	decided    executionsvc.DecisionInput
+	bound      executionsvc.BindingInput
+}
+
+// BindProject records where a project is checked out on a host. The drift test
+// exists to catch exactly this: a CLI command whose request shape has drifted
+// from the controller's, which no unit test on either side would notice.
+func (c *captureExecutionService) BindProject(_ context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error) {
+	c.bound = in
+	return domain.ProjectHostBinding{
+		ProjectID: in.ProjectID, HostID: in.HostID, HostRepoPath: in.HostRepoPath,
+		BaseBranch: "main", Priority: 100, Enabled: true,
+	}, nil
 }
 
 func (c *captureExecutionService) ListHosts(context.Context) ([]executionsvc.Host, error) {

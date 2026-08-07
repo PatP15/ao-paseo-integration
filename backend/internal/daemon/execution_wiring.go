@@ -30,6 +30,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	paseoobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/paseo"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -171,9 +172,93 @@ func startExecutionObserver(
 	lcm *lifecycle.Manager,
 	dataDir string,
 	logger *slog.Logger,
-) <-chan struct{} {
+) (<-chan struct{}, <-chan struct{}) {
+	// One cache shared by both: the observer and the drain talk to the same
+	// hosts, and a second cache would double the client count and the version
+	// handshakes for no benefit.
 	backends := newExecutionBackends(store, dataDir, logger)
 	observer := paseoobserve.New(store, lcm, backends, logger)
-	logger.Info("execution: paseo observer starting", "secrets", filepath.Join(dataDir, "secrets"))
-	return observer.Start(ctx)
+	logger.Info("execution: paseo observer and dispatch drain starting",
+		"secrets", filepath.Join(dataDir, "secrets"))
+	return observer.Start(ctx), startDispatchWorker(ctx, store, backends, logger)
+}
+
+// ResolveExecutionBackend implements dispatch.BackendResolver.
+func (b *executionBackends) ResolveExecutionBackend(hostID domain.ExecutionHostID) (ports.ExecutionBackend, bool) {
+	client, ok := b.client(context.Background(), hostID)
+	if !ok {
+		return nil, false
+	}
+	return paseoexec.NewBackend(client, b.store), true
+}
+
+// dispatchDrainInterval paces the outbox. The queue is not latency-critical —
+// a dispatch has already been committed durably by the time it lands here — and
+// each delivery costs remote CLI invocations at roughly 0.9s each (spike
+// FINDINGS S10), so draining faster mostly competes with the observer for the
+// same host.
+const dispatchDrainInterval = 3 * time.Second
+
+// startDispatchWorker drains the execution-command outbox.
+//
+// Without this the whole dispatch path is a write-only queue: `ao remote
+// dispatch` returns 201, the command lands as `pending`, and nothing ever
+// delivers it. That is exactly what happened the first time this was run end to
+// end — a session bound to a host with no workspace and no agent, and an outbox
+// row at attempt 0 forever.
+//
+// DeliverOne is called in a loop until it reports nothing left, so a backlog
+// clears in one tick rather than one row per tick.
+func startDispatchWorker(
+	ctx context.Context,
+	store *sqlite.Store,
+	backends *executionBackends,
+	logger *slog.Logger,
+) <-chan struct{} {
+	done := make(chan struct{})
+	worker := dispatchsvc.NewWorker(store, backends)
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(dispatchDrainInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// A panic here would otherwise kill the daemon: a goroutine
+				// panic takes the process with it, so one malformed reply from
+				// one host would stop AO entirely — including every local
+				// session that has nothing to do with remote execution. A bad
+				// host must degrade to "this host is not working", never to
+				// "AO is not running".
+				drainOnce(ctx, worker, logger)
+			}
+		}
+	}()
+	return done
+}
+
+// drainOnce delivers until the outbox is empty, converting a panic into a log
+// line. DeliverOne calls into adapter code that parses remote JSON; a nil field
+// there must not be fatal to the daemon.
+func drainOnce(ctx context.Context, worker *dispatchsvc.Worker, logger *slog.Logger) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("dispatch: delivery panicked; drain continues next tick", "panic", r)
+		}
+	}()
+	for {
+		delivered, err := worker.DeliverOne(ctx)
+		if err != nil {
+			// Delivery failures are the worker's own business: it records the
+			// attempt, backs off, and retries. Returning would stop the drain
+			// for every other session too.
+			logger.Debug("dispatch: delivery attempt failed", "err", err)
+			return
+		}
+		if !delivered {
+			return
+		}
+	}
 }

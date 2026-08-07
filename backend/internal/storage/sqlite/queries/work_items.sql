@@ -28,6 +28,12 @@ ON CONFLICT (id) DO UPDATE SET
 -- name: GetWorkItem :one
 SELECT * FROM work_items WHERE id = ?;
 
+-- name: MarkWorkItemInProgress :execrows
+UPDATE work_items
+SET lifecycle_fact = 'in_progress', updated_at = ?
+WHERE id = ? AND approval_state = 'approved'
+  AND lifecycle_fact IN ('open', 'in_progress');
+
 -- name: ListWorkItemsByProject :many
 SELECT * FROM work_items WHERE project_id = ? ORDER BY priority, created_at, id;
 

@@ -1,0 +1,184 @@
+package dispatch
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runtimehandle"
+)
+
+const (
+	defaultLease       = 30 * time.Second
+	defaultBaseBackoff = 5 * time.Second
+	defaultMaxAttempts = 5
+)
+
+type commandStore interface {
+	ClaimNextExecutionCommand(context.Context, time.Time, time.Time) (domain.ExecutionCommand, bool, error)
+	RetryExecutionCommand(context.Context, domain.ExecutionCommand, time.Time, error) error
+	FailExecutionCommand(context.Context, domain.ExecutionCommand, error) error
+	AcknowledgeExecutionStart(context.Context, string, domain.SessionID, string, string, time.Time) error
+}
+
+// BackendResolver returns the host-scoped execution backend used for a
+// command. Host selection itself remains the router's responsibility.
+type BackendResolver interface {
+	ResolveExecutionBackend(domain.ExecutionHostID) (ports.ExecutionBackend, bool)
+}
+
+// BackendResolverFunc adapts a plain lookup function to BackendResolver so the
+// daemon can wire a map or a closure without declaring a type.
+type BackendResolverFunc func(domain.ExecutionHostID) (ports.ExecutionBackend, bool)
+
+// ResolveExecutionBackend implements BackendResolver.
+func (f BackendResolverFunc) ResolveExecutionBackend(hostID domain.ExecutionHostID) (ports.ExecutionBackend, bool) {
+	return f(hostID)
+}
+
+type deliveryCheckpoint string
+
+const (
+	checkpointClaimed     deliveryCheckpoint = "claimed"
+	checkpointProvisioned deliveryCheckpoint = "provisioned"
+	checkpointLaunched    deliveryCheckpoint = "launched"
+)
+
+// Worker leases and delivers durable commands. checkpoint is an internal test
+// seam that models process loss: a returned error deliberately leaves the row
+// delivering until its lease expires.
+type Worker struct {
+	store       commandStore
+	backends    BackendResolver
+	now         func() time.Time
+	lease       time.Duration
+	baseBackoff time.Duration
+	maxAttempts int
+	checkpoint  func(deliveryCheckpoint) error
+}
+
+// NewWorker constructs the outbox drain. It performs no I/O; call Drain to run
+// one pass over due commands.
+func NewWorker(store commandStore, backends BackendResolver) *Worker {
+	return &Worker{
+		store: store, backends: backends, now: time.Now, lease: defaultLease,
+		baseBackoff: defaultBaseBackoff, maxAttempts: defaultMaxAttempts,
+	}
+}
+
+// DeliverOne processes at most one due command. The bool reports whether a row
+// was claimed; backend failures are persisted for retry and returned.
+func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
+	now := w.now().UTC()
+	command, found, err := w.store.ClaimNextExecutionCommand(ctx, now, now.Add(w.lease))
+	if err != nil || !found {
+		return found, err
+	}
+	if err := w.atCheckpoint(checkpointClaimed); err != nil {
+		return true, err
+	}
+	if command.Type != domain.ExecutionCommandStartAgent {
+		err := fmt.Errorf("unsupported execution command type %q", command.Type)
+		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
+	}
+	backend, ok := w.backends.ResolveExecutionBackend(command.HostID)
+	if !ok {
+		err := fmt.Errorf("no execution backend for host %s", command.HostID)
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	payload, err := decodeStartPayload(command.PayloadJSON)
+	if err != nil {
+		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
+	}
+	workspace, err := backend.Provision(ctx, ports.ExecutionProvisionRequest{
+		SessionID: command.SessionID, ProjectID: payload.ProjectID, HostID: command.HostID,
+		WorkspaceTitle: fmt.Sprintf("ao:%s:%d", command.SessionID, payload.Attempt),
+		RepoPath:       payload.RepoPath, Branch: payload.Branch, BaseBranch: payload.BaseBranch,
+		Provider: payload.Provider, Model: payload.Model, Mode: payload.Mode,
+	})
+	if err != nil {
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	if err := w.atCheckpoint(checkpointProvisioned); err != nil {
+		return true, err
+	}
+	agent, err := backend.Launch(ctx, ports.ExecutionLaunchRequest{
+		SessionID: command.SessionID, HostID: command.HostID, WorkspaceID: workspace.WorkspaceID,
+		IntentID: payload.IntentID, Prompt: payload.Prompt,
+		Labels: map[string]string{
+			"ao.session": string(command.SessionID), "ao.attempt": strconv.Itoa(payload.Attempt),
+			"ao.intent": string(payload.IntentID), "paseo.worktree": fmt.Sprintf("%s:%d", command.SessionID, payload.Attempt),
+		},
+		Provider: payload.Provider, Model: payload.Model, Mode: payload.Mode,
+	})
+	if err != nil {
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	if err := w.atCheckpoint(checkpointLaunched); err != nil {
+		return true, err
+	}
+	handle, err := runtimehandle.New(domain.ExecutionBackendPaseo, command.HostID, agent.AgentID)
+	if err != nil {
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	if err := w.store.AcknowledgeExecutionStart(ctx, command.ID, command.SessionID, handle.ID, payload.LaunchID, w.now().UTC()); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (w *Worker) retryOrFail(ctx context.Context, command domain.ExecutionCommand, deliveryErr error) error {
+	if command.AttemptCount >= w.maxAttempts {
+		return errorsJoin(deliveryErr, w.store.FailExecutionCommand(ctx, command, deliveryErr))
+	}
+	delay := w.baseBackoff
+	for attempt := 1; attempt < command.AttemptCount; attempt++ {
+		if delay >= time.Hour/2 {
+			delay = time.Hour
+			break
+		}
+		delay *= 2
+	}
+	return errorsJoin(deliveryErr, w.store.RetryExecutionCommand(ctx, command, w.now().UTC().Add(delay), deliveryErr))
+}
+
+func (w *Worker) atCheckpoint(checkpoint deliveryCheckpoint) error {
+	if w.checkpoint == nil {
+		return nil
+	}
+	return w.checkpoint(checkpoint)
+}
+
+func decodeStartPayload(raw string) (domain.ExecutionStartPayload, error) {
+	decoder := json.NewDecoder(bytes.NewBufferString(raw))
+	decoder.DisallowUnknownFields()
+	var payload domain.ExecutionStartPayload
+	if err := decoder.Decode(&payload); err != nil {
+		return domain.ExecutionStartPayload{}, fmt.Errorf("decode start_agent payload: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return domain.ExecutionStartPayload{}, fmt.Errorf("decode start_agent payload: trailing JSON")
+	}
+	if payload.ProjectID == "" || payload.RepoPath == "" || payload.Branch == "" || payload.Provider == "" ||
+		payload.Prompt == "" || payload.IntentID == "" || payload.Attempt < 1 || payload.LaunchID == "" {
+		return domain.ExecutionStartPayload{}, fmt.Errorf("decode start_agent payload: required field missing")
+	}
+	return payload, nil
+}
+
+func errorsJoin(primary, secondary error) error {
+	if secondary == nil {
+		return primary
+	}
+	// Both errors are load-bearing: the primary explains why delivery failed and
+	// the secondary why that failure could not be persisted. errors.Join keeps
+	// both inspectable with errors.Is/As rather than flattening one to text.
+	return errors.Join(primary, fmt.Errorf("persist delivery state: %w", secondary))
+}

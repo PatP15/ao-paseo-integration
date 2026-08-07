@@ -201,6 +201,26 @@ func (q *Queries) ListWorkItemsByProject(ctx context.Context, projectID string) 
 	return items, nil
 }
 
+const markWorkItemInProgress = `-- name: MarkWorkItemInProgress :execrows
+UPDATE work_items
+SET lifecycle_fact = 'in_progress', updated_at = ?
+WHERE id = ? AND approval_state = 'approved'
+  AND lifecycle_fact IN ('open', 'in_progress')
+`
+
+type MarkWorkItemInProgressParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) MarkWorkItemInProgress(ctx context.Context, arg MarkWorkItemInProgressParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markWorkItemInProgress, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const releaseWorkItemSession = `-- name: ReleaseWorkItemSession :execrows
 UPDATE work_item_sessions
 SET is_active_owner = 0, released_at = ?

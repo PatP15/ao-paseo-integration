@@ -10,6 +10,25 @@ import (
 	"database/sql"
 )
 
+const acknowledgeExecutionCommand = `-- name: AcknowledgeExecutionCommand :execrows
+UPDATE execution_commands
+SET state = 'acknowledged', next_attempt_at = '', last_error = '', acknowledged_at = ?
+WHERE id = ? AND state = 'delivering'
+`
+
+type AcknowledgeExecutionCommandParams struct {
+	AcknowledgedAt string
+	ID             string
+}
+
+func (q *Queries) AcknowledgeExecutionCommand(ctx context.Context, arg AcknowledgeExecutionCommandParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acknowledgeExecutionCommand, arg.AcknowledgedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const answerHumanQuestion = `-- name: AnswerHumanQuestion :execrows
 UPDATE human_questions
 SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?, delivery_command_id = ?
@@ -54,6 +73,48 @@ func (q *Queries) ArchiveSessionExecutionBinding(ctx context.Context, arg Archiv
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const claimExecutionCommand = `-- name: ClaimExecutionCommand :execrows
+UPDATE execution_commands
+SET state = 'delivering', attempt_count = attempt_count + 1,
+    next_attempt_at = ?, last_error = ''
+WHERE execution_commands.id = ?
+  AND execution_commands.state IN ('pending','delivering')
+  AND (execution_commands.next_attempt_at = ''
+       OR execution_commands.next_attempt_at <= ?)
+  AND NOT EXISTS (
+      SELECT 1 FROM execution_commands AS earlier
+      WHERE earlier.session_id = execution_commands.session_id
+        AND earlier.sequence < execution_commands.sequence
+        AND earlier.state <> 'acknowledged'
+  )
+`
+
+type ClaimExecutionCommandParams struct {
+	NextAttemptAt   string
+	ID              string
+	NextAttemptAt_2 string
+}
+
+func (q *Queries) ClaimExecutionCommand(ctx context.Context, arg ClaimExecutionCommandParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimExecutionCommand, arg.NextAttemptAt, arg.ID, arg.NextAttemptAt_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const countActiveSessionExecutionBindingsByHost = `-- name: CountActiveSessionExecutionBindingsByHost :one
+SELECT COUNT(*) FROM session_execution_bindings
+WHERE host_id = ? AND archived_at = ''
+`
+
+func (q *Queries) CountActiveSessionExecutionBindingsByHost(ctx context.Context, hostID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveSessionExecutionBindingsByHost, hostID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const deleteExecutionHostCapabilities = `-- name: DeleteExecutionHostCapabilities :exec
@@ -119,6 +180,31 @@ func (q *Queries) FindSessionExecutionBindingsByIntent(ctx context.Context, inte
 	return items, nil
 }
 
+const getExecutionCommand = `-- name: GetExecutionCommand :one
+SELECT id, session_id, host_id, command_type, payload_json, idempotency_key, sequence, state, attempt_count, next_attempt_at, last_error, created_at, acknowledged_at FROM execution_commands WHERE id = ?
+`
+
+func (q *Queries) GetExecutionCommand(ctx context.Context, id string) (ExecutionCommand, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionCommand, id)
+	var i ExecutionCommand
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.HostID,
+		&i.CommandType,
+		&i.PayloadJson,
+		&i.IdempotencyKey,
+		&i.Sequence,
+		&i.State,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.AcknowledgedAt,
+	)
+	return i, err
+}
+
 const getExecutionCommandByIdempotencyKey = `-- name: GetExecutionCommandByIdempotencyKey :one
 SELECT id, session_id, host_id, command_type, payload_json, idempotency_key, sequence, state, attempt_count, next_attempt_at, last_error, created_at, acknowledged_at FROM execution_commands WHERE idempotency_key = ?
 `
@@ -168,6 +254,32 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 		&i.LastSuccessfulProbeAt,
 		&i.LastFailedProbeAt,
 		&i.LastProbeError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getProjectHostBinding = `-- name: GetProjectHostBinding :one
+SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at FROM project_host_bindings WHERE project_id = ? AND host_id = ?
+`
+
+type GetProjectHostBindingParams struct {
+	ProjectID string
+	HostID    string
+}
+
+func (q *Queries) GetProjectHostBinding(ctx context.Context, arg GetProjectHostBindingParams) (ProjectHostBinding, error) {
+	row := q.db.QueryRowContext(ctx, getProjectHostBinding, arg.ProjectID, arg.HostID)
+	var i ProjectHostBinding
+	err := row.Scan(
+		&i.ProjectID,
+		&i.HostID,
+		&i.HostRepoPath,
+		&i.BaseBranch,
+		&i.Priority,
+		&i.Enabled,
+		&i.SetupProfile,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -522,9 +634,16 @@ func (q *Queries) ListActiveSessionExecutionBindingsByHost(ctx context.Context, 
 }
 
 const listDueExecutionCommands = `-- name: ListDueExecutionCommands :many
-SELECT id, session_id, host_id, command_type, payload_json, idempotency_key, sequence, state, attempt_count, next_attempt_at, last_error, created_at, acknowledged_at FROM execution_commands
-WHERE state IN ('pending','delivering') AND (next_attempt_at = '' OR next_attempt_at <= ?)
-ORDER BY session_id, sequence LIMIT ?
+SELECT cmd.id, cmd.session_id, cmd.host_id, cmd.command_type, cmd.payload_json, cmd.idempotency_key, cmd.sequence, cmd.state, cmd.attempt_count, cmd.next_attempt_at, cmd.last_error, cmd.created_at, cmd.acknowledged_at FROM execution_commands AS cmd
+WHERE cmd.state IN ('pending','delivering')
+  AND (cmd.next_attempt_at = '' OR cmd.next_attempt_at <= ?)
+  AND NOT EXISTS (
+      SELECT 1 FROM execution_commands AS earlier
+      WHERE earlier.session_id = cmd.session_id
+        AND earlier.sequence < cmd.sequence
+        AND earlier.state <> 'acknowledged'
+  )
+ORDER BY cmd.created_at, cmd.session_id, cmd.sequence LIMIT ?
 `
 
 type ListDueExecutionCommandsParams struct {
@@ -534,6 +653,47 @@ type ListDueExecutionCommandsParams struct {
 
 func (q *Queries) ListDueExecutionCommands(ctx context.Context, arg ListDueExecutionCommandsParams) ([]ExecutionCommand, error) {
 	rows, err := q.db.QueryContext(ctx, listDueExecutionCommands, arg.NextAttemptAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionCommand{}
+	for rows.Next() {
+		var i ExecutionCommand
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.HostID,
+			&i.CommandType,
+			&i.PayloadJson,
+			&i.IdempotencyKey,
+			&i.Sequence,
+			&i.State,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.AcknowledgedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExecutionCommandsBySession = `-- name: ListExecutionCommandsBySession :many
+SELECT id, session_id, host_id, command_type, payload_json, idempotency_key, sequence, state, attempt_count, next_attempt_at, last_error, created_at, acknowledged_at FROM execution_commands WHERE session_id = ? ORDER BY sequence
+`
+
+func (q *Queries) ListExecutionCommandsBySession(ctx context.Context, sessionID string) ([]ExecutionCommand, error) {
+	rows, err := q.db.QueryContext(ctx, listExecutionCommandsBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -799,6 +959,17 @@ func (q *Queries) ListSessionCheckpoints(ctx context.Context, sessionID string) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const nextExecutionCommandSequence = `-- name: NextExecutionCommandSequence :one
+SELECT COALESCE(MAX(sequence), 0) + 1 FROM execution_commands WHERE session_id = ?
+`
+
+func (q *Queries) NextExecutionCommandSequence(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextExecutionCommandSequence, sessionID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateExecutionCommandDelivery = `-- name: UpdateExecutionCommandDelivery :execrows

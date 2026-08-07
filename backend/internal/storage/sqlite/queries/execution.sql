@@ -29,6 +29,10 @@ SELECT * FROM execution_hosts WHERE id = ?;
 -- name: ListExecutionHosts :many
 SELECT * FROM execution_hosts ORDER BY name, id;
 
+-- name: CountActiveSessionExecutionBindingsByHost :one
+SELECT COUNT(*) FROM session_execution_bindings
+WHERE host_id = ? AND archived_at = '';
+
 -- name: DeleteExecutionHostCapabilities :exec
 DELETE FROM execution_host_capabilities WHERE host_id = ?;
 
@@ -53,6 +57,9 @@ ON CONFLICT (project_id, host_id) DO UPDATE SET
 
 -- name: ListProjectHostBindings :many
 SELECT * FROM project_host_bindings WHERE project_id = ? ORDER BY priority, host_id;
+
+-- name: GetProjectHostBinding :one
+SELECT * FROM project_host_bindings WHERE project_id = ? AND host_id = ?;
 
 -- name: UpsertSessionExecutionBinding :exec
 INSERT INTO session_execution_bindings (
@@ -119,10 +126,46 @@ INSERT INTO execution_commands (
 -- name: GetExecutionCommandByIdempotencyKey :one
 SELECT * FROM execution_commands WHERE idempotency_key = ?;
 
+-- name: GetExecutionCommand :one
+SELECT * FROM execution_commands WHERE id = ?;
+
+-- name: ListExecutionCommandsBySession :many
+SELECT * FROM execution_commands WHERE session_id = ? ORDER BY sequence;
+
+-- name: NextExecutionCommandSequence :one
+SELECT COALESCE(MAX(sequence), 0) + 1 FROM execution_commands WHERE session_id = ?;
+
 -- name: ListDueExecutionCommands :many
-SELECT * FROM execution_commands
-WHERE state IN ('pending','delivering') AND (next_attempt_at = '' OR next_attempt_at <= ?)
-ORDER BY session_id, sequence LIMIT ?;
+SELECT cmd.* FROM execution_commands AS cmd
+WHERE cmd.state IN ('pending','delivering')
+  AND (cmd.next_attempt_at = '' OR cmd.next_attempt_at <= ?)
+  AND NOT EXISTS (
+      SELECT 1 FROM execution_commands AS earlier
+      WHERE earlier.session_id = cmd.session_id
+        AND earlier.sequence < cmd.sequence
+        AND earlier.state <> 'acknowledged'
+  )
+ORDER BY cmd.created_at, cmd.session_id, cmd.sequence LIMIT ?;
+
+-- name: ClaimExecutionCommand :execrows
+UPDATE execution_commands
+SET state = 'delivering', attempt_count = attempt_count + 1,
+    next_attempt_at = ?, last_error = ''
+WHERE execution_commands.id = ?
+  AND execution_commands.state IN ('pending','delivering')
+  AND (execution_commands.next_attempt_at = ''
+       OR execution_commands.next_attempt_at <= ?)
+  AND NOT EXISTS (
+      SELECT 1 FROM execution_commands AS earlier
+      WHERE earlier.session_id = execution_commands.session_id
+        AND earlier.sequence < execution_commands.sequence
+        AND earlier.state <> 'acknowledged'
+  );
+
+-- name: AcknowledgeExecutionCommand :execrows
+UPDATE execution_commands
+SET state = 'acknowledged', next_attempt_at = '', last_error = '', acknowledged_at = ?
+WHERE id = ? AND state = 'delivering';
 
 -- name: UpdateExecutionCommandDelivery :execrows
 UPDATE execution_commands

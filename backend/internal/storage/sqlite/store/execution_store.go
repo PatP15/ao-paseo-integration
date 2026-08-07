@@ -55,6 +55,68 @@ func (s *Store) GetExecutionHost(ctx context.Context, id domain.ExecutionHostID)
 	return host, capabilities, true, nil
 }
 
+// ListExecutionHosts returns the durable host registry. Capabilities remain a
+// normalized lookup so routing can compare exact sets without JSON parsing.
+func (s *Store) ListExecutionHosts(ctx context.Context) ([]domain.ExecutionHost, error) {
+	rows, err := s.qr.ListExecutionHosts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list execution hosts: %w", err)
+	}
+	hosts := make([]domain.ExecutionHost, 0, len(rows))
+	for _, row := range rows {
+		host, err := executionHostFromGen(row)
+		if err != nil {
+			return nil, err
+		}
+		hosts = append(hosts, host)
+	}
+	return hosts, nil
+}
+
+// ListProjectHostBindings returns the enabled and disabled allowlist entries
+// for a project; the router applies eligibility policy.
+func (s *Store) ListProjectHostBindings(ctx context.Context, projectID domain.ProjectID) ([]domain.ProjectHostBinding, error) {
+	rows, err := s.qr.ListProjectHostBindings(ctx, string(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("list project host bindings: %w", err)
+	}
+	bindings := make([]domain.ProjectHostBinding, 0, len(rows))
+	for _, row := range rows {
+		created, err := decodeExecutionTime(row.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode project host binding created time: %w", err)
+		}
+		updated, err := decodeExecutionTime(row.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode project host binding updated time: %w", err)
+		}
+		bindings = append(bindings, domain.ProjectHostBinding{
+			ProjectID: domain.ProjectID(row.ProjectID), HostID: domain.ExecutionHostID(row.HostID),
+			HostRepoPath: row.HostRepoPath, BaseBranch: row.BaseBranch, Priority: int(row.Priority),
+			Enabled: row.Enabled != 0, SetupProfile: row.SetupProfile, CreatedAt: created, UpdatedAt: updated,
+		})
+	}
+	return bindings, nil
+}
+
+// ListActiveSessionExecutionBindingsByHost returns the durable load used by
+// host routing. Archived bindings do not consume concurrency.
+func (s *Store) ListActiveSessionExecutionBindingsByHost(ctx context.Context, hostID domain.ExecutionHostID) ([]domain.SessionExecutionBinding, error) {
+	rows, err := s.qr.ListActiveSessionExecutionBindingsByHost(ctx, string(hostID))
+	if err != nil {
+		return nil, fmt.Errorf("list active bindings for host %s: %w", hostID, err)
+	}
+	bindings := make([]domain.SessionExecutionBinding, 0, len(rows))
+	for _, row := range rows {
+		binding, err := sessionExecutionBindingFromGen(row)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
 // UpsertProjectHostBinding writes the machine-specific project path for a host.
 func (s *Store) UpsertProjectHostBinding(ctx context.Context, binding domain.ProjectHostBinding) error {
 	s.writeMu.Lock()
@@ -71,16 +133,24 @@ func (s *Store) UpsertProjectHostBinding(ctx context.Context, binding domain.Pro
 // UpsertSessionExecutionBinding persists remote identifiers before callers use
 // them for later lifecycle operations.
 func (s *Store) UpsertSessionExecutionBinding(ctx context.Context, binding domain.SessionExecutionBinding) error {
+	params, err := sessionExecutionBindingParams(binding)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.UpsertSessionExecutionBinding(ctx, params)
+}
+
+func sessionExecutionBindingParams(binding domain.SessionExecutionBinding) (gen.UpsertSessionExecutionBindingParams, error) {
 	if binding.LabelsWritten == nil {
 		binding.LabelsWritten = map[string]string{}
 	}
 	labels, err := json.Marshal(binding.LabelsWritten)
 	if err != nil {
-		return fmt.Errorf("marshal execution labels: %w", err)
+		return gen.UpsertSessionExecutionBindingParams{}, fmt.Errorf("marshal execution labels: %w", err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.UpsertSessionExecutionBinding(ctx, gen.UpsertSessionExecutionBindingParams{
+	return gen.UpsertSessionExecutionBindingParams{
 		SessionID: string(binding.SessionID), WorkItemID: nullableString(binding.WorkItemID),
 		BackendType: string(binding.BackendType), HostID: string(binding.HostID),
 		ExternalWorkspaceID: string(binding.ExternalWorkspaceID), ExternalAgentID: string(binding.ExternalAgentID),
@@ -93,7 +163,7 @@ func (s *Store) UpsertSessionExecutionBinding(ctx context.Context, binding domai
 		TerminalID: binding.TerminalID, TerminalLinesConsumed: binding.TerminalLinesConsumed,
 		LastObservedAt: encodeExecutionTime(binding.LastObservedAt), CreatedAt: encodeExecutionTime(binding.CreatedAt),
 		ArchivedAt: encodeExecutionTime(binding.ArchivedAt),
-	})
+	}, nil
 }
 
 // GetSessionExecutionBinding returns the durable execution binding for a session.

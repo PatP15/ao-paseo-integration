@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/executionerror"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -292,6 +293,23 @@ func TestProvisionReconcilesLostCreateResponseByTitle(t *testing.T) {
 	}
 	if workspace.WorkspaceID != "wks-1" || store.bindings["session-1"].ExternalWorkspaceID != "wks-1" {
 		t.Fatalf("workspace was not reconciled: %#v", workspace)
+	}
+	if countCall(client.calls, "create-workspace") != 1 || countCall(client.calls, "list-workspaces") != 2 {
+		t.Fatalf("calls=%v", client.calls)
+	}
+}
+
+func TestProvisionSignalsUnknownOutcomeWhenCreateCannotBeReconciled(t *testing.T) {
+	t.Parallel()
+	store := newMemoryExecutionStore(nil)
+	client := newFakeExecutionClient(nil)
+	createErr := &Error{Kind: ErrorNetwork, Message: "Paseo command failed: timed out"}
+	client.workspaceErr = createErr
+	backend := newBackend(client, store, func() time.Time { return backendTestNow })
+
+	_, err := backend.Provision(context.Background(), provisionRequest())
+	if !errors.Is(err, executionerror.ErrProvisionOutcomeUnknown) || !errors.Is(err, createErr) {
+		t.Fatalf("error=%v, want typed unknown outcome retaining create failure", err)
 	}
 	if countCall(client.calls, "create-workspace") != 1 || countCall(client.calls, "list-workspaces") != 2 {
 		t.Fatalf("calls=%v", client.calls)

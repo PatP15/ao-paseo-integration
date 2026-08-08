@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/executionerror"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -140,14 +141,18 @@ func (b *Backend) Provision(ctx context.Context, req ports.ExecutionProvisionReq
 	// worktree. Re-list once and bind an exact title match; never retry create.
 	workspaces, reconcileErr := b.client.ListWorkspaces(ctx)
 	if reconcileErr != nil {
-		return domain.ExecutionWorkspace{}, errors.Join(createErr, fmt.Errorf("reconcile workspace create: %w", reconcileErr))
+		return domain.ExecutionWorkspace{}, errors.Join(
+			executionerror.ErrProvisionOutcomeUnknown,
+			createErr,
+			fmt.Errorf("reconcile workspace create: %w", reconcileErr),
+		)
 	}
 	workspace, matched, reconcileErr = workspaceByTitle(workspaces, req.WorkspaceTitle)
 	if reconcileErr != nil {
-		return domain.ExecutionWorkspace{}, errors.Join(createErr, reconcileErr)
+		return domain.ExecutionWorkspace{}, errors.Join(executionerror.ErrProvisionOutcomeUnknown, createErr, reconcileErr)
 	}
 	if !matched {
-		return domain.ExecutionWorkspace{}, createErr
+		return domain.ExecutionWorkspace{}, errors.Join(executionerror.ErrProvisionOutcomeUnknown, createErr)
 	}
 	return b.bindWorkspace(ctx, &binding, req, workspace)
 }

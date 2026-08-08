@@ -119,6 +119,22 @@ WHERE session_id = sqlc.arg(session_id)
 -- name: FindSessionExecutionBindingsByIntent :many
 SELECT * FROM session_execution_bindings WHERE intent_id = ? ORDER BY session_id;
 
+-- An ambiguous create is the only path that advances an attempt in place. The
+-- empty-id predicates make it impossible to discard a workspace or agent AO
+-- already bound, while the attempt predicate rejects a stale worker.
+-- name: EscalateSessionExecutionBinding :execrows
+UPDATE session_execution_bindings
+SET workspace_title = sqlc.arg(workspace_title),
+    intent_id = sqlc.arg(intent_id),
+    launch_id = sqlc.arg(launch_id),
+    attempt = sqlc.arg(new_attempt),
+    labels_written_json = '{}'
+WHERE session_id = sqlc.arg(session_id)
+  AND attempt = sqlc.arg(prior_attempt)
+  AND external_workspace_id = ''
+  AND external_agent_id = ''
+  AND archived_at = '';
+
 -- name: ListActiveSessionExecutionBindingsByHost :many
 SELECT * FROM session_execution_bindings
 WHERE host_id = ? AND archived_at = '' ORDER BY session_id;
@@ -194,6 +210,19 @@ WHERE id = ? AND state = 'delivering';
 UPDATE execution_commands
 SET state = ?, attempt_count = ?, next_attempt_at = ?, last_error = ?, acknowledged_at = ?
 WHERE id = ?;
+
+-- name: RewriteExecutionStartAttempt :execrows
+UPDATE execution_commands
+SET payload_json = sqlc.arg(payload_json),
+    idempotency_key = sqlc.arg(idempotency_key),
+    state = 'pending',
+    next_attempt_at = '',
+    last_error = sqlc.arg(last_error),
+    acknowledged_at = ''
+WHERE id = sqlc.arg(id)
+  AND session_id = sqlc.arg(session_id)
+  AND command_type = 'start_agent'
+  AND state IN ('pending','delivering');
 
 -- name: InsertExecutionEvent :execrows
 INSERT INTO execution_events (

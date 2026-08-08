@@ -11,21 +11,24 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/executionerror"
 	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runtimehandle"
 )
 
 const (
-	defaultLease       = 30 * time.Second
-	defaultBaseBackoff = 5 * time.Second
-	defaultMaxAttempts = 5
+	defaultLease          = 30 * time.Second
+	defaultBaseBackoff    = 5 * time.Second
+	defaultMaxAttempts    = 5
+	defaultMaxEscalations = 2
 )
 
 type commandStore interface {
 	ClaimNextExecutionCommand(context.Context, time.Time, time.Time) (domain.ExecutionCommand, bool, error)
 	RetryExecutionCommand(context.Context, domain.ExecutionCommand, time.Time, error) error
 	FailExecutionCommand(context.Context, domain.ExecutionCommand, error) error
+	EscalateExecutionAttempt(context.Context, domain.SessionID) error
 	AcknowledgeExecutionStart(context.Context, string, domain.SessionID, string, string, time.Time) error
 }
 
@@ -63,14 +66,15 @@ const (
 // seam that models process loss: a returned error deliberately leaves the row
 // delivering until its lease expires.
 type Worker struct {
-	store       commandStore
-	backends    BackendResolver
-	briefs      BriefWriter
-	now         func() time.Time
-	lease       time.Duration
-	baseBackoff time.Duration
-	maxAttempts int
-	checkpoint  func(deliveryCheckpoint) error
+	store          commandStore
+	backends       BackendResolver
+	briefs         BriefWriter
+	now            func() time.Time
+	lease          time.Duration
+	baseBackoff    time.Duration
+	maxAttempts    int
+	maxEscalations int
+	checkpoint     func(deliveryCheckpoint) error
 }
 
 // NewWorker constructs the outbox drain. It performs no I/O; call Drain to run
@@ -84,7 +88,7 @@ func NewWorker(store commandStore, backends BackendResolver) *Worker {
 func NewWorkerWithBriefs(store commandStore, backends BackendResolver, briefs BriefWriter) *Worker {
 	return &Worker{
 		store: store, backends: backends, briefs: briefs, now: time.Now, lease: defaultLease,
-		baseBackoff: defaultBaseBackoff, maxAttempts: defaultMaxAttempts,
+		baseBackoff: defaultBaseBackoff, maxAttempts: defaultMaxAttempts, maxEscalations: defaultMaxEscalations,
 	}
 }
 
@@ -132,6 +136,9 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 		Provider: payload.Provider, Model: payload.Model, Mode: payload.Mode,
 	})
 	if err != nil {
+		if errors.Is(err, executionerror.ErrProvisionOutcomeUnknown) {
+			return true, w.escalateOrFail(ctx, command, payload, err)
+		}
 		return true, w.retryOrFail(ctx, command, err)
 	}
 	if err := w.atCheckpoint(checkpointProvisioned); err != nil {
@@ -160,6 +167,19 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, nil
+}
+
+func (w *Worker) escalateOrFail(
+	ctx context.Context,
+	command domain.ExecutionCommand,
+	payload domain.ExecutionStartPayload,
+	deliveryErr error,
+) error {
+	if payload.Attempt >= 1+w.maxEscalations {
+		err := fmt.Errorf("provision remained ambiguous after %d escalations: %w", w.maxEscalations, deliveryErr)
+		return errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
+	}
+	return errorsJoin(deliveryErr, w.store.EscalateExecutionAttempt(ctx, command.SessionID))
 }
 
 func (w *Worker) retryOrFail(ctx context.Context, command domain.ExecutionCommand, deliveryErr error) error {

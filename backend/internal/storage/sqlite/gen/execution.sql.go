@@ -154,6 +154,47 @@ func (q *Queries) DeleteExecutionHostCapabilities(ctx context.Context, hostID st
 	return err
 }
 
+const escalateSessionExecutionBinding = `-- name: EscalateSessionExecutionBinding :execrows
+UPDATE session_execution_bindings
+SET workspace_title = ?1,
+    intent_id = ?2,
+    launch_id = ?3,
+    attempt = ?4,
+    labels_written_json = '{}'
+WHERE session_id = ?5
+  AND attempt = ?6
+  AND external_workspace_id = ''
+  AND external_agent_id = ''
+  AND archived_at = ''
+`
+
+type EscalateSessionExecutionBindingParams struct {
+	WorkspaceTitle string
+	IntentID       string
+	LaunchID       string
+	NewAttempt     int64
+	SessionID      string
+	PriorAttempt   int64
+}
+
+// An ambiguous create is the only path that advances an attempt in place. The
+// empty-id predicates make it impossible to discard a workspace or agent AO
+// already bound, while the attempt predicate rejects a stale worker.
+func (q *Queries) EscalateSessionExecutionBinding(ctx context.Context, arg EscalateSessionExecutionBindingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, escalateSessionExecutionBinding,
+		arg.WorkspaceTitle,
+		arg.IntentID,
+		arg.LaunchID,
+		arg.NewAttempt,
+		arg.SessionID,
+		arg.PriorAttempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const findSessionExecutionBindingsByIntent = `-- name: FindSessionExecutionBindingsByIntent :many
 SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings WHERE intent_id = ? ORDER BY session_id
 `
@@ -1121,6 +1162,42 @@ func (q *Queries) NextExecutionCommandSequence(ctx context.Context, sessionID st
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const rewriteExecutionStartAttempt = `-- name: RewriteExecutionStartAttempt :execrows
+UPDATE execution_commands
+SET payload_json = ?1,
+    idempotency_key = ?2,
+    state = 'pending',
+    next_attempt_at = '',
+    last_error = ?3,
+    acknowledged_at = ''
+WHERE id = ?4
+  AND session_id = ?5
+  AND command_type = 'start_agent'
+  AND state IN ('pending','delivering')
+`
+
+type RewriteExecutionStartAttemptParams struct {
+	PayloadJson    string
+	IdempotencyKey string
+	LastError      string
+	ID             string
+	SessionID      string
+}
+
+func (q *Queries) RewriteExecutionStartAttempt(ctx context.Context, arg RewriteExecutionStartAttemptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rewriteExecutionStartAttempt,
+		arg.PayloadJson,
+		arg.IdempotencyKey,
+		arg.LastError,
+		arg.ID,
+		arg.SessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const touchSessionExecutionBinding = `-- name: TouchSessionExecutionBinding :execrows

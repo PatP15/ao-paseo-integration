@@ -30,6 +30,9 @@ type fakeExecutionService struct {
 	err        error
 	bound      executionsvc.BindingInput
 	probed     domain.ExecutionHostID
+
+	bindingsList  []domain.ProjectHostBinding
+	bindingFilter executionsvc.BindingFilter
 }
 
 // BindProject records a project's checkout path on a host.
@@ -75,6 +78,14 @@ func (f *fakeExecutionService) RegisterHost(_ context.Context, in executionsvc.H
 		},
 		Capabilities: in.Capabilities,
 	}, nil
+}
+
+func (f *fakeExecutionService) ListBindings(_ context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
+	f.bindingFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.bindingsList, nil
 }
 
 func (f *fakeExecutionService) ListQuestions(context.Context) ([]domain.ExecutionInboxQuestion, error) {
@@ -589,5 +600,35 @@ func TestProbeExecutionHostSelfTargetIsConflict(t *testing.T) {
 	}
 	if envelope.Code != "HOST_IS_SELF" {
 		t.Fatalf("code = %q, want HOST_IS_SELF", envelope.Code)
+	}
+}
+
+// TestListExecutionBindings pins the query mapping and the empty-array shape.
+func TestListExecutionBindings(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/bindings?projectId=alpha&hostId=worker-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.bindingFilter.ProjectID != "alpha" || svc.bindingFilter.HostID != "worker-1" {
+		t.Fatalf("filter = %+v", svc.bindingFilter)
+	}
+	if !strings.Contains(string(body), `"bindings":[]`) {
+		t.Fatalf("body = %s, want an empty array", body)
+	}
+
+	svc.bindingsList = []domain.ProjectHostBinding{{
+		ProjectID: "alpha", HostID: "worker-1", HostRepoPath: "/home/u/alpha",
+		BaseBranch: "main", Priority: 100, Enabled: true,
+	}}
+	_, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/bindings", "")
+	var out controllers.ListExecutionBindingsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Bindings) != 1 || out.Bindings[0].HostRepoPath != "/home/u/alpha" || !out.Bindings[0].Enabled {
+		t.Fatalf("bindings = %+v", out.Bindings)
 	}
 }

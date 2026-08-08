@@ -46,6 +46,14 @@ func (f *fakeStore) ListProjectHostBindings(_ context.Context, projectID domain.
 	return f.projectBindings[projectID], nil
 }
 
+func (f *fakeStore) ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error) {
+	var all []domain.ProjectHostBinding
+	for _, bindings := range f.projectBindings {
+		all = append(all, bindings...)
+	}
+	return all, nil
+}
+
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		caps:      map[domain.ExecutionHostID][]string{},
@@ -604,4 +612,57 @@ func TestProbeHost(t *testing.T) {
 			t.Fatalf("code = %q, want HOST_IS_SELF", code)
 		}
 	})
+}
+
+// TestListBindingsFilter covers the three filter shapes: by project, by host,
+// and unfiltered across every project.
+func TestListBindingsFilter(t *testing.T) {
+	store := newFakeStore()
+	store.projectBindings = map[domain.ProjectID][]domain.ProjectHostBinding{
+		"alpha": {
+			{ProjectID: "alpha", HostID: "worker-1", HostRepoPath: "/a"},
+			{ProjectID: "alpha", HostID: "worker-2", HostRepoPath: "/a"},
+		},
+		"beta": {
+			{ProjectID: "beta", HostID: "worker-1", HostRepoPath: "/b"},
+		},
+	}
+	svc := newTestService(store)
+
+	all, err := svc.ListBindings(context.Background(), BindingFilter{})
+	if err != nil {
+		t.Fatalf("ListBindings(all): %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("all = %d bindings, want 3", len(all))
+	}
+
+	byProject, err := svc.ListBindings(context.Background(), BindingFilter{ProjectID: " alpha "})
+	if err != nil {
+		t.Fatalf("ListBindings(project): %v", err)
+	}
+	if len(byProject) != 2 {
+		t.Fatalf("project filter = %d bindings, want 2", len(byProject))
+	}
+
+	byHost, err := svc.ListBindings(context.Background(), BindingFilter{HostID: "worker-1"})
+	if err != nil {
+		t.Fatalf("ListBindings(host): %v", err)
+	}
+	if len(byHost) != 2 {
+		t.Fatalf("host filter = %d bindings, want 2", len(byHost))
+	}
+	for _, binding := range byHost {
+		if binding.HostID != "worker-1" {
+			t.Fatalf("host filter leaked %+v", binding)
+		}
+	}
+
+	both, err := svc.ListBindings(context.Background(), BindingFilter{ProjectID: "beta", HostID: "worker-1"})
+	if err != nil {
+		t.Fatalf("ListBindings(both): %v", err)
+	}
+	if len(both) != 1 || both[0].ProjectID != "beta" {
+		t.Fatalf("both filter = %+v, want beta/worker-1", both)
+	}
 }

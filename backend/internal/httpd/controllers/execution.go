@@ -27,6 +27,7 @@ type ExecutionService interface {
 	Answer(ctx context.Context, in executionsvc.AnswerInput) (domain.ExecutionCommand, error)
 	Decide(ctx context.Context, in executionsvc.DecisionInput) (domain.ExecutionCommand, error)
 	BindProject(ctx context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error)
+	ListBindings(ctx context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -64,6 +65,7 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Post("/execution/hosts/{hostId}/probe", c.probeHost)
 	r.Post("/execution/dispatch", c.dispatch)
 	r.Put("/execution/projects/{projectId}/hosts/{hostId}", c.bindProject)
+	r.Get("/execution/bindings", c.listBindings)
 	r.Get("/execution/questions", c.listQuestions)
 	r.Post("/execution/questions/{questionId}/answer", c.answerQuestion)
 	r.Post("/execution/permissions/{questionId}/decision", c.decidePermission)
@@ -236,6 +238,59 @@ func (c *ExecutionController) bindProject(w http.ResponseWriter, r *http.Request
 		HostRepoPath: binding.HostRepoPath, BaseBranch: binding.BaseBranch,
 		Priority: binding.Priority, Enabled: binding.Enabled,
 	})
+}
+
+// ListBindingsQuery narrows the bindings list. Both parameters are optional.
+type ListBindingsQuery struct {
+	ProjectID string `query:"projectId" description:"Only bindings for this project."`
+	HostID    string `query:"hostId" description:"Only bindings on this host."`
+}
+
+// ExecutionBindingResponse is one stored project↔host binding.
+type ExecutionBindingResponse struct {
+	ProjectID    string    `json:"projectId"`
+	HostID       string    `json:"hostId"`
+	HostRepoPath string    `json:"hostRepoPath" description:"Checkout path on the host, which AO cannot infer."`
+	BaseBranch   string    `json:"baseBranch"`
+	Priority     int       `json:"priority" description:"Lower sorts first when several hosts qualify."`
+	Enabled      bool      `json:"enabled"`
+	SetupProfile string    `json:"setupProfile,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// ListExecutionBindingsResponse is the body of GET /api/v1/execution/bindings.
+type ListExecutionBindingsResponse struct {
+	Bindings []ExecutionBindingResponse `json:"bindings"`
+}
+
+// listBindings answers which projects are bound to which hosts. It exists
+// because the router iterates bindings — an unbound project has zero candidate
+// hosts however many are online — and until this route nothing could show that.
+func (c *ExecutionController) listBindings(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/bindings")
+		return
+	}
+	bindings, err := c.Svc.ListBindings(r.Context(), executionsvc.BindingFilter{
+		ProjectID: domain.ProjectID(r.URL.Query().Get("projectId")),
+		HostID:    domain.ExecutionHostID(r.URL.Query().Get("hostId")),
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := make([]ExecutionBindingResponse, 0, len(bindings))
+	for _, binding := range bindings {
+		out = append(out, ExecutionBindingResponse{
+			ProjectID: string(binding.ProjectID), HostID: string(binding.HostID),
+			HostRepoPath: binding.HostRepoPath, BaseBranch: binding.BaseBranch,
+			Priority: binding.Priority, Enabled: binding.Enabled,
+			SetupProfile: binding.SetupProfile,
+			CreatedAt:    binding.CreatedAt, UpdatedAt: binding.UpdatedAt,
+		})
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListExecutionBindingsResponse{Bindings: out})
 }
 
 func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {

@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List project-to-host bindings, optionally filtered by project or host */
+        get: operations["listExecutionBindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/dispatch": {
         parameters: {
             query?: never;
@@ -1167,9 +1184,27 @@ export interface components {
             /** @description The credential. Stored 0600 under the daemon's data dir; never returned, logged, or persisted anywhere else. */
             value: string;
         };
+        ControllersExecutionBindingResponse: {
+            baseBranch: string;
+            /** Format: date-time */
+            createdAt: string;
+            enabled: boolean;
+            hostId: string;
+            /** @description Checkout path on the host, which AO cannot infer. */
+            hostRepoPath: string;
+            /** @description Lower sorts first when several hosts qualify. */
+            priority: number;
+            projectId: string;
+            setupProfile?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
         ControllersExecutionSecretEnvelope: {
             /** @description The stored ref, as passed to endpointSecretRef at host registration. */
             ref: string;
+        };
+        ControllersListExecutionBindingsResponse: {
+            bindings: components["schemas"]["ControllersExecutionBindingResponse"][];
         };
         ControllersListExecutionSecretsResponse: {
             refs: string[];
@@ -2361,6 +2396,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionBindings: {
+        parameters: {
+            query?: {
+                /** @description Only bindings for this project. */
+                projectId?: string;
+                /** @description Only bindings on this host. */
+                hostId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListExecutionBindingsResponse"];
                 };
             };
             /** @description Internal Server Error */

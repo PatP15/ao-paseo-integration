@@ -58,6 +58,9 @@ ON CONFLICT (project_id, host_id) DO UPDATE SET
 -- name: ListProjectHostBindings :many
 SELECT * FROM project_host_bindings WHERE project_id = ? ORDER BY priority, host_id;
 
+-- name: ListAllProjectHostBindings :many
+SELECT * FROM project_host_bindings ORDER BY project_id, priority, host_id;
+
 -- name: GetProjectHostBinding :one
 SELECT * FROM project_host_bindings WHERE project_id = ? AND host_id = ?;
 

@@ -43,6 +43,7 @@ type Store interface {
 	ResolveExecutionQuestion(context.Context, domain.ExecutionQuestionResolution) (domain.ExecutionCommand, error)
 	UpsertProjectHostBinding(context.Context, domain.ProjectHostBinding) error
 	ListProjectHostBindings(context.Context, domain.ProjectID) ([]domain.ProjectHostBinding, error)
+	ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -588,7 +589,41 @@ func (s *Service) BindProject(ctx context.Context, in BindingInput) (domain.Proj
 	return binding, nil
 }
 
-// ListBindings returns a project's host bindings.
-func (s *Service) ListBindings(ctx context.Context, projectID domain.ProjectID) ([]domain.ProjectHostBinding, error) {
-	return s.store.ListProjectHostBindings(ctx, domain.ProjectID(strings.TrimSpace(string(projectID))))
+// BindingFilter narrows a bindings list. Both fields are optional; an empty
+// filter returns every binding across all projects.
+type BindingFilter struct {
+	ProjectID domain.ProjectID
+	HostID    domain.ExecutionHostID
+}
+
+// ListBindings returns project↔host bindings matching the filter.
+//
+// This is the read half the bind PUT never had: without it neither the
+// Computers pane (bindings per host) nor project settings (hosts per project)
+// can show what is bound, and "registered but unbound" — the trap the first
+// end-to-end run fell into — stays invisible.
+func (s *Service) ListBindings(ctx context.Context, filter BindingFilter) ([]domain.ProjectHostBinding, error) {
+	projectID := domain.ProjectID(strings.TrimSpace(string(filter.ProjectID)))
+	hostID := domain.ExecutionHostID(strings.TrimSpace(string(filter.HostID)))
+
+	var bindings []domain.ProjectHostBinding
+	var err error
+	if projectID != "" {
+		bindings, err = s.store.ListProjectHostBindings(ctx, projectID)
+	} else {
+		bindings, err = s.store.ListAllProjectHostBindings(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list project host bindings: %w", err)
+	}
+	if hostID == "" {
+		return bindings, nil
+	}
+	filtered := make([]domain.ProjectHostBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if binding.HostID == hostID {
+			filtered = append(filtered, binding)
+		}
+	}
+	return filtered, nil
 }

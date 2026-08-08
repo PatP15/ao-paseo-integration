@@ -803,6 +803,44 @@ func (q *Queries) ListActiveSessionExecutionBindingsByHost(ctx context.Context, 
 	return items, nil
 }
 
+const listAllProjectHostBindings = `-- name: ListAllProjectHostBindings :many
+SELECT project_id, host_id, host_repo_path, base_branch, priority, enabled, setup_profile, created_at, updated_at, required_zone_id FROM project_host_bindings ORDER BY project_id, priority, host_id
+`
+
+func (q *Queries) ListAllProjectHostBindings(ctx context.Context) ([]ProjectHostBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listAllProjectHostBindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectHostBinding{}
+	for rows.Next() {
+		var i ProjectHostBinding
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.HostID,
+			&i.HostRepoPath,
+			&i.BaseBranch,
+			&i.Priority,
+			&i.Enabled,
+			&i.SetupProfile,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RequiredZoneID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueExecutionCommands = `-- name: ListDueExecutionCommands :many
 SELECT cmd.id, cmd.session_id, cmd.host_id, cmd.command_type, cmd.payload_json, cmd.idempotency_key, cmd.sequence, cmd.state, cmd.attempt_count, cmd.next_attempt_at, cmd.last_error, cmd.created_at, cmd.acknowledged_at FROM execution_commands AS cmd
 WHERE cmd.state IN ('pending','delivering')

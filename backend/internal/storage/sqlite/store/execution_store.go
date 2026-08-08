@@ -80,6 +80,20 @@ func (s *Store) ListProjectHostBindings(ctx context.Context, projectID domain.Pr
 	if err != nil {
 		return nil, fmt.Errorf("list project host bindings: %w", err)
 	}
+	return projectHostBindingsFromGen(rows)
+}
+
+// ListAllProjectHostBindings returns every binding across all projects, for
+// the registry views that group by host rather than by project.
+func (s *Store) ListAllProjectHostBindings(ctx context.Context) ([]domain.ProjectHostBinding, error) {
+	rows, err := s.qr.ListAllProjectHostBindings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list all project host bindings: %w", err)
+	}
+	return projectHostBindingsFromGen(rows)
+}
+
+func projectHostBindingsFromGen(rows []gen.ProjectHostBinding) ([]domain.ProjectHostBinding, error) {
 	bindings := make([]domain.ProjectHostBinding, 0, len(rows))
 	for _, row := range rows {
 		created, err := decodeExecutionTime(row.CreatedAt)

@@ -301,6 +301,44 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/execution/bindings:
+    get:
+      operationId: listExecutionBindings
+      parameters:
+      - description: Only bindings for this project.
+        in: query
+        name: projectId
+        schema:
+          description: Only bindings for this project.
+          type: string
+      - description: Only bindings on this host.
+        in: query
+        name: hostId
+        schema:
+          description: Only bindings on this host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionBindingsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List project-to-host bindings, optionally filtered by project or host
+      tags:
+      - execution
   /api/v1/execution/dispatch:
     post:
       operationId: dispatchExecution
@@ -3410,6 +3448,40 @@ components:
       - name
       - value
       type: object
+    ControllersExecutionBindingResponse:
+      properties:
+        baseBranch:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        hostId:
+          type: string
+        hostRepoPath:
+          description: Checkout path on the host, which AO cannot infer.
+          type: string
+        priority:
+          description: Lower sorts first when several hosts qualify.
+          type: integer
+        projectId:
+          type: string
+        setupProfile:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - projectId
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - priority
+      - enabled
+      - createdAt
+      - updatedAt
+      type: object
     ControllersExecutionSecretEnvelope:
       properties:
         ref:
@@ -3417,6 +3489,15 @@ components:
           type: string
       required:
       - ref
+      type: object
+    ControllersListExecutionBindingsResponse:
+      properties:
+        bindings:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionBindingResponse'
+          type: array
+      required:
+      - bindings
       type: object
     ControllersListExecutionSecretsResponse:
       properties:

@@ -439,6 +439,16 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/execution/bindings", id: "listExecutionBindings", tag: "execution",
+			summary:    "List project-to-host bindings, optionally filtered by project or host",
+			pathParams: []any{controllers.ListBindingsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionBindingsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/execution/dispatch", id: "dispatchExecution", tag: "execution",
 			summary: "Dispatch one approved work-item attempt to a routed host",
 			reqBody: controllers.DispatchExecutionRequest{},

@@ -2902,6 +2902,137 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/work-items:
+    get:
+      operationId: listWorkItems
+      parameters:
+      - description: Project whose work items should be returned.
+        in: query
+        name: projectId
+        schema:
+          description: Project whose work items should be returned.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkItemsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List work items belonging to one project
+      tags:
+      - workItems
+    post:
+      operationId: createWorkItem
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkItemInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create a draft work item in a project's durable work graph
+      tags:
+      - workItems
+  /api/v1/work-items/{id}/approval:
+    post:
+      operationId: approveWorkItem
+      parameters:
+      - description: Work-item identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Work-item identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveWorkItemRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Approve a draft or proposed work item
+      tags:
+      - workItems
 components:
   schemas:
     APIError:
@@ -2975,6 +3106,13 @@ components:
           type: string
       required:
       - answer
+      type: object
+    ApproveWorkItemRequest:
+      properties:
+        approver:
+          type: string
+      required:
+      - approver
       type: object
     BrowserCommandRequest:
       properties:
@@ -3223,6 +3361,40 @@ components:
           type: string
       required:
       - data
+      type: object
+    CreateWorkItemInput:
+      properties:
+        acceptanceCriteria:
+          items:
+            type: string
+          type: array
+        allowedScope:
+          items:
+            type: string
+          type: array
+        body:
+          type: string
+        createdBy:
+          type: string
+        excludedScope:
+          items:
+            type: string
+          type: array
+        parentWorkItemId:
+          type: string
+        policyProfileId:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+        riskLevel:
+          type: string
+        title:
+          type: string
+      required:
+      - projectId
+      - title
       type: object
     DecideExecutionPermissionRequest:
       properties:
@@ -3747,6 +3919,15 @@ components:
           type: array
       required:
       - shellTerminals
+      type: object
+    ListWorkItemsResponse:
+      properties:
+        workItems:
+          items:
+            $ref: '#/components/schemas/WorkItemResponse'
+          type: array
+      required:
+      - workItems
       type: object
     ListWorkspaceFilesResponse:
       properties:
@@ -5008,6 +5189,90 @@ components:
       required:
       - title
       type: object
+    WorkItemEnvelope:
+      properties:
+        workItem:
+          $ref: '#/components/schemas/WorkItemResponse'
+      required:
+      - workItem
+      type: object
+    WorkItemResponse:
+      properties:
+        acceptanceCriteria:
+          items:
+            type: string
+          type: array
+        allowedScope:
+          items:
+            type: string
+          type: array
+        approvalState:
+          enum:
+          - draft
+          - proposed
+          - approved
+          - rejected
+          type: string
+        approvedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        approvedBy:
+          type: string
+        body:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        createdById:
+          type: string
+        createdByType:
+          type: string
+        excludedScope:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        lifecycleFact:
+          enum:
+          - open
+          - in_progress
+          - done
+          - cancelled
+          type: string
+        parentWorkItemId:
+          type: string
+        policyProfileId:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+        riskLevel:
+          type: string
+        title:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - title
+      - body
+      - acceptanceCriteria
+      - allowedScope
+      - excludedScope
+      - riskLevel
+      - approvalState
+      - lifecycleFact
+      - priority
+      - createdByType
+      - createdAt
+      - updatedAt
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -5138,3 +5403,5 @@ tags:
 - description: Remote execution hosts, work dispatch, and the human inbox of questions
     and permission decisions
   name: execution
+- description: Durable work graph creation, approval, and project-scoped reads
+  name: workItems

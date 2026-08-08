@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	workitemsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/workitem"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -81,6 +82,8 @@ func Build() ([]byte, error) {
 			"Target-isolated desktop browser runtime (loopback only)"),
 		*(&openapi31.Tag{Name: "execution"}).WithDescription(
 			"Remote execution hosts, work dispatch, and the human inbox of questions and permission decisions"),
+		*(&openapi31.Tag{Name: "workItems"}).WithDescription(
+			"Durable work graph creation, approval, and project-scoped reads"),
 	}
 
 	for _, op := range operations() {
@@ -234,6 +237,11 @@ var schemaNames = map[string]string{
 	"ControllersAnswerExecutionQuestionRequest":   "AnswerExecutionQuestionRequest",
 	"ControllersDecideExecutionPermissionRequest": "DecideExecutionPermissionRequest",
 	"ControllersExecutionDecisionResponse":        "ExecutionDecisionResponse",
+	// httpd/controllers — work-item wire envelopes
+	"ControllersApproveWorkItemRequest": "ApproveWorkItemRequest",
+	"ControllersWorkItemResponse":       "WorkItemResponse",
+	"ControllersWorkItemEnvelope":       "WorkItemEnvelope",
+	"ControllersListWorkItemsResponse":  "ListWorkItemsResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -277,6 +285,7 @@ var schemaNames = map[string]string{
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	"WorkitemCreateInput":               "CreateWorkItemInput",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
 
@@ -365,6 +374,7 @@ func operations() []operation {
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, executionOperations()...)
+	ops = append(ops, workItemOperations()...)
 	return ops
 }
 
@@ -462,6 +472,47 @@ func executionOperations() []operation {
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+func workItemOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodPost, path: "/api/v1/work-items", id: "createWorkItem", tag: "workItems",
+			summary: "Create a draft work item in a project's durable work graph",
+			reqBody: workitemsvc.CreateInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/work-items/{id}/approval", id: "approveWorkItem", tag: "workItems",
+			summary:    "Approve a draft or proposed work item",
+			pathParams: []any{controllers.WorkItemIDParam{}},
+			reqBody:    controllers.ApproveWorkItemRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/work-items", id: "listWorkItems", tag: "workItems",
+			summary:    "List work items belonging to one project",
+			pathParams: []any{controllers.ListWorkItemsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListWorkItemsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -38,6 +38,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	workitemsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/workitem"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -287,6 +288,7 @@ func Run() error {
 		// with no execution backend registered yet.
 		Execution:         executionsvc.New(store),
 		ExecutionDispatch: dispatchsvc.New(store),
+		WorkItems:         workitemsvc.New(store),
 	})
 	if err != nil {
 		stop()

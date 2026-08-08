@@ -241,6 +241,52 @@ func (q *Queries) ReleaseWorkItemSession(ctx context.Context, arg ReleaseWorkIte
 	return result.RowsAffected()
 }
 
+const setWorkItemApproval = `-- name: SetWorkItemApproval :one
+UPDATE work_items
+SET approval_state = 'approved', approved_by = ?, approved_at = ?, updated_at = ?
+WHERE id = ? AND approval_state IN ('draft', 'proposed')
+RETURNING id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at
+`
+
+type SetWorkItemApprovalParams struct {
+	ApprovedBy string
+	ApprovedAt string
+	UpdatedAt  string
+	ID         string
+}
+
+func (q *Queries) SetWorkItemApproval(ctx context.Context, arg SetWorkItemApprovalParams) (WorkItem, error) {
+	row := q.db.QueryRowContext(ctx, setWorkItemApproval,
+		arg.ApprovedBy,
+		arg.ApprovedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i WorkItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ParentWorkItemID,
+		&i.Title,
+		&i.Body,
+		&i.AcceptanceCriteriaJson,
+		&i.AllowedScopeJson,
+		&i.ExcludedScopeJson,
+		&i.RiskLevel,
+		&i.PolicyProfileID,
+		&i.ApprovalState,
+		&i.LifecycleFact,
+		&i.Priority,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertWorkItem = `-- name: UpsertWorkItem :exec
 INSERT INTO work_items (
     id, project_id, parent_work_item_id, title, body,

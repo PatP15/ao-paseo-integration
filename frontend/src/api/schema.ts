@@ -986,6 +986,41 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/work-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List work items belonging to one project */
+        get: operations["listWorkItems"];
+        put?: never;
+        /** Create a draft work item in a project's durable work graph */
+        post: operations["createWorkItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/work-items/{id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a draft or proposed work item */
+        post: operations["approveWorkItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1023,6 +1058,9 @@ export interface components {
             answer: string;
             /** @description Recorded in the audit log. Defaults to "human". */
             answeredBy?: string;
+        };
+        ApproveWorkItemRequest: {
+            approver: string;
         };
         BrowserCommandRequest: {
             action: string;
@@ -1114,6 +1152,19 @@ export interface components {
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
+        };
+        CreateWorkItemInput: {
+            acceptanceCriteria?: string[];
+            allowedScope?: string[];
+            body?: string;
+            createdBy?: string;
+            excludedScope?: string[];
+            parentWorkItemId?: string;
+            policyProfileId?: string;
+            priority?: number;
+            projectId: string;
+            riskLevel?: string;
+            title: string;
         };
         DecideExecutionPermissionRequest: {
             /** @description Recorded in the audit log. Defaults to "human". */
@@ -1312,6 +1363,9 @@ export interface components {
         };
         ListShellTerminalsResponse: {
             shellTerminals: components["schemas"]["ShellTerminalResponse"][];
+        };
+        ListWorkItemsResponse: {
+            workItems: components["schemas"]["WorkItemResponse"][];
         };
         ListWorkspaceFilesResponse: {
             compareBaseRef?: string;
@@ -1815,6 +1869,35 @@ export interface components {
         UpdateShellTerminalRequest: {
             /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
             title: string;
+        };
+        WorkItemEnvelope: {
+            workItem: components["schemas"]["WorkItemResponse"];
+        };
+        WorkItemResponse: {
+            acceptanceCriteria: string[];
+            allowedScope: string[];
+            /** @enum {string} */
+            approvalState: "draft" | "proposed" | "approved" | "rejected";
+            /** Format: date-time */
+            approvedAt?: null | string;
+            approvedBy?: string;
+            body: string;
+            /** Format: date-time */
+            createdAt: string;
+            createdById?: string;
+            createdByType: string;
+            excludedScope: string[];
+            id: string;
+            /** @enum {string} */
+            lifecycleFact: "open" | "in_progress" | "done" | "cancelled";
+            parentWorkItemId?: string;
+            policyProfileId?: string;
+            priority: number;
+            projectId: string;
+            riskLevel: string;
+            title: string;
+            /** Format: date-time */
+            updatedAt: string;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -5569,6 +5652,179 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listWorkItems: {
+        parameters: {
+            query?: {
+                /** @description Project whose work items should be returned. */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWorkItemsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createWorkItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkItemInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkItemEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    approveWorkItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Work-item identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveWorkItemRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkItemEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

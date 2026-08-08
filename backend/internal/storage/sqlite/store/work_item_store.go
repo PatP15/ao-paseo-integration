@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -52,6 +53,49 @@ func (s *Store) GetWorkItem(ctx context.Context, id string) (domain.WorkItem, bo
 		return domain.WorkItem{}, false, err
 	}
 	return item, true, nil
+}
+
+// SetWorkItemApproval atomically promotes a draft or proposed work item. A
+// false result means either the item does not exist or its approval state no
+// longer permits promotion; callers can GetWorkItem to distinguish the two.
+func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver string, at time.Time) (domain.WorkItem, bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	row, err := s.qw.SetWorkItemApproval(ctx, gen.SetWorkItemApprovalParams{
+		ApprovedBy: approver,
+		ApprovedAt: encodeExecutionTime(at),
+		UpdatedAt:  encodeExecutionTime(at),
+		ID:         id,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.WorkItem{}, false, nil
+	}
+	if err != nil {
+		return domain.WorkItem{}, false, fmt.Errorf("approve work item %s: %w", id, err)
+	}
+	item, err := workItemFromGen(row)
+	if err != nil {
+		return domain.WorkItem{}, false, err
+	}
+	return item, true, nil
+}
+
+// ListWorkItemsByProject returns one project's durable work graph ordered by
+// priority and creation time.
+func (s *Store) ListWorkItemsByProject(ctx context.Context, projectID domain.ProjectID) ([]domain.WorkItem, error) {
+	rows, err := s.qr.ListWorkItemsByProject(ctx, string(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("list work items for project %s: %w", projectID, err)
+	}
+	items := make([]domain.WorkItem, 0, len(rows))
+	for _, row := range rows {
+		item, err := workItemFromGen(row)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 // ClaimWorkItemSession records an active session owner. The database's partial

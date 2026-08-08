@@ -143,6 +143,10 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao spawn":                  {},
 	"ao stop":                   {},
 	"ao version":                {},
+	"ao work-item":              {},
+	"ao work-item add":          {},
+	"ao work-item approve":      {},
+	"ao work-item ls":           {},
 
 	// Legacy commands observed in PostHog's current billing-period data.
 	"ao handoff":                   {},

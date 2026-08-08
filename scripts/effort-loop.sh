@@ -109,7 +109,8 @@ paseo-integration. Work autonomously. Do exactly ONE pull request from the plan
 this iteration, then stop.
 
 Read first, in order:
-  docs/paseo-integration/IMPLEMENTATION_PLAN.md    (PR sequence + acceptance criteria)
+  docs/paseo-integration/GAPS.md                   (the work list — G1..G5, in order)
+  docs/paseo-integration/END_TO_END.md             (why these gaps exist)
   docs/paseo-integration/spike/FINDINGS.md         (empirically verified Paseo behaviour)
   docs/paseo-integration/ARCHITECTURE.md
   AGENTS.md
@@ -118,13 +119,16 @@ FIRST run BOTH `git log --oneline -12` AND `git status --short`.
 
 If `git status` shows uncommitted work, a previous iteration was cut off
 mid-PR — by a usage limit, a timeout, or an error. FINISH THAT WORK. Do not
-start a different PR on top of it and do not discard it. Run
+start a different gap on top of it and do not discard it. Run
 ./scripts/verify-fork-baseline.sh to see exactly what is broken; a half-finished
-storage PR typically needs `npm run sqlc` plus whatever the build reports. Only
-once the tree is clean and committed should you pick new work.
+storage change typically needs `npm run sqlc` plus whatever the build reports.
+Only once the tree is clean and committed should you pick new work.
 
-If the tree IS clean, pick the smallest unblocked PR not yet done. A PR is
-blocked only if it needs a human decision.
+If the tree IS clean, do the LOWEST-NUMBERED gap in GAPS.md that is not yet
+done (check git log — a gap is done when a commit implements it and the gate
+passed). Do exactly one gap this iteration. G3 is retracted; skip it. G4 has
+two parts — if the second (the host reporter binary) is large, land the first
+part (read wiring) as its own commit and stop.
 
 HARD RULES:
 - Prefer new files in new packages. This fork rebases weekly against an upstream
@@ -140,7 +144,7 @@ HARD RULES:
 BEFORE FINISHING: run ./scripts/verify-fork-baseline.sh — it must print VERIFY
 PASS. Three upstream tests already fail and are listed in
 scripts/known-failing-tests.txt; those are expected and not yours to fix.
-Then commit atomically with a conventional-commit message explaining WHY.
+Then commit atomically with a conventional-commit message naming the gap (e.g. "feat(workitem): G1 ...") and explaining WHY.
 
 DO NOT: push, run any paseo command, start/stop any daemon, or run the spike.
 If the only remaining work is blocked on a human, say which PR and why, and stop.
@@ -160,8 +164,9 @@ Run and consider:
 5. If .sql or schema changed: gen/ regenerated in the SAME commit.
 6. If a port was added: no Paseo type or import in ports/ or domain/.
 
-Then read docs/paseo-integration/IMPLEMENTATION_PLAN.md and decide whether any
-UNBLOCKED code work remains (blocked = needs a human decision).
+Then read docs/paseo-integration/GAPS.md and decide whether any gap (G1, G2,
+G4, G5 — G3 is retracted) is not yet implemented. done=true only when every
+non-retracted gap has a commit and the gate passes.
 PROMPT
 
 VERDICT_SCHEMA='{"type":"object","properties":{"gate_passed":{"type":"boolean"},"commit_sound":{"type":"boolean"},"unblocked_work_remains":{"type":"boolean"},"done":{"type":"boolean"},"reason":{"type":"string"}},"required":["gate_passed","commit_sound","unblocked_work_remains","done","reason"],"additionalProperties":false}'

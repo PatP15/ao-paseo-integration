@@ -113,9 +113,12 @@ were recoverable rather than destructive. Every safety check fired correctly:
    escalate to `attempt+1` with a fresh title. Nothing does: the command retries
    the same attempt and stalls permanently. Recovering the run above needed
    manual intervention.
-3. **Dispatch does not verify approval.** It confirms the work item *exists*
-   but not that `approval_state='approved'`, so the "only AO decides whether a
-   task is approved" invariant is not enforced at this layer.
+3. ~~**Dispatch does not verify approval.**~~ **Not a gap — retracted.**
+   `CreateExecutionDispatch` (`execution_dispatch_store.go:24-36`) checks, inside
+   the dispatch transaction, that the work item is `approved`, that its lifecycle
+   is dispatchable (`open`/`in_progress`), and that it belongs to the requesting
+   project. An earlier version of this doc claimed the check was absent; that was
+   wrong.
 4. **The report channel is unexercised.** Observation here came entirely from
    `inspect` (rung 2, the floor). Neither terminal capture nor the sentinel was
    involved, and the rung-0 emitter does not exist yet.

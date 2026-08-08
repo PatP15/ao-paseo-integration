@@ -29,6 +29,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	paseoobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/paseo"
+	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -161,6 +162,20 @@ func (b *executionBackends) ResolveExecutionObserver(hostID domain.ExecutionHost
 	return paseoexec.NewBackend(client, b.store), true
 }
 
+// ResolveExecutionEventSource implements paseoevent.SourceResolver.
+//
+// The same host-scoped backend used for inspection owns both report reads:
+// terminal capture is the primary, cursored transport and the full rendered
+// transcript is the advisory fallback. Resolving through this cache keeps both
+// reads pinned to the host identity and credential already used for inspection.
+func (b *executionBackends) ResolveExecutionEventSource(hostID domain.ExecutionHostID) (paseoevent.Source, bool) {
+	client, ok := b.client(context.Background(), hostID)
+	if !ok {
+		return nil, false
+	}
+	return paseoexec.NewBackend(client, b.store), true
+}
+
 // startExecutionObserver wires the Paseo observer into daemon startup.
 //
 // Mirrors startSCMObserver: a host that cannot be reached does not fail
@@ -177,7 +192,8 @@ func startExecutionObserver(
 	// hosts, and a second cache would double the client count and the version
 	// handshakes for no benefit.
 	backends := newExecutionBackends(store, dataDir, logger)
-	observer := paseoobserve.New(store, lcm, backends, logger)
+	reports := paseoevent.NewIngestor(store, lcm, backends, logger)
+	observer := paseoobserve.NewWithReports(store, lcm, backends, reports, logger)
 	logger.Info("execution: paseo observer and dispatch drain starting",
 		"secrets", filepath.Join(dataDir, "secrets"))
 	return observer.Start(ctx), startDispatchWorker(ctx, store, backends, logger)
@@ -216,7 +232,11 @@ func startDispatchWorker(
 	logger *slog.Logger,
 ) <-chan struct{} {
 	done := make(chan struct{})
-	worker := dispatchsvc.NewWorker(store, backends)
+	// The report nonce and launch contract must be durable before the remote
+	// agent starts. Without the brief writer the ingestor is wired but has no
+	// authority for deciding which frames belong to this launch, so it safely
+	// rejects every report.
+	worker := dispatchsvc.NewWorkerWithBriefs(store, backends, paseoevent.NewBriefs(store))
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(dispatchDrainInterval)

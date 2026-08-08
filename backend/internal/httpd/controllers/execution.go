@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
 	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/secretstore"
 )
 
 // ExecutionService is the host-registry and human-inbox surface.
@@ -33,12 +34,20 @@ type ExecutionDispatcher interface {
 	Dispatch(ctx context.Context, req dispatchsvc.Request) (domain.ExecutionDispatch, error)
 }
 
+// ExecutionSecretStore stores host credentials behind refs. Save returns only
+// the ref; the value never travels back out through any read surface.
+type ExecutionSecretStore interface {
+	Save(in secretstore.SaveInput) (string, error)
+	List() ([]string, error)
+}
+
 // ExecutionController exposes the remote-execution control plane: which hosts
 // exist, dispatching approved work to them, and the inbox of questions and
 // permission requests a human owes an answer on.
 type ExecutionController struct {
 	Svc      ExecutionService
 	Dispatch ExecutionDispatcher
+	Secrets  ExecutionSecretStore
 }
 
 // Register mounts the execution routes.
@@ -56,6 +65,45 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/questions", c.listQuestions)
 	r.Post("/execution/questions/{questionId}/answer", c.answerQuestion)
 	r.Post("/execution/permissions/{questionId}/decision", c.decidePermission)
+	r.Post("/execution/secrets", c.createSecret)
+	r.Get("/execution/secrets", c.listSecrets)
+}
+
+// createSecret stores a credential and returns the ref that names it, closing
+// the loop the register API opens: register demands a secret ref, and until
+// this route only a shell on the daemon machine could create one.
+func (c *ExecutionController) createSecret(w http.ResponseWriter, r *http.Request) {
+	if c.Secrets == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/secrets")
+		return
+	}
+	var in CreateExecutionSecretRequest
+	// Strict: an unknown key on a credential write is a caller confused about
+	// the contract, and this is the worst route to guess on.
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON",
+			"Invalid JSON body: a secret accepts only name, value, and replace", nil)
+		return
+	}
+	ref, err := c.Secrets.Save(secretstore.SaveInput{Name: in.Name, Value: in.Value, Replace: in.Replace})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, ExecutionSecretEnvelope{Ref: ref})
+}
+
+func (c *ExecutionController) listSecrets(w http.ResponseWriter, r *http.Request) {
+	if c.Secrets == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/secrets")
+		return
+	}
+	names, err := c.Secrets.List()
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListExecutionSecretsResponse{Refs: names})
 }
 
 func (c *ExecutionController) listHosts(w http.ResponseWriter, r *http.Request) {
@@ -540,6 +588,26 @@ type DecideExecutionPermissionRequest struct {
 	RequestID string                             `json:"requestId,omitempty" description:"Optional confirmation. Must equal the full host request id AO observed; a truncated id is rejected."`
 	Note      string                             `json:"note,omitempty"`
 	DecidedBy string                             `json:"decidedBy,omitempty" description:"Recorded in the audit log. Defaults to \"human\"."`
+}
+
+// CreateExecutionSecretRequest stores one credential behind a ref. This is the
+// only surface that ever carries the value; every other request and response
+// speaks in refs.
+type CreateExecutionSecretRequest struct {
+	Name    string `json:"name" description:"Bare file name the ref will use: no path separators, whitespace, or leading dot."`
+	Value   string `json:"value" description:"The credential. Stored 0600 under the daemon's data dir; never returned, logged, or persisted anywhere else."`
+	Replace bool   `json:"replace,omitempty" description:"Must be true to rotate an existing ref; otherwise an existing name is refused."`
+}
+
+// ExecutionSecretEnvelope is the body of POST /api/v1/execution/secrets.
+type ExecutionSecretEnvelope struct {
+	Ref string `json:"ref" description:"The stored ref, as passed to endpointSecretRef at host registration."`
+}
+
+// ListExecutionSecretsResponse is the body of GET /api/v1/execution/secrets.
+// Names only, by construction.
+type ListExecutionSecretsResponse struct {
+	Refs []string `json:"refs"`
 }
 
 // ExecutionDecisionResponse reports the queued delivery for an answered item.

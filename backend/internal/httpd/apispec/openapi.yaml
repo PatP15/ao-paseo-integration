@@ -617,6 +617,73 @@ paths:
       summary: Answer an agent-authored question with text
       tags:
       - execution
+  /api/v1/execution/secrets:
+    get:
+      operationId: listExecutionSecrets
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionSecretsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List stored secret refs by name; values are never readable
+      tags:
+      - execution
+    post:
+      operationId: createExecutionSecret
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersCreateExecutionSecretRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionSecretEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Store a host credential behind a secret ref
+      tags:
+      - execution
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -3273,6 +3340,41 @@ components:
       - baseBranch
       - priority
       - enabled
+      type: object
+    ControllersCreateExecutionSecretRequest:
+      properties:
+        name:
+          description: 'Bare file name the ref will use: no path separators, whitespace,
+            or leading dot.'
+          type: string
+        replace:
+          description: Must be true to rotate an existing ref; otherwise an existing
+            name is refused.
+          type: boolean
+        value:
+          description: The credential. Stored 0600 under the daemon's data dir; never
+            returned, logged, or persisted anywhere else.
+          type: string
+      required:
+      - name
+      - value
+      type: object
+    ControllersExecutionSecretEnvelope:
+      properties:
+        ref:
+          description: The stored ref, as passed to endpointSecretRef at host registration.
+          type: string
+      required:
+      - ref
+      type: object
+    ControllersListExecutionSecretsResponse:
+      properties:
+        refs:
+          items:
+            type: string
+          type: array
+      required:
+      - refs
       type: object
     ControllersSessionView:
       properties:

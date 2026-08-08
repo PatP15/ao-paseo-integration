@@ -476,6 +476,27 @@ func executionOperations() []operation {
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/secrets", id: "createExecutionSecret", tag: "execution",
+			summary: "Store a host credential behind a secret ref",
+			reqBody: controllers.CreateExecutionSecretRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ExecutionSecretEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/secrets", id: "listExecutionSecrets", tag: "execution",
+			summary: "List stored secret refs by name; values are never readable",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionSecretsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
 	}
 }
 

@@ -242,6 +242,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List stored secret refs by name; values are never readable */
+        get: operations["listExecutionSecrets"];
+        put?: never;
+        /** Store a host credential behind a secret ref */
+        post: operations["createExecutionSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import": {
         parameters: {
             query?: never;
@@ -1123,6 +1141,21 @@ export interface components {
             hostRepoPath: string;
             priority: number;
             projectId: string;
+        };
+        ControllersCreateExecutionSecretRequest: {
+            /** @description Bare file name the ref will use: no path separators, whitespace, or leading dot. */
+            name: string;
+            /** @description Must be true to rotate an existing ref; otherwise an existing name is refused. */
+            replace?: boolean;
+            /** @description The credential. Stored 0600 under the daemon's data dir; never returned, logged, or persisted anywhere else. */
+            value: string;
+        };
+        ControllersExecutionSecretEnvelope: {
+            /** @description The stored ref, as passed to endpointSecretRef at host registration. */
+            ref: string;
+        };
+        ControllersListExecutionSecretsResponse: {
+            refs: string[];
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -2705,6 +2738,104 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListExecutionSecretsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    createExecutionSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersCreateExecutionSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionSecretEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

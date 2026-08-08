@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
 	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/secretstore"
 )
 
 type fakeExecutionService struct {
@@ -154,6 +155,8 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
 		{http.MethodPost, "/api/v1/execution/permissions/q-1/decision", `{}`},
+		{http.MethodPost, "/api/v1/execution/secrets", `{}`},
+		{http.MethodGet, "/api/v1/execution/secrets", ""},
 	} {
 		resp, body := doJSON(t, route.method, srv.URL+route.path, route.body)
 		if resp.StatusCode != http.StatusNotImplemented {
@@ -440,5 +443,86 @@ func TestExecutionErrorsUseTheLockedEnvelope(t *testing.T) {
 	}
 	if envelope.Error != "conflict" || envelope.Code != "QUESTION_NOT_OPEN" {
 		t.Fatalf("envelope = %s", body)
+	}
+}
+
+// TestExecutionSecretsRoundTrip drives the real store through the HTTP surface:
+// create returns the ref, a duplicate is refused without replace, and the list
+// carries names only — the value appears in no response at any point.
+func TestExecutionSecretsRoundTrip(t *testing.T) {
+	srv := executionServer(t, httpd.APIDeps{ExecutionSecrets: secretstore.New(t.TempDir())})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"hunter2"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", resp.StatusCode, body)
+	}
+	var created struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if created.Ref != "worker-pw" {
+		t.Fatalf("ref = %q, want worker-pw", created.Ref)
+	}
+	if strings.Contains(string(body), "hunter2") {
+		t.Fatalf("create response leaked the value: %s", body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"other"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"rotated","replace":true}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("replace status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/secrets", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", resp.StatusCode, body)
+	}
+	var listed struct {
+		Refs []string `json:"refs"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(listed.Refs) != 1 || listed.Refs[0] != "worker-pw" {
+		t.Fatalf("refs = %v, want [worker-pw]", listed.Refs)
+	}
+	if strings.Contains(string(body), "rotated") {
+		t.Fatalf("list response leaked the value: %s", body)
+	}
+}
+
+// TestExecutionSecretsRejectUnknownKeysAndBadNames pins strict decoding and the
+// bare-name rule at the HTTP boundary.
+func TestExecutionSecretsRejectUnknownKeysAndBadNames(t *testing.T) {
+	srv := executionServer(t, httpd.APIDeps{ExecutionSecrets: secretstore.New(t.TempDir())})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"pw","value":"v","endpoint":"sneaky:1"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown key status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"../escape","value":"v"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("path-shaped name status = %d, body = %s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if envelope.Code != "SECRET_NAME_INVALID" {
+		t.Fatalf("code = %q, want SECRET_NAME_INVALID", envelope.Code)
 	}
 }

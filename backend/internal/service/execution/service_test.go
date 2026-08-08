@@ -513,3 +513,36 @@ func TestBindProjectRejectsUnregisteredHost(t *testing.T) {
 		t.Fatal("binding to an unregistered host accepted")
 	}
 }
+
+// TestSelfTargetGuardRefusesRegistration proves the G5 guard is consulted and
+// its refusal propagates: a host the guard rejects is never written.
+func TestSelfTargetGuardRefusesRegistration(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	svc := newTestService(store)
+	svc.SetSelfTargetGuard(func(_ context.Context, _ domain.ExecutionHost) error {
+		return apierr.Conflict("HOST_IS_SELF", "self", nil)
+	})
+
+	_, err := svc.RegisterHost(context.Background(), validHostInput())
+	if err == nil {
+		t.Fatal("guard refusal did not block registration")
+	}
+	if store.upserted.ID != "" {
+		t.Fatalf("host was written despite guard refusal: %+v", store.upserted)
+	}
+}
+
+// TestNoSelfTargetGuardRegistersNormally confirms the guard is optional: with
+// none set (tests, or no local daemon), registration is unaffected.
+func TestNoSelfTargetGuardRegistersNormally(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	svc := newTestService(store)
+	if _, err := svc.RegisterHost(context.Background(), validHostInput()); err != nil {
+		t.Fatalf("registration without a guard failed: %v", err)
+	}
+	if store.upserted.ID == "" {
+		t.Fatal("host was not written")
+	}
+}

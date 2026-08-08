@@ -50,6 +50,10 @@ type Service struct {
 	store Store
 	now   func() time.Time
 	newID func() string
+	// selfTargetGuard, when set, refuses a host whose daemon identity matches
+	// the operator's own. Optional and injected by the daemon because it needs
+	// to probe over the network; nil in tests and when no local daemon answers.
+	selfTargetGuard func(ctx context.Context, host domain.ExecutionHost) error
 }
 
 // New constructs the service.
@@ -59,6 +63,17 @@ func New(store Store) *Service {
 
 func newService(store Store, now func() time.Time, newID func() string) *Service {
 	return &Service{store: store, now: now, newID: newID}
+}
+
+// SetSelfTargetGuard installs the registration-time check that refuses a host
+// pointed at the operator's own daemon (gap G5). It is set after construction
+// so New stays a pure store wrapper and tests need not supply a prober.
+//
+// The runtime guardHost already refuses a host whose server_id has DRIFTED, but
+// that only fires once a host is registered and probed. This catches the
+// mistake at the one moment AO can see both identities at once: registration.
+func (s *Service) SetSelfTargetGuard(guard func(ctx context.Context, host domain.ExecutionHost) error) {
+	s.selfTargetGuard = guard
 }
 
 // Host is one registry entry with its routable capabilities and current load.
@@ -196,6 +211,11 @@ func (s *Service) RegisterHost(ctx context.Context, in HostInput) (Host, error) 
 		host.LastSuccessfulProbeAt = existing.LastSuccessfulProbeAt
 		host.LastFailedProbeAt = existing.LastFailedProbeAt
 		host.LastProbeError = existing.LastProbeError
+	}
+	if s.selfTargetGuard != nil {
+		if err := s.selfTargetGuard(ctx, host); err != nil {
+			return Host{}, err
+		}
 	}
 	if err := s.store.UpsertExecutionHost(ctx, host, capabilities); err != nil {
 		return Host{}, fmt.Errorf("upsert execution host %s: %w", id, err)

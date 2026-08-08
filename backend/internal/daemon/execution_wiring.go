@@ -27,6 +27,7 @@ import (
 
 	paseoexec "github.com/aoagents/agent-orchestrator/backend/internal/adapters/execution/paseo"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	paseoobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/paseo"
 	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
@@ -280,5 +281,72 @@ func drainOnce(ctx context.Context, worker *dispatchsvc.Worker, logger *slog.Log
 		if !delivered {
 			return
 		}
+	}
+}
+
+// localPaseoDaemon is the operator's own Paseo daemon. G5 compares a host being
+// registered against this identity. It is the documented default listen
+// address; a non-default local daemon is not covered, which is acceptable
+// because the runtime server_id-drift guard still protects every session.
+const localPaseoDaemon = "127.0.0.1:6767"
+
+// newSelfTargetGuard builds the G5 registration check: refuse a host whose
+// daemon serverId equals the operator's own local daemon.
+//
+// It is FAIL-OPEN by design. If either the candidate host or the local daemon
+// cannot be probed — offline, password-protected, unsupported version — the
+// guard allows the registration and logs why. Blocking on a probe failure would
+// stop an operator registering a legitimately-offline worker, and the runtime
+// guardHost still refuses a server_id that later resolves to something else.
+// The guard only ever REFUSES on a positive identity match.
+func newSelfTargetGuard(dataDir string, logger *slog.Logger) func(context.Context, domain.ExecutionHost) error {
+	secrets := newSecretResolver(dataDir)
+
+	// serverID probes one daemon and returns (id, true) only on a clean,
+	// identified answer. Every failure — unresolved secret, unreachable daemon,
+	// unsupported version, empty id — collapses to (─, false), so the guard's
+	// single decision below is "both sides identified AND equal", never a
+	// tangle of error branches that each have to remember to fail open.
+	serverID := func(ctx context.Context, endpoint, secretRef, role string) (string, bool) {
+		password, err := secrets.Resolve(secretRef)
+		if err != nil {
+			logger.Debug("self-target guard: cannot resolve secret; skipping", "role", role, "err", err)
+			return "", false
+		}
+		target := endpoint
+		if password != "" {
+			target = fmt.Sprintf("tcp://%s?password=%s", endpoint, password)
+		}
+		client, err := paseoexec.NewClient(ctx, target, paseoexec.CLIRunner{Timeout: 10 * time.Second})
+		if err != nil {
+			logger.Debug("self-target guard: probe failed; skipping", "role", role,
+				"err", paseoexec.Redact(err.Error(), password))
+			return "", false
+		}
+		status, err := client.Status(ctx)
+		if err != nil {
+			logger.Debug("self-target guard: status probe failed; skipping", "role", role,
+				"err", paseoexec.Redact(err.Error(), password))
+			return "", false
+		}
+		if status.ServerID == "" {
+			return "", false
+		}
+		return status.ServerID, true
+	}
+
+	return func(ctx context.Context, host domain.ExecutionHost) error {
+		local, localOK := serverID(ctx, localPaseoDaemon, "", "local")
+		candidate, candidateOK := serverID(ctx, host.Endpoint, host.EndpointSecretRef, "candidate")
+		// Refuse only on a positive match; any unidentified side fails open,
+		// because the runtime server_id-drift guard still covers what this misses.
+		if localOK && candidateOK && local == candidate {
+			return apierr.Conflict(
+				"HOST_IS_SELF",
+				"this endpoint resolves to the operator's own Paseo daemon (same serverId as the "+
+					"local daemon); AO must not drive its own daemon as a remote worker",
+				nil)
+		}
+		return nil
 	}
 }

@@ -257,6 +257,13 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// G5: refuse at registration a host whose daemon identity matches the
+	// operator's own local Paseo daemon — the one moment AO can see both
+	// identities. Additive to the runtime server_id-drift guard, and fail-open
+	// if either daemon cannot be probed (the drift guard still covers runtime).
+	execSvc := executionsvc.New(store)
+	execSvc.SetSelfTargetGuard(newSelfTargetGuard(cfg.DataDir, log))
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
@@ -286,7 +293,7 @@ func Run() error {
 		// registry and the human inbox are durable facts, and a dispatch commits
 		// facts plus an outbox command. Neither path contacts a host, so both work
 		// with no execution backend registered yet.
-		Execution:         executionsvc.New(store),
+		Execution:         execSvc,
 		ExecutionDispatch: dispatchsvc.New(store),
 		WorkItems:         workitemsvc.New(store),
 	})

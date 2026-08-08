@@ -223,8 +223,11 @@ Clicking a row in the Computers table opens a host detail view (tabs, shadcn
   bindings, active sessions, trust zone.
 - **Skills** — the skills installed in the host's `~/.claude/skills/`, listed
   with the name and description parsed from each skill's frontmatter, plus a
-  staleness timestamp ("as of last inventory"). Read-only in v1 — AO reports
-  what is on the machine; installing skills remains machine setup. Skills that
+  staleness timestamp ("as of last inventory"). Cross-host comparison rows
+  ("this host lacks paseo-advisor; its paseo-loop is older than host Y's")
+  each carry a **"Sync to host"** action (Q3 = B): AO pushes the skill
+  directory from the source machine through the U9 channel, per-file
+  sha256-verified on arrival, then re-inventories to confirm. Skills that
   orchestrate *through Paseo* (loop, handoff, committee — anything that spawns
   agents or schedules) are badged **policy-gated** per D6, with the tooltip
   explaining that AO owns scheduling and the daemon runs `--no-inject-mcp`.
@@ -263,7 +266,7 @@ over:
 - **Canonical** — the repo-root `CLAUDE.md` and `AGENTS.md` read from the
   project's local path at the base branch, rendered as markdown, plus the
   project's `.claude/skills/` listed like the host inventory. Read-only in
-  the dashboard (open decision Q2): these are versioned code, and the honest
+  the dashboard (Q2, confirmed): these are versioned code, and the honest
   edit path is a branch — an **"Edit via task"** button pre-fills the New
   Task dialog with the file path so the change arrives as a normal reviewed
   branch, not a silent write to someone's checkout.
@@ -343,12 +346,19 @@ G2 escalation visibility.
 unchanged (golden test); command transitions observable across a real outbox
 drain.
 
-### U5 — provider discovery per host
-`GET /api/v1/execution/hosts/{hostId}/providers` → providers with models and
-per-provider mode enums, from `provider ls --json` / `provider models <p>
---json` through the existing fenced CLI client, cached briefly per host.
+### U5 — provider discovery per host + dispatch settings pass-through
+`GET /api/v1/execution/hosts/{hostId}/providers` → providers with models,
+per-provider mode enums, thinking options, and feature IDs, from
+`provider ls --json` / `provider models <p> --json` / `inspect_provider`
+through the existing fenced CLI client, cached briefly per host. Q12 = B:
+`DispatchExecutionRequest` gains an optional `settings` object
+(`thinkingOptionId?`, `features?` — e.g. Codex `fast_mode`), validated
+against what discovery reports for that host+provider; an ID discovery did
+not return is refused, never forwarded.
 **Accept:** against a live worker, response distinguishes Claude's modes from
-Codex's (D5); an unreachable host returns a typed error, not a 500.
+Codex's (D5); a dispatch carrying a discovered feature ID launches with it
+and one carrying an undiscovered ID is refused with the valid set in the
+error; an unreachable host returns a typed error, not a 500.
 
 ### U6 — reject + work-item read
 Extend the approval body with `decision: "approved" | "rejected"` (absent →
@@ -404,19 +414,27 @@ Rides on U9's binary and channel; separate PR because the surface grows.
 Worker subcommands: `file read <allowlisted-path>`, `file write`
 (machine-scope `~/.claude/CLAUDE.md` only), `repo status <path>` (content
 hashes of `CLAUDE.md`/`AGENTS.md`/`.claude/skills/*` at the checkout's base
-branch), `repo ff <path>` (fast-forward pull, refuse otherwise). Paths are an
-explicit allowlist, never caller-supplied patterns — same posture as the
-secret resolver's bare-name rule. AO side: canonical project reads are plain
-local file reads off the project's path. Endpoints:
+branch), `repo ff <path>` (fast-forward pull, refuse otherwise), and — Q3 = B
+— `skill push` (receive a skill directory as multi-file base64 frames into
+`~/.claude/skills/<name>`, each file sha256-verified before the staged
+directory is atomically renamed into place; a failed verify leaves the
+existing skill untouched). Paths are an explicit allowlist, never
+caller-supplied patterns — same posture as the secret resolver's bare-name
+rule; a pushed skill name obeys the same bare-name check. AO side: canonical
+project reads are plain local file reads off the project's path. Endpoints:
 `GET /api/v1/projects/{id}/instructions` (canonical docs + skills +
 per-binding drift), `GET/PUT /api/v1/execution/hosts/{hostId}/instructions`
 (machine-scope CLAUDE.md, write → confirm-read → persist),
-`POST /api/v1/execution/bindings/{projectId}/{hostId}/sync` (the ff pull).
+`POST /api/v1/execution/bindings/{projectId}/{hostId}/sync` (the ff pull),
+`POST /api/v1/execution/hosts/{hostId}/skills/{name}/sync` (body names the
+source: another host id, or `local` for the AO machine's own
+`~/.claude/skills`; push → re-inventory → confirm).
 **Accept:** canonical render matches the file in git; a deliberately stale
 host checkout shows drift and one sync click clears it; a non-ff host state
 is refused with the git error verbatim; machine-scope write round-trips with
-drift detection; a path outside the allowlist is refused at the worker; gate
-green.
+drift detection; a path outside the allowlist is refused at the worker; a
+skill push is byte-identical on arrival (hash check) and an interrupted push
+leaves the prior version intact; gate green.
 
 ### U10 — schedule visibility per host
 `GET /api/v1/execution/hosts/{hostId}/schedules` wrapping
@@ -453,9 +471,11 @@ match `approvalState`×`lifecycleFact` exactly.
 
 ### F4 — Dispatch dialog + "Run on" in New Task *(needs U4, U5; F2 for hints)*
 The shared dispatch dialog (trust zone from the chosen host, provider/model/
-mode selects from U5, branch default `ao/<work-item-id>`, prompt) and the
-`GlobalNewTaskDialog` "Run on" select doing create→approve→dispatch. Progress
-via U4 command polling; terminal state links to the session.
+mode selects plus thinking-option and feature toggles from U5 discovery —
+Q12 = B, only IDs discovery returned are offered — branch default
+`ao/<work-item-id>`, prompt) and the `GlobalNewTaskDialog` "Run on" select
+doing create→approve→dispatch on one submit (Q1). Progress via U4 command
+polling; terminal state links to the session.
 **Accept:** the full E2E scenario (END_TO_END.md) reproduced entirely from the
 dashboard except the worker's `paseo daemon start`; a dispatch to an unbound
 project is impossible to attempt (select is empty with a link, not a 4xx).
@@ -474,8 +494,9 @@ banner wording per invariant 6.
 killable from the UI; a local session's card and detail are pixel-unchanged.
 
 ### F7 — host detail view *(needs U5, U9, U9a, U10)*
-The tabbed host detail described in §2: Overview, Skills (read-only list with
-policy-gated badges), Preferences (role→provider selects validated against
+The tabbed host detail described in §2: Overview, Skills (inventory with
+cross-host comparison, "Sync to host" push actions, policy-gated badges),
+Preferences (role→provider selects validated against
 the host's live catalog, freeform preferences editor, drift badge with
 pull/push resolution, copy-from-host), Instructions (machine-scope CLAUDE.md
 view/edit with drift), Schedules (violation-flagged list with delete). Save
@@ -484,8 +505,9 @@ verbatim.
 **Accept:** editing the `impl` role to a provider the host actually has and
 saving is confirmed against the file on the worker; a provider string not in
 the catalog is unselectable; local edits on the host show as drift with both
-resolutions working; a schedule planted on the worker shows flagged and is
-deletable from the UI; `ao preview` demo.
+resolutions working; syncing a skill a host lacks makes it appear in that
+host's inventory after the confirming re-read; a schedule planted on the
+worker shows flagged and is deletable from the UI; `ao preview` demo.
 
 ### F8 — skills at dispatch *(needs U9, F4)*
 The dispatch dialog's skill affordances: inventory-driven insertable prompt
@@ -516,11 +538,12 @@ still never completes anything, unreachable never kills anything.
 
 ---
 
-## 4. Open decisions
+## 4. Decisions — CONFIRMED by the owner, 2026-08-08
 
-Same contract as `DECISIONS.md`: each default is **in force until overridden**
-— building does not wait — but every one of these is a real judgment call, not
-a derivable fact. Override by replying with IDs, e.g. `Q2=B, Q5=A`.
+All twelve were put to the owner and answered. **Defaults confirmed on Q1, Q2,
+Q4–Q11. Overridden: Q3 = B (skill push-sync ships in v1) and Q12 = B (dispatch
+carries a settings pass-through now).** The work items above reflect the
+confirmed state. The original options are preserved below for the record.
 
 **Q1 — Does New Task's "Run on" auto-approve?** The headline flow does
 create → approve → dispatch on one submit; the human filling in the dialog is
@@ -538,12 +561,12 @@ uncommitted to the local checkout only (rejected as a recommendation: silent
 drift is the exact failure this plan surfaces elsewhere).
 
 **Q3 — Are host-scope skills installable/syncable from AO, or inventory-only?**
-"Same with skills" could mean either. **Default A: inventory-only in v1**,
-plus per-host presence/version comparison in the UI ("host X lacks
-paseo-advisor; host Y has an older copy"). Alternative B: push-sync a skill
-directory host-to-host through the U9 channel (multi-file base64 frames —
-buildable, meaningfully more surface). B is additive later; choosing it now
-reorders nothing.
+**CONFIRMED: B — push-sync ships in v1.** AO can copy a skill directory from
+one host (or the AO machine itself) to another through the U9 channel
+(multi-file base64 frames, per-file sha256 verified on the receiving side).
+The inventory comparison ("host X lacks paseo-advisor; host Y has an older
+copy") becomes actionable: each gap row gets a "Sync to host" button. Folded
+into U9a and F7.
 
 **Q4 — May the dashboard edit machine-scope `~/.claude/CLAUDE.md` and
 `~/.paseo/orchestration-preferences.json`, given both affect every agent on
@@ -603,8 +626,17 @@ meaningful if the harness treats a mid-prompt slash token as an invocation,
 which is not guaranteed across harnesses.
 
 **Q12 — Does dispatch surface Paseo `thinkingOptionId` / provider features
-(e.g. Codex `fast_mode`)?** The Paseo create-agent surface supports them; the
-current dispatch API carries only provider/model/mode. **Default A: no in
-v1** — keep dispatch's request shape as-is; U5 already returns what exists so
-adding a field later is additive. Alternative B: extend
-`DispatchExecutionRequest` now with a pass-through `settings` object.
+(e.g. Codex `fast_mode`)?** **CONFIRMED: B — pass-through now.**
+`DispatchExecutionRequest` gains an optional `settings` object
+(`thinkingOptionId?`, `features?`), validated against what U5 discovery
+reports for the chosen host+provider (only feature IDs `inspect_provider`
+returns are accepted — never free-typed). The dispatch dialog renders these
+as discovery-driven controls. Folded into U5 and F4.
+
+The remaining ten answers, for the record: Q1 one-submit approves; Q2
+read-only + "Edit via task"; Q4 both machine-scope files editable with
+blast-radius notice; Q5 secrets writable on loopback and the authenticated
+LAN listener alike; Q6 one global operator-name setting; Q7 disable-first,
+delete only when empty; Q8 persistent maintenance workspace per host; Q9
+refresh on register + manual + dispatch; Q10 work items as a project-page
+tab; Q11 plain-English skill insertion.

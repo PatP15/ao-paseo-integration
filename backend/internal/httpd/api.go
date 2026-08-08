@@ -38,6 +38,7 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	SessionExecution    controllers.SessionExecutionBindingReader
 	Execution           controllers.ExecutionService
 	ExecutionDispatch   controllers.ExecutionDispatcher
 	ExecutionSecrets    controllers.ExecutionSecretStore
@@ -77,10 +78,11 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:           deps.Sessions,
-			Activity:      deps.Activity,
-			PreviewServer: deps.PreviewServer,
-			Capabilities:  deps.SessionCapabilities,
+			Svc:               deps.Sessions,
+			Activity:          deps.Activity,
+			PreviewServer:     deps.PreviewServer,
+			Capabilities:      deps.SessionCapabilities,
+			ExecutionBindings: deps.SessionExecution,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},

@@ -28,6 +28,7 @@ type ExecutionService interface {
 	Decide(ctx context.Context, in executionsvc.DecisionInput) (domain.ExecutionCommand, error)
 	BindProject(ctx context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error)
 	ListBindings(ctx context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error)
+	GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -71,6 +72,47 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Post("/execution/permissions/{questionId}/decision", c.decidePermission)
 	r.Post("/execution/secrets", c.createSecret)
 	r.Get("/execution/secrets", c.listSecrets)
+	r.Get("/execution/commands/{commandId}", c.getCommand)
+}
+
+// ExecutionCommandIDParam identifies one outbox command.
+type ExecutionCommandIDParam struct {
+	CommandID string `path:"commandId" description:"Outbox command identifier, as returned by dispatch and decision responses."`
+}
+
+// ExecutionCommandResponse is one outbox command's delivery state. The payload
+// is deliberately absent: it can carry a prompt, and progress needs state.
+type ExecutionCommandResponse struct {
+	CommandID      string                       `json:"commandId"`
+	SessionID      domain.SessionID             `json:"sessionId"`
+	HostID         domain.ExecutionHostID       `json:"hostId"`
+	CommandType    domain.ExecutionCommandType  `json:"commandType" enum:"start_agent,send_message,answer_permission,deny_permission"`
+	CommandState   domain.ExecutionCommandState `json:"commandState" enum:"pending,delivering,acknowledged,failed"`
+	AttemptCount   int                          `json:"attemptCount" description:"Delivery attempts so far, including escalations."`
+	LastError      string                       `json:"lastError,omitempty" description:"Most recent delivery failure, cleared by success."`
+	CreatedAt      time.Time                    `json:"createdAt"`
+	NextAttemptAt  time.Time                    `json:"nextAttemptAt,omitempty"`
+	AcknowledgedAt time.Time                    `json:"acknowledgedAt,omitempty"`
+}
+
+// getCommand answers what happened to one queued command after its 201.
+func (c *ExecutionController) getCommand(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/commands/{commandId}")
+		return
+	}
+	command, err := c.Svc.GetCommand(r.Context(), chi.URLParam(r, "commandId"))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExecutionCommandResponse{
+		CommandID: command.ID, SessionID: command.SessionID, HostID: command.HostID,
+		CommandType: command.Type, CommandState: command.State,
+		AttemptCount: command.AttemptCount, LastError: command.LastError,
+		CreatedAt: command.CreatedAt, NextAttemptAt: command.NextAttemptAt,
+		AcknowledgedAt: command.AcknowledgedAt,
+	})
 }
 
 // createSecret stores a credential and returns the ref that names it, closing

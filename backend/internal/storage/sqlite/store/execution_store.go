@@ -131,6 +131,25 @@ func (s *Store) ListActiveSessionExecutionBindingsByHost(ctx context.Context, ho
 	return bindings, nil
 }
 
+// ListActiveSessionExecutionBindings returns every live binding across all
+// hosts, for read models that annotate sessions with their execution facts in
+// one query rather than one per session.
+func (s *Store) ListActiveSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error) {
+	rows, err := s.qr.ListActiveSessionExecutionBindings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active session execution bindings: %w", err)
+	}
+	bindings := make([]domain.SessionExecutionBinding, 0, len(rows))
+	for _, row := range rows {
+		binding, err := sessionExecutionBindingFromGen(row)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
 // UpsertProjectHostBinding writes the machine-specific project path for a host.
 func (s *Store) UpsertProjectHostBinding(ctx context.Context, binding domain.ProjectHostBinding) error {
 	s.writeMu.Lock()

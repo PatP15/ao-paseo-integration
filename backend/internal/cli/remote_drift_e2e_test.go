@@ -59,6 +59,10 @@ func (c *captureExecutionService) ListBindings(context.Context, executionsvc.Bin
 	return nil, nil
 }
 
+func (c *captureExecutionService) GetCommand(_ context.Context, id string) (domain.ExecutionCommand, error) {
+	return domain.ExecutionCommand{ID: id}, nil
+}
+
 func (c *captureExecutionService) ListHosts(context.Context) ([]executionsvc.Host, error) {
 	return []executionsvc.Host{{
 		ExecutionHost: domain.ExecutionHost{

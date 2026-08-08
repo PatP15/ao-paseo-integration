@@ -44,6 +44,7 @@ type Store interface {
 	UpsertProjectHostBinding(context.Context, domain.ProjectHostBinding) error
 	ListProjectHostBindings(context.Context, domain.ProjectID) ([]domain.ProjectHostBinding, error)
 	ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error)
+	GetExecutionCommand(context.Context, string) (domain.ExecutionCommand, bool, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -587,6 +588,28 @@ func (s *Service) BindProject(ctx context.Context, in BindingInput) (domain.Proj
 		return domain.ProjectHostBinding{}, err
 	}
 	return binding, nil
+}
+
+// GetCommand returns one outbox command by id.
+//
+// This is how a dispatch caller watches pending → delivering → acknowledged
+// (or failed) after the 201: the dispatch response carries the command id and,
+// until this read existed, nothing could ever look at it again. The payload is
+// deliberately not exposed — it can carry a prompt, and command state is what
+// a progress display needs.
+func (s *Service) GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domain.ExecutionCommand{}, apierr.Invalid("COMMAND_ID_REQUIRED", "commandId is required", nil)
+	}
+	command, found, err := s.store.GetExecutionCommand(ctx, id)
+	if err != nil {
+		return domain.ExecutionCommand{}, fmt.Errorf("get execution command %s: %w", id, err)
+	}
+	if !found {
+		return domain.ExecutionCommand{}, apierr.NotFound("COMMAND_NOT_FOUND", "command "+id+" was not found")
+	}
+	return command, nil
 }
 
 // BindingFilter narrows a bindings list. Both fields are optional; an empty

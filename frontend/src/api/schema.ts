@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/commands/{commandId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one outbox command's delivery state */
+        get: operations["getExecutionCommand"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/dispatch": {
         parameters: {
             query?: never;
@@ -1199,6 +1216,25 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        ControllersExecutionCommandResponse: {
+            /** Format: date-time */
+            acknowledgedAt?: string;
+            /** @description Delivery attempts so far, including escalations. */
+            attemptCount: number;
+            commandId: string;
+            /** @enum {string} */
+            commandState: "pending" | "delivering" | "acknowledged" | "failed";
+            /** @enum {string} */
+            commandType: "start_agent" | "send_message" | "answer_permission" | "deny_permission";
+            /** Format: date-time */
+            createdAt: string;
+            hostId: string;
+            /** @description Most recent delivery failure, cleared by success. */
+            lastError?: string;
+            /** Format: date-time */
+            nextAttemptAt?: string;
+            sessionId: string;
+        };
         ControllersExecutionSecretEnvelope: {
             /** @description The stored ref, as passed to endpointSecretRef at host registration. */
             ref: string;
@@ -1215,6 +1251,12 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
+            /** @description Provision attempt this session is bound to; bumps on ambiguous-create escalation. */
+            executionAttempt?: number;
+            /** @description Execution substrate that owns the session's process, e.g. paseo. Absent for local sessions. */
+            executionBackend?: string;
+            /** @description Registered host this session runs on. Absent for local sessions. */
+            executionHostId?: string;
             harness?: string;
             id: string;
             isTerminated: boolean;
@@ -1233,6 +1275,8 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+            /** @description AO-owned remote workspace title, e.g. ao:<session>:<attempt>. */
+            workspaceTitle?: string;
         };
         ControllersSpawnAttachmentInput: {
             data: string;
@@ -2439,6 +2483,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControllersListExecutionBindingsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getExecutionCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Outbox command identifier, as returned by dispatch and decision responses. */
+                commandId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionCommandResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

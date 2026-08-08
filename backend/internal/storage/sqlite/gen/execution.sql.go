@@ -748,6 +748,61 @@ func (q *Queries) InsertSessionCheckpoint(ctx context.Context, arg InsertSession
 	return result.RowsAffected()
 }
 
+const listActiveSessionExecutionBindings = `-- name: ListActiveSessionExecutionBindings :many
+SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings
+WHERE archived_at = '' ORDER BY session_id
+`
+
+func (q *Queries) ListActiveSessionExecutionBindings(ctx context.Context) ([]SessionExecutionBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveSessionExecutionBindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SessionExecutionBinding{}
+	for rows.Next() {
+		var i SessionExecutionBinding
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.WorkItemID,
+			&i.BackendType,
+			&i.HostID,
+			&i.ExternalWorkspaceID,
+			&i.ExternalAgentID,
+			&i.ExternalParentAgentID,
+			&i.BoundServerID,
+			&i.WorkspaceTitle,
+			&i.IntentID,
+			&i.Attempt,
+			&i.LabelsWrittenJson,
+			&i.BranchName,
+			&i.HostWorkspacePath,
+			&i.Provider,
+			&i.Model,
+			&i.Mode,
+			&i.DispatchGeneration,
+			&i.LaunchID,
+			&i.TranscriptBytes,
+			&i.TranscriptPrefixSha256,
+			&i.TerminalID,
+			&i.TerminalLinesConsumed,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveSessionExecutionBindingsByHost = `-- name: ListActiveSessionExecutionBindingsByHost :many
 SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings
 WHERE host_id = ? AND archived_at = '' ORDER BY session_id

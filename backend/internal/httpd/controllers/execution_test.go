@@ -88,6 +88,17 @@ func (f *fakeExecutionService) ListBindings(_ context.Context, filter executions
 	return f.bindingsList, nil
 }
 
+func (f *fakeExecutionService) GetCommand(_ context.Context, id string) (domain.ExecutionCommand, error) {
+	if f.err != nil {
+		return domain.ExecutionCommand{}, f.err
+	}
+	return domain.ExecutionCommand{
+		ID: id, SessionID: "project-1", HostID: "worker-1",
+		Type: domain.ExecutionCommandStartAgent, State: domain.ExecutionCommandAcknowledged,
+		AttemptCount: 1,
+	}, nil
+}
+
 func (f *fakeExecutionService) ListQuestions(context.Context) ([]domain.ExecutionInboxQuestion, error) {
 	return f.questions, f.err
 }
@@ -630,5 +641,91 @@ func TestListExecutionBindings(t *testing.T) {
 	}
 	if len(out.Bindings) != 1 || out.Bindings[0].HostRepoPath != "/home/u/alpha" || !out.Bindings[0].Enabled {
 		t.Fatalf("bindings = %+v", out.Bindings)
+	}
+}
+
+type fakeBindingReader struct {
+	bindings map[domain.SessionID]domain.SessionExecutionBinding
+}
+
+func (f *fakeBindingReader) ListActiveSessionExecutionBindings(context.Context) ([]domain.SessionExecutionBinding, error) {
+	out := make([]domain.SessionExecutionBinding, 0, len(f.bindings))
+	for _, binding := range f.bindings {
+		out = append(out, binding)
+	}
+	return out, nil
+}
+
+func (f *fakeBindingReader) GetSessionExecutionBinding(_ context.Context, id domain.SessionID) (domain.SessionExecutionBinding, bool, error) {
+	binding, ok := f.bindings[id]
+	return binding, ok, nil
+}
+
+// TestSessionViewsCarryExecutionFactsOnlyForRemoteSessions is the U4 golden
+// pin: a remote session gains executionHostId/executionBackend/workspaceTitle/
+// executionAttempt, and a local session's JSON contains none of those keys.
+func TestSessionViewsCarryExecutionFactsOnlyForRemoteSessions(t *testing.T) {
+	reader := &fakeBindingReader{bindings: map[domain.SessionID]domain.SessionExecutionBinding{
+		"ao-1": {
+			SessionID: "ao-1", HostID: "worker-1", BackendType: domain.ExecutionBackendPaseo,
+			WorkspaceTitle: "ao:ao-1:2", Attempt: 2,
+		},
+	}}
+	srv := executionServer(t, httpd.APIDeps{SessionExecution: reader})
+
+	// The shared fake session service serves session ao-1; bound above, it is
+	// remote. List view:
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{`"executionHostId":"worker-1"`, `"executionBackend":"paseo"`, `"workspaceTitle":"ao:ao-1:2"`, `"executionAttempt":2`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("list body missing %s: %s", want, body)
+		}
+	}
+
+	// Get view:
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"executionHostId":"worker-1"`) {
+		t.Fatalf("get body missing execution facts: %s", body)
+	}
+
+	// A local session (no binding) must not gain any execution key: this is the
+	// byte-compatibility guarantee for every existing consumer.
+	reader.bindings = map[domain.SessionID]domain.SessionExecutionBinding{}
+	_, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1", "")
+	for _, forbidden := range []string{"executionHostId", "executionBackend", "workspaceTitle", "executionAttempt"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("local session leaked %s: %s", forbidden, body)
+		}
+	}
+}
+
+// TestGetExecutionCommand pins the outbox read: state comes back, payload does
+// not exist in the response shape at all.
+func TestGetExecutionCommand(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/commands/cmd-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var out controllers.ExecutionCommandResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.CommandID != "cmd-1" || out.CommandState != domain.ExecutionCommandAcknowledged || out.AttemptCount != 1 {
+		t.Fatalf("command = %+v", out)
+	}
+
+	svc.err = apierr.NotFound("COMMAND_NOT_FOUND", "command ghost was not found")
+	resp, _ = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/commands/ghost", "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing command status = %d, want 404", resp.StatusCode)
 	}
 }

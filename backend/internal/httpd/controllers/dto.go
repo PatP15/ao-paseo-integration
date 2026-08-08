@@ -143,6 +143,13 @@ type SessionView struct {
 	// Metadata.
 	PreviewRevision int64            `json:"previewRevision,omitempty"`
 	PRs             []SessionPRFacts `json:"prs"`
+	// Remote execution facts, present only for sessions bound to an execution
+	// host. A local session omits all four, byte-identical to before they
+	// existed; absence of executionBackend therefore means local.
+	ExecutionHostID  string `json:"executionHostId,omitempty" description:"Registered host this session runs on. Absent for local sessions."`
+	ExecutionBackend string `json:"executionBackend,omitempty" description:"Execution substrate that owns the session's process, e.g. paseo. Absent for local sessions."`
+	WorkspaceTitle   string `json:"workspaceTitle,omitempty" description:"AO-owned remote workspace title, e.g. ao:<session>:<attempt>."`
+	ExecutionAttempt int    `json:"executionAttempt,omitempty" description:"Provision attempt this session is bound to; bumps on ambiguous-create escalation."`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.

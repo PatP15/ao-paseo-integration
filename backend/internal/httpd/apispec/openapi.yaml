@@ -339,6 +339,53 @@ paths:
       summary: List project-to-host bindings, optionally filtered by project or host
       tags:
       - execution
+  /api/v1/execution/commands/{commandId}:
+    get:
+      operationId: getExecutionCommand
+      parameters:
+      - description: Outbox command identifier, as returned by dispatch and decision
+          responses.
+        in: path
+        name: commandId
+        required: true
+        schema:
+          description: Outbox command identifier, as returned by dispatch and decision
+            responses.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionCommandResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one outbox command's delivery state
+      tags:
+      - execution
   /api/v1/execution/dispatch:
     post:
       operationId: dispatchExecution
@@ -3482,6 +3529,52 @@ components:
       - createdAt
       - updatedAt
       type: object
+    ControllersExecutionCommandResponse:
+      properties:
+        acknowledgedAt:
+          format: date-time
+          type: string
+        attemptCount:
+          description: Delivery attempts so far, including escalations.
+          type: integer
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        commandType:
+          enum:
+          - start_agent
+          - send_message
+          - answer_permission
+          - deny_permission
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        hostId:
+          type: string
+        lastError:
+          description: Most recent delivery failure, cleared by success.
+          type: string
+        nextAttemptAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+      required:
+      - commandId
+      - sessionId
+      - hostId
+      - commandType
+      - commandState
+      - attemptCount
+      - createdAt
+      type: object
     ControllersExecutionSecretEnvelope:
       properties:
         ref:
@@ -3518,6 +3611,17 @@ components:
           format: date-time
           type: string
         displayName:
+          type: string
+        executionAttempt:
+          description: Provision attempt this session is bound to; bumps on ambiguous-create
+            escalation.
+          type: integer
+        executionBackend:
+          description: Execution substrate that owns the session's process, e.g. paseo.
+            Absent for local sessions.
+          type: string
+        executionHostId:
+          description: Registered host this session runs on. Absent for local sessions.
           type: string
         harness:
           type: string
@@ -3574,6 +3678,9 @@ components:
           type: boolean
         updatedAt:
           format: date-time
+          type: string
+        workspaceTitle:
+          description: AO-owned remote workspace title, e.g. ao:<session>:<attempt>.
           type: string
       required:
       - id

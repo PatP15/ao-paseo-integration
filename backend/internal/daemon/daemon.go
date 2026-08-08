@@ -296,6 +296,7 @@ func Run() error {
 		// registry and the human inbox are durable facts, and a dispatch commits
 		// facts plus an outbox command. Neither path contacts a host, so both work
 		// with no execution backend registered yet.
+		SessionExecution:  store,
 		Execution:         execSvc,
 		ExecutionDispatch: dispatchsvc.New(store),
 		ExecutionSecrets:  secretstore.New(cfg.DataDir),

@@ -28,6 +28,7 @@ type fakeStore struct {
 
 	projectBindings map[domain.ProjectID][]domain.ProjectHostBinding
 	upsertedBinding domain.ProjectHostBinding
+	commands        map[string]domain.ExecutionCommand
 }
 
 // UpsertProjectHostBinding records where a project is checked out on a host.
@@ -44,6 +45,11 @@ func (f *fakeStore) UpsertProjectHostBinding(_ context.Context, binding domain.P
 
 func (f *fakeStore) ListProjectHostBindings(_ context.Context, projectID domain.ProjectID) ([]domain.ProjectHostBinding, error) {
 	return f.projectBindings[projectID], nil
+}
+
+func (f *fakeStore) GetExecutionCommand(_ context.Context, id string) (domain.ExecutionCommand, bool, error) {
+	command, ok := f.commands[id]
+	return command, ok, nil
 }
 
 func (f *fakeStore) ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error) {
@@ -664,5 +670,31 @@ func TestListBindingsFilter(t *testing.T) {
 	}
 	if len(both) != 1 || both[0].ProjectID != "beta" {
 		t.Fatalf("both filter = %+v, want beta/worker-1", both)
+	}
+}
+
+// TestGetCommand covers the outbox read: found, missing, and blank id.
+func TestGetCommand(t *testing.T) {
+	store := newFakeStore()
+	store.commands = map[string]domain.ExecutionCommand{
+		"cmd-1": {ID: "cmd-1", SessionID: "project-1", State: domain.ExecutionCommandAcknowledged, AttemptCount: 2},
+	}
+	svc := newTestService(store)
+
+	command, err := svc.GetCommand(context.Background(), " cmd-1 ")
+	if err != nil {
+		t.Fatalf("GetCommand: %v", err)
+	}
+	if command.State != domain.ExecutionCommandAcknowledged || command.AttemptCount != 2 {
+		t.Fatalf("command = %+v", command)
+	}
+
+	_, err = svc.GetCommand(context.Background(), "ghost")
+	if code := errCode(t, err); code != "COMMAND_NOT_FOUND" {
+		t.Fatalf("code = %q, want COMMAND_NOT_FOUND", code)
+	}
+	_, err = svc.GetCommand(context.Background(), "  ")
+	if code := errCode(t, err); code != "COMMAND_ID_REQUIRED" {
+		t.Fatalf("code = %q, want COMMAND_ID_REQUIRED", code)
 	}
 }

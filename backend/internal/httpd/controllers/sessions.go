@@ -115,6 +115,17 @@ type SessionsController struct {
 	Activity      ActivityRecorder
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
+	// ExecutionBindings, when set, annotates session reads with their remote
+	// execution facts (host, workspace title, attempt). Optional: without it
+	// every session serializes exactly as before, remote or not.
+	ExecutionBindings SessionExecutionBindingReader
+}
+
+// SessionExecutionBindingReader is the read-only slice of the store the
+// session views use to say where a remote session runs.
+type SessionExecutionBindingReader interface {
+	ListActiveSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error)
+	GetSessionExecutionBinding(ctx context.Context, sessionID domain.SessionID) (domain.SessionExecutionBinding, bool, error)
 }
 
 // Register mounts the session routes on the supplied router.
@@ -169,7 +180,52 @@ func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessionViews(sessions)})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: c.annotateExecutionAll(r.Context(), sessionViews(sessions))})
+}
+
+// annotateExecutionAll stamps remote execution facts onto the views in one
+// bulk read. Annotation is advisory display data: a failed read returns the
+// views unannotated rather than failing the whole sessions list, because a
+// board that cannot show host badges is strictly better than no board.
+func (c *SessionsController) annotateExecutionAll(ctx context.Context, views []SessionView) []SessionView {
+	if c.ExecutionBindings == nil || len(views) == 0 {
+		return views
+	}
+	bindings, err := c.ExecutionBindings.ListActiveSessionExecutionBindings(ctx)
+	if err != nil || len(bindings) == 0 {
+		return views
+	}
+	byID := make(map[domain.SessionID]domain.SessionExecutionBinding, len(bindings))
+	for _, binding := range bindings {
+		byID[binding.SessionID] = binding
+	}
+	for i := range views {
+		if binding, ok := byID[views[i].ID]; ok {
+			applyExecutionBinding(&views[i], binding)
+		}
+	}
+	return views
+}
+
+// annotateExecutionOne stamps remote execution facts onto a single view, same
+// advisory semantics as the bulk variant.
+func (c *SessionsController) annotateExecutionOne(ctx context.Context, view SessionView) SessionView {
+	if c.ExecutionBindings == nil {
+		return view
+	}
+	binding, found, err := c.ExecutionBindings.GetSessionExecutionBinding(ctx, view.ID)
+	if err != nil || !found {
+		return view
+	}
+	applyExecutionBinding(&view, binding)
+	return view
+}
+
+func applyExecutionBinding(view *SessionView, binding domain.SessionExecutionBinding) {
+	view.ExecutionHostID = string(binding.HostID)
+	view.ExecutionBackend = string(binding.BackendType)
+	view.WorkspaceTitle = binding.WorkspaceTitle
+	view.ExecutionAttempt = binding.Attempt
 }
 
 func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +329,7 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: c.annotateExecutionOne(r.Context(), sessionView(sess))})
 }
 
 func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {

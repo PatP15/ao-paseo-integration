@@ -503,6 +503,19 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/execution/commands/{commandId}",
+			id: "getExecutionCommand", tag: "execution",
+			summary:    "Read one outbox command's delivery state",
+			pathParams: []any{controllers.ExecutionCommandIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionCommandResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/execution/secrets", id: "createExecutionSecret", tag: "execution",
 			summary: "Store a host credential behind a secret ref",
 			reqBody: controllers.CreateExecutionSecretRequest{},

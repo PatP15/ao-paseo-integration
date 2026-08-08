@@ -142,6 +142,10 @@ WHERE session_id = sqlc.arg(session_id)
 SELECT * FROM session_execution_bindings
 WHERE host_id = ? AND archived_at = '' ORDER BY session_id;
 
+-- name: ListActiveSessionExecutionBindings :many
+SELECT * FROM session_execution_bindings
+WHERE archived_at = '' ORDER BY session_id;
+
 -- name: ArchiveSessionExecutionBinding :execrows
 UPDATE session_execution_bindings SET archived_at = ?
 WHERE session_id = ? AND archived_at = '';

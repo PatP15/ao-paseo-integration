@@ -39,6 +39,13 @@ type BriefWriter interface {
 	Ensure(context.Context, paseoevent.BriefRequest) (paseoevent.Brief, error)
 }
 
+// ReportTransportPreparer is an optional backend capability. A failure is
+// surfaced to the daemon but never turns a successfully launched agent into a
+// failed command: inspect-based observation is the transport ladder's floor.
+type ReportTransportPreparer interface {
+	PrepareReportTransport(context.Context, domain.SessionID, domain.ExecutionWorkspaceID, string, string) error
+}
+
 // BackendResolver returns the host-scoped execution backend used for a
 // command. Host selection itself remains the router's responsibility.
 type BackendResolver interface {
@@ -122,11 +129,13 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	// reporting under a nonce AO never recorded. Re-delivery replays onto the
 	// same brief rather than issuing a second one.
 	prompt := payload.Prompt
+	var launchBrief *paseoevent.Brief
 	if w.briefs != nil {
 		brief, err := w.briefs.Ensure(ctx, briefRequest(command, payload))
 		if err != nil {
 			return true, w.retryOrFail(ctx, command, err)
 		}
+		launchBrief = &brief
 		prompt = brief.Prompt()
 	}
 	workspace, err := backend.Provision(ctx, ports.ExecutionProvisionRequest{
@@ -143,6 +152,17 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	}
 	if err := w.atCheckpoint(checkpointProvisioned); err != nil {
 		return true, err
+	}
+	var reportErr error
+	if launchBrief != nil {
+		if reporter, ok := backend.(ReportTransportPreparer); ok {
+			reportErr = reporter.PrepareReportTransport(
+				ctx, command.SessionID, workspace.WorkspaceID, launchBrief.LaunchID, launchBrief.ReportNonce,
+			)
+			if reportErr != nil {
+				reportErr = fmt.Errorf("prepare report transport: %w", reportErr)
+			}
+		}
 	}
 	agent, err := backend.Launch(ctx, ports.ExecutionLaunchRequest{
 		SessionID: command.SessionID, HostID: command.HostID, WorkspaceID: workspace.WorkspaceID,
@@ -166,7 +186,10 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	if err := w.store.AcknowledgeExecutionStart(ctx, command.ID, command.SessionID, handle.ID, payload.LaunchID, w.now().UTC()); err != nil {
 		return true, err
 	}
-	return true, nil
+	// Report setup is deliberately best-effort. Returning it after acknowledge
+	// makes the degradation visible in daemon logs without retrying start_agent
+	// or sacrificing rung-2 status observation for a healthy remote agent.
+	return true, reportErr
 }
 
 func (w *Worker) escalateOrFail(

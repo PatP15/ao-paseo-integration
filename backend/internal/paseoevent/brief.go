@@ -112,7 +112,11 @@ func (b Brief) Prompt() string {
 		fmt.Fprintf(&text, "- %s\n", rule)
 	}
 
-	text.WriteString("\nReporting. Write progress, questions, and outcomes as report frames.\n")
+	text.WriteString("\nReporting. Submit progress, questions, and outcomes as one JSON object at a time.\n")
+	fmt.Fprintf(&text, "Pipe each complete JSON object to `%s emit`. An AO-owned reporter process\n", ReporterBinary)
+	text.WriteString("validates the object, appends it outside the worktree, and handles base64, CRC-32,\n")
+	text.WriteString("chunking, and terminal output deterministically. Do not write a report file yourself.\n")
+	text.WriteString("If that command is unavailable, use the frame format below as the advisory fallback.\n\n")
 	fmt.Fprintf(&text, "A frame is one line, at most %d columns, in exactly this form:\n\n", maxLineWidth)
 	fmt.Fprintf(&text, "  %s%s kkk/nnn cccccccc <chunk>%s\n\n", tokenPrefix, NoncePlaceholder, terminator)
 	text.WriteString("where:\n")

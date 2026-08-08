@@ -186,6 +186,12 @@ type idempotentBackend struct {
 	workspaceCreations int
 	agentCreations     int
 	prompts            []string
+	reportPreparations int
+	reportSession      domain.SessionID
+	reportWorkspace    domain.ExecutionWorkspaceID
+	reportLaunch       string
+	reportNonce        string
+	reportErr          error
 	onLaunch           func()
 }
 
@@ -230,6 +236,20 @@ func (b *idempotentBackend) Launch(_ context.Context, req ports.ExecutionLaunchR
 	return agent, nil
 }
 
+func (b *idempotentBackend) PrepareReportTransport(
+	_ context.Context,
+	sessionID domain.SessionID,
+	workspaceID domain.ExecutionWorkspaceID,
+	launchID, nonce string,
+) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reportPreparations++
+	b.reportSession, b.reportWorkspace = sessionID, workspaceID
+	b.reportLaunch, b.reportNonce = launchID, nonce
+	return b.reportErr
+}
+
 func TestDeliveryCommitsOneBriefBeforeTheLaunchItAuthorizes(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 7, 5, 0, 0, 0, time.UTC)
@@ -246,6 +266,9 @@ func TestDeliveryCommitsOneBriefBeforeTheLaunchItAuthorizes(t *testing.T) {
 		// recorded, and those reports would be unreadable forever.
 		if _, found, err := store.GetLatestSessionBrief(ctx, dispatched.Session.ID); err != nil || !found {
 			t.Fatalf("launch began with no committed brief: found=%v err=%v", found, err)
+		}
+		if backend.reportPreparations != 1 {
+			t.Fatalf("launch began before the report terminal was prepared: %d", backend.reportPreparations)
 		}
 	}
 	worker := NewWorkerWithBriefs(store, BackendResolverFunc(func(domain.ExecutionHostID) (ports.ExecutionBackend, bool) {
@@ -286,6 +309,11 @@ func TestDeliveryCommitsOneBriefBeforeTheLaunchItAuthorizes(t *testing.T) {
 	if brief.LaunchID != dispatched.Binding.LaunchID || brief.ReportNonce != row.ReportNonce {
 		t.Fatalf("brief = %#v, want it bound to this launch", brief)
 	}
+	if backend.reportSession != dispatched.Session.ID || backend.reportWorkspace == "" ||
+		backend.reportLaunch != brief.LaunchID || backend.reportNonce != brief.ReportNonce {
+		t.Fatalf("report preparation = session:%s workspace:%s launch:%s nonce:%s",
+			backend.reportSession, backend.reportWorkspace, backend.reportLaunch, backend.reportNonce)
+	}
 	if len(backend.prompts) == 0 {
 		t.Fatal("no launch prompt recorded")
 	}
@@ -299,5 +327,34 @@ func TestDeliveryCommitsOneBriefBeforeTheLaunchItAuthorizes(t *testing.T) {
 		if !strings.Contains(prompt, testDispatchRequest().Prompt) {
 			t.Fatal("the brief dropped the approved work prompt")
 		}
+	}
+}
+
+func TestReportTransportFailureStillAcknowledgesAHealthyAgentLaunch(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 7, 6, 0, 0, 0, time.UTC)
+	store := newDispatchTestStore(t, now)
+	dispatched, err := New(store).Dispatch(ctx, testDispatchRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backend := newIdempotentBackend()
+	backend.reportErr = errors.New("reporter is not installed")
+	worker := NewWorkerWithBriefs(store, BackendResolverFunc(func(domain.ExecutionHostID) (ports.ExecutionBackend, bool) {
+		return backend, true
+	}), paseoevent.NewBriefs(store))
+	worker.now = func() time.Time { return now }
+
+	delivered, deliveryErr := worker.DeliverOne(ctx)
+	if !delivered || !errors.Is(deliveryErr, backend.reportErr) {
+		t.Fatalf("delivery = (%v, %v), want visible reporter degradation", delivered, deliveryErr)
+	}
+	command, found, err := store.GetExecutionCommand(ctx, dispatched.Command.ID)
+	if err != nil || !found || command.State != domain.ExecutionCommandAcknowledged {
+		t.Fatalf("command = (%#v, %v, %v), want acknowledged", command, found, err)
+	}
+	if backend.agentCreations != 1 {
+		t.Fatalf("agent creations = %d, rung-2 launch was sacrificed for the reporter", backend.agentCreations)
 	}
 }

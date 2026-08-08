@@ -409,6 +409,22 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/execution/hosts/{hostId}/probe",
+			id: "probeExecutionHost", tag: "execution",
+			summary:    "Probe one host now and return the refreshed registry entry",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict is the G5 refusal: the endpoint answered with the
+				// operator's own daemon identity.
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPut, path: "/api/v1/execution/projects/{projectId}/hosts/{hostId}",
 			id: "bindProjectHost", tag: "execution",
 			summary:    "Bind a project to a host by its checkout path there",

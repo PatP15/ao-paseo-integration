@@ -22,6 +22,7 @@ import (
 type ExecutionService interface {
 	ListHosts(ctx context.Context) ([]executionsvc.Host, error)
 	RegisterHost(ctx context.Context, in executionsvc.HostInput) (executionsvc.Host, error)
+	ProbeHost(ctx context.Context, id domain.ExecutionHostID) (executionsvc.Host, error)
 	ListQuestions(ctx context.Context) ([]domain.ExecutionInboxQuestion, error)
 	Answer(ctx context.Context, in executionsvc.AnswerInput) (domain.ExecutionCommand, error)
 	Decide(ctx context.Context, in executionsvc.DecisionInput) (domain.ExecutionCommand, error)
@@ -60,6 +61,7 @@ type ExecutionController struct {
 func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/hosts", c.listHosts)
 	r.Put("/execution/hosts/{hostId}", c.registerHost)
+	r.Post("/execution/hosts/{hostId}/probe", c.probeHost)
 	r.Post("/execution/dispatch", c.dispatch)
 	r.Put("/execution/projects/{projectId}/hosts/{hostId}", c.bindProject)
 	r.Get("/execution/questions", c.listQuestions)
@@ -149,6 +151,25 @@ func (c *ExecutionController) registerHost(w http.ResponseWriter, r *http.Reques
 		RequiresNoRelay:       in.RequiresNoRelay,
 		Capabilities:          in.Capabilities,
 	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExecutionHostEnvelope{Host: executionHostResponse(host)})
+}
+
+// probeHost probes one host now and answers with the refreshed registry entry.
+//
+// An unreachable host is a 200 whose view says reachable=false with the probe
+// error attached: unreachability is a recorded fact about the host, never a
+// request failure. Only an unknown host, missing wiring, or a self-target
+// identity match (G5) error.
+func (c *ExecutionController) probeHost(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/hosts/{hostId}/probe")
+		return
+	}
+	host, err := c.Svc.ProbeHost(r.Context(), domain.ExecutionHostID(chi.URLParam(r, "hostId")))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

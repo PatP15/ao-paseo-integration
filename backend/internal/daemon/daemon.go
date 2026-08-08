@@ -263,7 +263,9 @@ func Run() error {
 	// identities. Additive to the runtime server_id-drift guard, and fail-open
 	// if either daemon cannot be probed (the drift guard still covers runtime).
 	execSvc := executionsvc.New(store)
-	execSvc.SetSelfTargetGuard(newSelfTargetGuard(cfg.DataDir, log))
+	selfTargetGuard := newSelfTargetGuard(cfg.DataDir, log)
+	execSvc.SetSelfTargetGuard(selfTargetGuard)
+	execSvc.SetHostProber(newHostProber(store, cfg.DataDir, log, selfTargetGuard))
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,

@@ -284,6 +284,70 @@ func drainOnce(ctx context.Context, worker *dispatchsvc.Worker, logger *slog.Log
 	}
 }
 
+// newHostProber builds the on-demand probe behind POST
+// /execution/hosts/{hostId}/probe.
+//
+// It deliberately does NOT go through the executionBackends client cache: the
+// cache refuses disabled hosts, and "test the connection to a host I have not
+// enabled yet" is precisely what a manual probe is for. A transient client is
+// constructed per call — a probe is one HTTP GET, so there is nothing worth
+// caching.
+//
+// The recorded outcome goes through paseoobserve.ProbeHost, the same rules the
+// observer's tick applies, so a manual probe and a scheduled one can never
+// disagree about reachability or server-identity drift. On a reachable probe
+// the G5 self-target guard runs as well; a positive match is recorded as a
+// failed probe and returned as the same refusal registration gives.
+func newHostProber(
+	store *sqlite.Store,
+	dataDir string,
+	logger *slog.Logger,
+	selfTargetGuard func(context.Context, domain.ExecutionHost) error,
+) func(context.Context, domain.ExecutionHost) error {
+	secrets := newSecretResolver(dataDir)
+	return func(ctx context.Context, host domain.ExecutionHost) error {
+		now := time.Now().UTC()
+		recordFailure := func(reason string) error {
+			return store.RecordExecutionHostProbe(ctx, domain.ExecutionHostProbe{
+				HostID: host.ID, Reachable: false, Error: reason, ObservedAt: now,
+			})
+		}
+
+		password, err := secrets.Resolve(host.EndpointSecretRef)
+		if err != nil {
+			// A missing credential is a probe failure the operator can act on,
+			// not an internal error: record it and let the view carry it.
+			return recordFailure("cannot resolve host credential: " + err.Error())
+		}
+		endpoint := host.Endpoint
+		if password != "" {
+			endpoint = fmt.Sprintf("tcp://%s?password=%s", host.Endpoint, password)
+		}
+		client, err := paseoexec.NewClient(ctx, endpoint, paseoexec.CLIRunner{Timeout: 30 * time.Second})
+		if err != nil {
+			return recordFailure(paseoexec.Redact(err.Error(), password))
+		}
+
+		probe, err := paseoobserve.ProbeHost(ctx, store, paseoexec.NewBackend(client, store), host, now, logger)
+		if err != nil {
+			return err
+		}
+		if !probe.Reachable || selfTargetGuard == nil {
+			return nil
+		}
+		if guardErr := selfTargetGuard(ctx, host); guardErr != nil {
+			// The daemon answered, but it is the operator's own: reachable in
+			// the network sense and unusable in every other. Record the refusal
+			// so the registry view says why, then surface it to the caller.
+			if recordErr := recordFailure(guardErr.Error()); recordErr != nil {
+				return recordErr
+			}
+			return guardErr
+		}
+		return nil
+	}
+}
+
 // localPaseoDaemon is the operator's own Paseo daemon. G5 compares a host being
 // registered against this identity. It is the documented default listen
 // address; a non-default local daemon is not covered, which is acceptable

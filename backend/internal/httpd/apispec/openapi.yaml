@@ -420,6 +420,57 @@ paths:
       summary: Register or replace one remote execution host
       tags:
       - execution
+  /api/v1/execution/hosts/{hostId}/probe:
+    post:
+      operationId: probeExecutionHost
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionHostEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Probe one host now and return the refreshed registry entry
+      tags:
+      - execution
   /api/v1/execution/permissions/{questionId}/decision:
     post:
       operationId: decideExecutionPermission

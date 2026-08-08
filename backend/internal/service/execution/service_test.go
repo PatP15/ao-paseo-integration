@@ -546,3 +546,62 @@ func TestNoSelfTargetGuardRegistersNormally(t *testing.T) {
 		t.Fatal("host was not written")
 	}
 }
+
+// TestProbeHost covers the on-demand probe: unknown hosts and missing wiring
+// are errors, a recorded probe outcome is returned as the refreshed view, and
+// a self-target refusal from the prober propagates after the reload.
+func TestProbeHost(t *testing.T) {
+	t.Run("unknown host", func(t *testing.T) {
+		svc := newTestService(newFakeStore())
+		svc.SetHostProber(func(context.Context, domain.ExecutionHost) error { return nil })
+		_, err := svc.ProbeHost(context.Background(), "ghost")
+		if code := errCode(t, err); code != "HOST_NOT_FOUND" {
+			t.Fatalf("code = %q, want HOST_NOT_FOUND", code)
+		}
+	})
+
+	t.Run("no prober wired", func(t *testing.T) {
+		store := newFakeStore()
+		store.hosts = []domain.ExecutionHost{{ID: "worker-1", Name: "worker"}}
+		_, err := newTestService(store).ProbeHost(context.Background(), "worker-1")
+		if code := errCode(t, err); code != "PROBE_UNAVAILABLE" {
+			t.Fatalf("code = %q, want PROBE_UNAVAILABLE", code)
+		}
+	})
+
+	t.Run("returns the view the probe just recorded", func(t *testing.T) {
+		store := newFakeStore()
+		store.hosts = []domain.ExecutionHost{{ID: "worker-1", Name: "worker", Endpoint: "worker:6780"}}
+		svc := newTestService(store)
+		svc.SetHostProber(func(_ context.Context, host domain.ExecutionHost) error {
+			// The prober records outcome facts; simulate that by mutating the
+			// stored row the reload will read.
+			store.hosts[0].ServerID = "srv_1"
+			store.hosts[0].PaseoVersion = "0.2.5"
+			store.hosts[0].LastSuccessfulProbeAt = testNow
+			return nil
+		})
+		host, err := svc.ProbeHost(context.Background(), " worker-1 ")
+		if err != nil {
+			t.Fatalf("ProbeHost: %v", err)
+		}
+		if !host.Reachable || host.ServerID != "srv_1" || host.PaseoVersion != "0.2.5" {
+			t.Fatalf("view = %+v, want reachable srv_1 @ 0.2.5", host)
+		}
+	})
+
+	t.Run("self-target refusal propagates", func(t *testing.T) {
+		store := newFakeStore()
+		store.hosts = []domain.ExecutionHost{{ID: "worker-1", Name: "worker"}}
+		svc := newTestService(store)
+		svc.SetHostProber(func(context.Context, domain.ExecutionHost) error {
+			store.hosts[0].LastFailedProbeAt = testNow
+			store.hosts[0].LastProbeError = "self"
+			return apierr.Conflict("HOST_IS_SELF", "this endpoint resolves to the operator's own Paseo daemon", nil)
+		})
+		_, err := svc.ProbeHost(context.Background(), "worker-1")
+		if code := errCode(t, err); code != "HOST_IS_SELF" {
+			t.Fatalf("code = %q, want HOST_IS_SELF", code)
+		}
+	})
+}

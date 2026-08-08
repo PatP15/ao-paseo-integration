@@ -51,6 +51,10 @@ func (c *captureExecutionService) BindProject(_ context.Context, in executionsvc
 	}, nil
 }
 
+func (c *captureExecutionService) ProbeHost(_ context.Context, id domain.ExecutionHostID) (executionsvc.Host, error) {
+	return executionsvc.Host{ExecutionHost: domain.ExecutionHost{ID: id}}, nil
+}
+
 func (c *captureExecutionService) ListHosts(context.Context) ([]executionsvc.Host, error) {
 	return []executionsvc.Host{{
 		ExecutionHost: domain.ExecutionHost{

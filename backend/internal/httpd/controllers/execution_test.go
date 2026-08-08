@@ -29,6 +29,7 @@ type fakeExecutionService struct {
 	decided    executionsvc.DecisionInput
 	err        error
 	bound      executionsvc.BindingInput
+	probed     domain.ExecutionHostID
 }
 
 // BindProject records a project's checkout path on a host.
@@ -44,6 +45,20 @@ var _ controllers.ExecutionService = (*fakeExecutionService)(nil)
 
 func (f *fakeExecutionService) ListHosts(context.Context) ([]executionsvc.Host, error) {
 	return f.hosts, f.err
+}
+
+func (f *fakeExecutionService) ProbeHost(_ context.Context, id domain.ExecutionHostID) (executionsvc.Host, error) {
+	f.probed = id
+	if f.err != nil {
+		return executionsvc.Host{}, f.err
+	}
+	if len(f.hosts) > 0 {
+		return f.hosts[0], nil
+	}
+	return executionsvc.Host{
+		ExecutionHost: domain.ExecutionHost{ID: id, Name: "probed"},
+		Reachable:     true,
+	}, nil
 }
 
 func (f *fakeExecutionService) RegisterHost(_ context.Context, in executionsvc.HostInput) (executionsvc.Host, error) {
@@ -151,6 +166,7 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/execution/hosts", ""},
 		{http.MethodPut, "/api/v1/execution/hosts/worker-1", `{}`},
+		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
@@ -524,5 +540,54 @@ func TestExecutionSecretsRejectUnknownKeysAndBadNames(t *testing.T) {
 	}
 	if envelope.Code != "SECRET_NAME_INVALID" {
 		t.Fatalf("code = %q, want SECRET_NAME_INVALID", envelope.Code)
+	}
+}
+
+// TestProbeExecutionHostReturnsRefreshedEnvelope pins the probe route: the id
+// reaches the service and the refreshed host view comes back in the envelope.
+func TestProbeExecutionHostReturnsRefreshedEnvelope(t *testing.T) {
+	svc := &fakeExecutionService{hosts: []executionsvc.Host{{
+		ExecutionHost: domain.ExecutionHost{
+			ID: "worker-1", Name: "worker", ServerID: "srv_1", PaseoVersion: "0.2.5",
+		},
+		Reachable: true,
+	}}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/hosts/worker-1/probe", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.probed != "worker-1" {
+		t.Fatalf("probed = %q, want worker-1", svc.probed)
+	}
+	var out controllers.ExecutionHostEnvelope
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.Host.ID != "worker-1" || !out.Host.Reachable || out.Host.ServerID != "srv_1" {
+		t.Fatalf("host = %+v", out.Host)
+	}
+}
+
+// TestProbeExecutionHostSelfTargetIsConflict pins the G5 refusal shape end to
+// end: a HOST_IS_SELF error renders as 409 in the locked envelope.
+func TestProbeExecutionHostSelfTargetIsConflict(t *testing.T) {
+	svc := &fakeExecutionService{err: apierr.Conflict("HOST_IS_SELF",
+		"this endpoint resolves to the operator's own Paseo daemon", nil)}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/hosts/worker-1/probe", "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if envelope.Code != "HOST_IS_SELF" {
+		t.Fatalf("code = %q, want HOST_IS_SELF", envelope.Code)
 	}
 }

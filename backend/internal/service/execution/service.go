@@ -54,6 +54,11 @@ type Service struct {
 	// the operator's own. Optional and injected by the daemon because it needs
 	// to probe over the network; nil in tests and when no local daemon answers.
 	selfTargetGuard func(ctx context.Context, host domain.ExecutionHost) error
+	// hostProber, when set, probes one host on demand and records the outcome
+	// through the same rules the observer's tick applies. Injected by the
+	// daemon for the same reason as selfTargetGuard: it talks to the network,
+	// and this package deliberately makes no remote calls of its own.
+	hostProber func(ctx context.Context, host domain.ExecutionHost) error
 }
 
 // New constructs the service.
@@ -74,6 +79,56 @@ func newService(store Store, now func() time.Time, newID func() string) *Service
 // mistake at the one moment AO can see both identities at once: registration.
 func (s *Service) SetSelfTargetGuard(guard func(ctx context.Context, host domain.ExecutionHost) error) {
 	s.selfTargetGuard = guard
+}
+
+// SetHostProber installs the on-demand probe used by POST
+// /execution/hosts/{hostId}/probe. The prober performs the network probe AND
+// records its outcome (probe rows, identity orphans); the service only reloads
+// the host afterwards so the response reflects what was just recorded.
+func (s *Service) SetHostProber(prober func(ctx context.Context, host domain.ExecutionHost) error) {
+	s.hostProber = prober
+}
+
+// ProbeHost probes one registered host now and returns the refreshed registry
+// view.
+//
+// An unreachable host is a 200 with reachable=false and the probe error in the
+// view — unreachability is a recorded fact, not a request failure. The only
+// error outcomes are an unknown host, a daemon started without probe wiring,
+// and a positive self-target identity match (gap G5), which refuses the same
+// way registration does.
+func (s *Service) ProbeHost(ctx context.Context, id domain.ExecutionHostID) (Host, error) {
+	id = domain.ExecutionHostID(strings.TrimSpace(string(id)))
+	if id == "" {
+		return Host{}, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
+	}
+	host, _, found, err := s.store.GetExecutionHost(ctx, id)
+	if err != nil {
+		return Host{}, fmt.Errorf("get execution host %s: %w", id, err)
+	}
+	if !found {
+		return Host{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+	}
+	if s.hostProber == nil {
+		return Host{}, apierr.Internal("PROBE_UNAVAILABLE",
+			"this daemon was started without execution probe wiring")
+	}
+	proberErr := s.hostProber(ctx, host)
+
+	// Reload before deciding what to return: the prober records its outcome
+	// (including a self-target refusal) as probe facts, and the caller should
+	// see the row that was just written, not the one from before the probe.
+	fresh, _, stillFound, err := s.store.GetExecutionHost(ctx, id)
+	if err != nil {
+		return Host{}, fmt.Errorf("reload execution host %s: %w", id, err)
+	}
+	if !stillFound {
+		return Host{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+	}
+	if proberErr != nil {
+		return Host{}, proberErr
+	}
+	return s.hostView(ctx, fresh)
 }
 
 // Host is one registry entry with its routable capabilities and current load.

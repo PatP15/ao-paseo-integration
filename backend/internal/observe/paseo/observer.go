@@ -150,46 +150,15 @@ func (o *Observer) pollHost(ctx context.Context, host domain.ExecutionHost) erro
 	}
 	now := o.now().UTC()
 
-	status, err := remote.Status(ctx, host.ID)
-	// A backend that reports unreachability as a flag rather than an error is
-	// treated the same way. Reading (Reachable:false, nil) as anything other
-	// than an outage is the same mistake as reading (false, nil) from Alive as
-	// death.
-	if err != nil || !status.Reachable {
+	probe, err := ProbeHost(ctx, o.store, remote, host, now, o.logger)
+	if err != nil {
+		return err
+	}
+	if !probe.Reachable {
 		// An unreachable host is a fact about the host. Return here, before any
 		// session is touched: the sessions on it are still running and still
 		// owned by AO.
-		reason := "execution host reported itself unreachable"
-		if err != nil {
-			reason = err.Error()
-		}
-		o.logger.Debug("paseo observer: host probe failed; sessions left untouched",
-			"host", host.ID, "err", reason)
-		return o.store.RecordExecutionHostProbe(ctx, domain.ExecutionHostProbe{
-			HostID: host.ID, Reachable: false, Error: reason, ObservedAt: now,
-		})
-	}
-	if host.ServerID != "" && status.ServerID != host.ServerID {
-		// A new server id means a different daemon: every agent id AO holds for
-		// this host addresses something that no longer exists, so inspecting
-		// them would map another daemon's state onto AO's sessions.
-		detail := fmt.Sprintf("registered server %s, observed %s", host.ServerID, status.ServerID)
-		if _, orphanErr := o.store.RecordExecutionOrphan(ctx, domain.ExecutionOrphan{
-			Kind: domain.ExecutionOrphanServerIdentity, HostID: host.ID,
-			Detail: detail, ObservedAt: now,
-		}); orphanErr != nil {
-			return orphanErr
-		}
-		return o.store.RecordExecutionHostProbe(ctx, domain.ExecutionHostProbe{
-			HostID: host.ID, Reachable: false, Error: "paseo server identity changed: " + detail,
-			ObservedAt: now,
-		})
-	}
-	if err := o.store.RecordExecutionHostProbe(ctx, domain.ExecutionHostProbe{
-		HostID: host.ID, ServerID: status.ServerID, Version: status.Version,
-		Reachable: true, ObservedAt: now,
-	}); err != nil {
-		return err
+		return nil
 	}
 
 	bindings, err := o.store.ListActiveSessionExecutionBindingsByHost(ctx, host.ID)
@@ -213,7 +182,7 @@ func (o *Observer) pollHost(ctx context.Context, host domain.ExecutionHost) erro
 			continue
 		}
 		budget -= cost
-		if err := o.observeSession(ctx, remote, host, status, binding, now); err != nil {
+		if err := o.observeSession(ctx, remote, host, probe.ServerID, binding, now); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -228,7 +197,7 @@ func (o *Observer) pollHost(ctx context.Context, host domain.ExecutionHost) erro
 	if o.sweepDue(host.ID, now) {
 		if deferred > 0 {
 			o.logger.Warn("paseo observer: reconciliation sweep deferred; host is at its polling limit", "host", host.ID)
-		} else if err := o.sweep(ctx, remote, host, bindings, status.ServerID, now); err != nil {
+		} else if err := o.sweep(ctx, remote, host, bindings, probe.ServerID, now); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -241,16 +210,16 @@ func (o *Observer) observeSession(
 	ctx context.Context,
 	remote ports.ExecutionObserver,
 	host domain.ExecutionHost,
-	status domain.ExecutionHostStatus,
+	serverID string,
 	binding domain.SessionExecutionBinding,
 	now time.Time,
 ) error {
-	if binding.BoundServerID != "" && binding.BoundServerID != status.ServerID {
+	if binding.BoundServerID != "" && binding.BoundServerID != serverID {
 		o.schedule(binding.SessionID, now, o.cold)
 		_, err := o.store.RecordExecutionOrphan(ctx, domain.ExecutionOrphan{
 			Kind: domain.ExecutionOrphanServerIdentity, HostID: host.ID, SessionID: binding.SessionID,
 			AgentID: binding.ExternalAgentID, ObservedAt: now,
-			Detail: fmt.Sprintf("session bound to server %s, observed %s", binding.BoundServerID, status.ServerID),
+			Detail: fmt.Sprintf("session bound to server %s, observed %s", binding.BoundServerID, serverID),
 		})
 		return err
 	}

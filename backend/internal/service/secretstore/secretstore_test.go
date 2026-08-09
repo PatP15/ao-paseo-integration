@@ -2,9 +2,11 @@ package secretstore
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -75,6 +77,52 @@ func TestSaveRefusesOverwriteWithoutReplace(t *testing.T) {
 	if string(raw) != "two" {
 		t.Fatalf("stored %q after replace, want %q", raw, "two")
 	}
+}
+
+func TestSaveConcurrentCreateHasOneWinner(t *testing.T) {
+	store := New(t.TempDir())
+	const writers = 32
+	start := make(chan struct{})
+	results := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(value string) {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(SaveInput{Name: "shared", Value: value})
+			results <- err
+		}(fmt.Sprintf("value-%d", i))
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	succeeded, conflicted := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case apierrCodeValue(err) == "SECRET_EXISTS":
+			conflicted++
+		default:
+			t.Fatalf("concurrent Save returned unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != writers-1 {
+		t.Fatalf("concurrent creates: succeeded=%d conflicted=%d, want 1/%d", succeeded, conflicted, writers-1)
+	}
+	if raw, err := os.ReadFile(filepath.Join(store.dir, "shared")); err != nil || !strings.HasPrefix(string(raw), "value-") {
+		t.Fatalf("winning value = %q, err=%v", raw, err)
+	}
+}
+
+func apierrCodeValue(err error) string {
+	var apiErr *apierr.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code
+	}
+	return ""
 }
 
 func TestSaveRejectsPathShapedAndEmptyNames(t *testing.T) {

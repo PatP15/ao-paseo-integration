@@ -63,14 +63,6 @@ func (s *Store) Save(in SaveInput) (string, error) {
 		return "", fmt.Errorf("create secrets directory: %w", err)
 	}
 	path := filepath.Join(s.dir, name)
-	if !in.Replace {
-		if _, err := os.Lstat(path); err == nil {
-			return "", apierr.Conflict("SECRET_EXISTS",
-				"secret ref "+name+" already exists; pass replace to rotate it", nil)
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("check secret ref %q: %w", name, err)
-		}
-	}
 	// Write-then-rename so a crash mid-write can never leave a truncated
 	// credential behind a ref that used to resolve.
 	tmp, err := os.CreateTemp(s.dir, "."+name+".tmp-*")
@@ -90,7 +82,20 @@ func (s *Store) Save(in SaveInput) (string, error) {
 	if err := tmp.Close(); err != nil {
 		return "", fmt.Errorf("close secret ref %q: %w", name, err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if !in.Replace {
+		// Link is the atomic no-overwrite commit: unlike an Lstat followed by
+		// Rename, concurrent creates cannot both pass an existence check and
+		// silently rotate the same ref. The stage and destination share a
+		// directory, so the hard link is on one filesystem. The deferred remove
+		// drops the staging name after the destination is durable.
+		if err := os.Link(tmpPath, path); err != nil {
+			if os.IsExist(err) {
+				return "", apierr.Conflict("SECRET_EXISTS",
+					"secret ref "+name+" already exists; pass replace to rotate it", nil)
+			}
+			return "", fmt.Errorf("commit secret ref %q: %w", name, err)
+		}
+	} else if err := os.Rename(tmpPath, path); err != nil {
 		return "", fmt.Errorf("commit secret ref %q: %w", name, err)
 	}
 	return name, nil

@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { executionHostsQueryKey } from "../hooks/useExecutionHostsQuery";
 
 const { getMock, postMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -27,12 +28,54 @@ vi.mock("../lib/api-client", () => ({
 function renderDialog() {
 	const onCreated = vi.fn();
 	const onOpenChange = vi.fn();
+	const queryClient = new QueryClient();
 	render(
-		<QueryClientProvider client={new QueryClient()}>
+		<QueryClientProvider client={queryClient}>
 			<NewTaskDialog open projectId="proj-1" onCreated={onCreated} onOpenChange={onOpenChange} />
 		</QueryClientProvider>,
 	);
-	return { onCreated, onOpenChange };
+	return { onCreated, onOpenChange, queryClient };
+}
+
+function mockRemoteHost(reachable = true) {
+	const fallback = getMock.getMockImplementation();
+	getMock.mockImplementation(async (path: string, ...args: unknown[]) => {
+		if (path === "/api/v1/execution/hosts") {
+			return {
+				data: {
+					hosts: [
+						{
+							id: "worker-1",
+							name: "Worker",
+							enabled: true,
+							reachable,
+							trustZone: "work",
+							activeSessions: 0,
+							maxConcurrentSessions: 2,
+						},
+					],
+				},
+			};
+		}
+		if (path === "/api/v1/execution/bindings") {
+			return { data: { bindings: [{ hostId: "worker-1", enabled: true }] } };
+		}
+		if (path === "/api/v1/execution/hosts/{hostId}/providers") {
+			return {
+				data: {
+					providers: [{ provider: "claude", label: "Claude", status: "available" }],
+				},
+			};
+		}
+		return fallback?.(path, ...args);
+	});
+}
+
+async function selectRemoteHost(user: ReturnType<typeof userEvent.setup>) {
+	await user.click(await screen.findByRole("button", { name: "Run on" }));
+	await user.click(await screen.findByRole("menuitem", { name: "Worker · work · 0/2" }));
+	await user.click(await screen.findByRole("button", { name: "Provider" }));
+	await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
 }
 
 function spawnBody() {
@@ -214,6 +257,51 @@ describe("NewTaskDialog", () => {
 		expect(await screen.findByText("Image 8")).toBeInTheDocument();
 		expect(screen.queryByText("Image 9")).not.toBeInTheDocument();
 		expect(screen.getByText(/up to 8 images/i)).toBeInTheDocument();
+	});
+
+	it("disables bound computers whose latest probe says they are unreachable", async () => {
+		mockRemoteHost(false);
+		renderDialog();
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole("button", { name: "Run on" }));
+		expect(await screen.findByRole("menuitem", { name: "Worker · work · 0/2" })).toHaveAttribute("data-disabled");
+	});
+
+	it("never silently drops image attachments on a remote task", async () => {
+		mockRemoteHost();
+		renderDialog();
+		const user = userEvent.setup();
+		await selectRemoteHost(user);
+
+		await user.type(screen.getByLabelText("Title"), "Inspect screenshot");
+		const brief = screen.getByLabelText("Brief");
+		await user.type(brief, "Use the attached screenshot.");
+		fireEvent.paste(brief, {
+			clipboardData: {
+				files: [new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" })],
+				items: [],
+			},
+		});
+		expect(await screen.findByText("Image 1")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+		expect(await screen.findByText(/Remote tasks do not support image attachments/)).toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("never falls back to a local spawn when the selected remote host disappears", async () => {
+		mockRemoteHost();
+		const { queryClient } = renderDialog();
+		const user = userEvent.setup();
+		await selectRemoteHost(user);
+
+		act(() => queryClient.setQueryData(executionHostsQueryKey, []));
+		await user.type(screen.getByLabelText("Title"), "Stay remote");
+		await user.type(screen.getByLabelText("Brief"), "Do not run this locally.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		expect(await screen.findByText(/selected computer is no longer available/)).toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("requires both title and brief", async () => {

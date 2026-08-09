@@ -143,6 +143,7 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 		(host) => host.enabled && (bindingsQuery.data ?? []).some((b) => b.hostId === host.id && b.enabled),
 	);
 	const remoteHost = boundHosts.find((host) => host.id === runOn);
+	const remoteSelected = runOn !== "local";
 	const providersQuery = useQuery({
 		queryKey: ["execution-providers", runOn],
 		queryFn: async () => {
@@ -200,7 +201,17 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 		setIsSubmitting(true);
 		setError(undefined);
 		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
-		if (remoteHost) {
+		if (remoteSelected) {
+			if (!remoteHost || !remoteHost.reachable) {
+				setError(t("newTask.remoteHostUnavailable"));
+				setIsSubmitting(false);
+				return;
+			}
+			if (attachments.length > 0) {
+				setError(t("newTask.remoteAttachmentsUnsupported"));
+				setIsSubmitting(false);
+				return;
+			}
 			if (!remoteProvider) {
 				setError(t("dispatch.selectProvider"));
 				setIsSubmitting(false);
@@ -411,7 +422,11 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 										value={runOn}
 										options={[
 											{ value: "local", label: t("newTask.thisComputer") },
-											...boundHosts.map((host) => ({ value: host.id, label: host.name })),
+											...boundHosts.map((host) => ({
+												value: host.id,
+												label: `${host.name} · ${host.trustZone} · ${host.activeSessions}/${host.maxConcurrentSessions}`,
+												disabled: !host.reachable,
+											})),
 										]}
 										onChange={(value) => {
 											setRunOn(value);
@@ -420,7 +435,7 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 										aria-label={t("newTask.runOn")}
 									/>
 								</div>
-								{remoteHost ? (
+								{remoteSelected && remoteHost ? (
 									<div className="space-y-1.5">
 										<span className="text-xs font-medium text-muted-foreground">{t("dispatch.provider")}</span>
 										<SettingsOptionMenu
@@ -442,7 +457,7 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 						) : null}
 
 						<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
-							<div className={remoteHost ? "hidden" : "space-y-1.5"}>
+							<div className={remoteSelected ? "hidden" : "space-y-1.5"}>
 								<RequiredAgentField
 									id={agentId}
 									label={t("newTask.agent")}

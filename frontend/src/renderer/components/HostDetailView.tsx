@@ -16,6 +16,7 @@ import { formatTimeCompact } from "../lib/format-time";
 import { transportLabel, trustZoneLabel } from "./settings/ComputersSection";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { CenterPanelShell } from "./CenterPanelShell";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 
 type Inventory = components["schemas"]["ControllersExecutionHostInventoryResponse"];
@@ -639,9 +640,10 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 	);
 }
 
-function SchedulesTab({ hostId }: { hostId: string }) {
+export function SchedulesTab({ hostId }: { hostId: string }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const [pendingDelete, setPendingDelete] = useState<Schedules["schedules"][number] | null>(null);
 	const queryKey = ["execution-schedules", hostId] as const;
 	const schedulesQuery = useQuery({
 		queryKey,
@@ -661,7 +663,10 @@ function SchedulesTab({ hostId }: { hostId: string }) {
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 		},
-		onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
+		onSuccess: () => {
+			setPendingDelete(null);
+			void queryClient.invalidateQueries({ queryKey });
+		},
 	});
 	const schedules = schedulesQuery.data ?? [];
 	return (
@@ -702,7 +707,7 @@ function SchedulesTab({ hostId }: { hostId: string }) {
 							type="button"
 							className="settings-option-trigger inline-flex shrink-0 items-center gap-1.5"
 							disabled={deleteMutation.isPending}
-							onClick={() => deleteMutation.mutate(schedule.id)}
+							onClick={() => setPendingDelete(schedule)}
 						>
 							<Trash2 className="size-icon-base" aria-hidden="true" />
 							{t("hostDetail.deleteSchedule")}
@@ -710,13 +715,32 @@ function SchedulesTab({ hostId }: { hostId: string }) {
 					</div>
 				))
 			)}
-			{deleteMutation.isError ? (
-				<p className="text-xs text-error" role="alert">
-					{deleteMutation.error instanceof Error
-						? deleteMutation.error.message
-						: t("hostDetail.deleteFailed")}
-				</p>
-			) : null}
+			<ConfirmDialog
+				open={pendingDelete !== null}
+				title={t("hostDetail.deleteScheduleTitle")}
+				description={t("hostDetail.deleteScheduleDescription", {
+					name: pendingDelete?.name || pendingDelete?.id || "",
+				})}
+				confirmLabel={t("hostDetail.deleteScheduleConfirm")}
+				destructive
+				busy={deleteMutation.isPending}
+				error={
+					deleteMutation.isError
+						? deleteMutation.error instanceof Error
+							? deleteMutation.error.message
+							: t("hostDetail.deleteFailed")
+						: null
+				}
+				onConfirm={() => {
+					if (pendingDelete) deleteMutation.mutate(pendingDelete.id);
+				}}
+				onOpenChange={(next) => {
+					if (!next && !deleteMutation.isPending) {
+						deleteMutation.reset();
+						setPendingDelete(null);
+					}
+				}}
+			/>
 		</>
 	);
 }

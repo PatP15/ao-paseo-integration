@@ -14,7 +14,17 @@ type ExecutionHostProvider struct {
 	// reports human labels ("Plan Mode, Bypass") while run --mode takes ids.
 	// They are carried for display and never validated against or forwarded.
 	ModeLabels []string
-	Models     []ExecutionProviderModel
+	// Modes are (id, label) pairs learned by inspecting a live agent of this
+	// provider on the host — the only 0.2.5 surface that returns mode ids.
+	// Empty when the host has no agent of this provider yet.
+	Modes  []ExecutionProviderMode
+	Models []ExecutionProviderModel
+}
+
+// ExecutionProviderMode is one launchable mode id with its display label.
+type ExecutionProviderMode struct {
+	ID    string
+	Label string
 }
 
 // ExecutionProviderModel is one launchable model with its thinking options.

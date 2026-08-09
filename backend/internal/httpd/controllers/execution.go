@@ -339,8 +339,17 @@ type ExecutionProviderModelResponse struct {
 	DefaultThinkingOptionID string   `json:"defaultThinkingOptionId,omitempty"`
 }
 
+// ExecutionProviderModeResponse is one launchable mode id with its label,
+// learned by inspecting a live agent of the provider on the host.
+type ExecutionProviderModeResponse struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+}
+
 // ExecutionProviderResponse is one provider as the host's daemon reports it.
 // ModeLabels are display labels, not mode ids; they describe, never validate.
+// Modes carries real (id, label) pairs when the host has an agent of this
+// provider to learn them from; it is re-derived live on every discovery.
 type ExecutionProviderResponse struct {
 	Provider    string                           `json:"provider"`
 	Label       string                           `json:"label"`
@@ -348,6 +357,7 @@ type ExecutionProviderResponse struct {
 	Enabled     bool                             `json:"enabled"`
 	DefaultMode string                           `json:"defaultMode,omitempty"`
 	ModeLabels  []string                         `json:"modeLabels"`
+	Modes       []ExecutionProviderModeResponse  `json:"modes" description:"Mode ids with labels, learned from a live agent of this provider on the host. Empty when the host has none yet."`
 	Models      []ExecutionProviderModelResponse `json:"models" description:"Populated for available providers only."`
 }
 
@@ -385,10 +395,14 @@ func (c *ExecutionController) hostProviders(w http.ResponseWriter, r *http.Reque
 		if labels == nil {
 			labels = []string{}
 		}
+		modes := make([]ExecutionProviderModeResponse, 0, len(provider.Modes))
+		for _, mode := range provider.Modes {
+			modes = append(modes, ExecutionProviderModeResponse{ID: mode.ID, Label: mode.Label})
+		}
 		out = append(out, ExecutionProviderResponse{
 			Provider: provider.Provider, Label: provider.Label, Status: provider.Status,
 			Enabled: provider.Enabled, DefaultMode: provider.DefaultMode,
-			ModeLabels: labels, Models: models,
+			ModeLabels: labels, Modes: modes, Models: models,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListExecutionProvidersResponse{Providers: out})

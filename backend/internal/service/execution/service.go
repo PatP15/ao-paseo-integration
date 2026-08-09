@@ -82,6 +82,9 @@ type Service struct {
 	scheduleDeleter func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error
 	// maintenance, when set, is the live host maintenance channel (U9).
 	maintenance MaintenanceChannel
+	// defaultActor, when set, names the identity recorded for answers and
+	// permission decisions whose caller supplied none. Explicit names win.
+	defaultActor func() string
 
 	providerCacheMu sync.Mutex
 	providerCache   map[domain.ExecutionHostID]providerCacheEntry
@@ -660,7 +663,7 @@ func (s *Service) Answer(ctx context.Context, in AnswerInput) (domain.ExecutionC
 		return domain.ExecutionCommand{}, fmt.Errorf("marshal answer payload: %w", err)
 	}
 	return s.resolve(ctx, domain.ExecutionQuestionResolution{
-		QuestionID: question.ID, Answer: answer, AnsweredBy: actor(in.AnsweredBy),
+		QuestionID: question.ID, Answer: answer, AnsweredBy: s.actor(in.AnsweredBy),
 		CommandID: s.newID(), CommandType: domain.ExecutionCommandSendMessage,
 		PayloadJSON: string(payload), AuditType: "execution.question_answered",
 		DecidedAt: s.now().UTC(),
@@ -711,7 +714,7 @@ func (s *Service) Decide(ctx context.Context, in DecisionInput) (domain.Executio
 		return domain.ExecutionCommand{}, fmt.Errorf("marshal permission payload: %w", err)
 	}
 	return s.resolve(ctx, domain.ExecutionQuestionResolution{
-		QuestionID: question.ID, Answer: string(in.Decision), AnsweredBy: actor(in.DecidedBy),
+		QuestionID: question.ID, Answer: string(in.Decision), AnsweredBy: s.actor(in.DecidedBy),
 		CommandID: s.newID(), CommandType: commandType, PayloadJSON: string(payload),
 		AuditType: "execution.permission_decided", DecidedAt: s.now().UTC(),
 	})
@@ -866,12 +869,23 @@ func redactEndpoint(endpoint string) string {
 	return endpoint
 }
 
-func actor(name string) string {
+// SetDefaultActor installs the identity recorded when a caller names none —
+// the daemon wires the OS username of whoever runs it.
+func (s *Service) SetDefaultActor(identity func() string) {
+	s.defaultActor = identity
+}
+
+func (s *Service) actor(name string) string {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return "human"
+	if name != "" {
+		return name
 	}
-	return name
+	if s.defaultActor != nil {
+		if resolved := strings.TrimSpace(s.defaultActor()); resolved != "" {
+			return resolved
+		}
+	}
+	return "human"
 }
 
 // BindingInput is a project's machine-specific checkout on one host.

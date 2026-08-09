@@ -49,6 +49,9 @@ type Service struct {
 	store Store
 	now   func() time.Time
 	newID func() string
+	// defaultApprover, when set, names the identity recorded for decisions
+	// whose caller supplied none. Explicit approvers always win.
+	defaultApprover func() string
 }
 
 // New constructs a work-item service with production time and IDs.
@@ -110,6 +113,13 @@ func (s *Service) Approve(ctx context.Context, id, approver string) (domain.Work
 	return s.Decide(ctx, id, approver, domain.WorkItemApproved)
 }
 
+// SetDefaultApprover installs the identity recorded when a caller does not
+// name one — the daemon wires the OS username of whoever runs it. Explicit
+// approvers (the CLI's --by) always win.
+func (s *Service) SetDefaultApprover(identity func() string) {
+	s.defaultApprover = identity
+}
+
 // Decide records a human approval decision — approved or rejected — on a
 // draft or proposed work item. Rejection is terminal the same way approval
 // is: the store's guard only permits deciding from draft/proposed, so neither
@@ -120,6 +130,9 @@ func (s *Service) Decide(ctx context.Context, id, approver string, decision doma
 		return domain.WorkItem{}, apierr.Invalid("WORK_ITEM_ID_REQUIRED", "work item id is required", nil)
 	}
 	approver = strings.TrimSpace(approver)
+	if approver == "" && s.defaultApprover != nil {
+		approver = strings.TrimSpace(s.defaultApprover())
+	}
 	if approver == "" {
 		return domain.WorkItem{}, apierr.Invalid("APPROVER_REQUIRED", "approver is required", nil)
 	}

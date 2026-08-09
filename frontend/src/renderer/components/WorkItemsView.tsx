@@ -26,10 +26,6 @@ export function workItemsQueryKey(projectId: string) {
 	return ["work-items", projectId] as const;
 }
 
-// The recorded approver for dashboard decisions. Matches the CLI's default
-// identity until per-user identity exists in settings; the decision itself is
-// still a distinct durable fact with this identity on it.
-const OPERATOR = "operator";
 
 function approvalLabel(item: WorkItem, t: TFunction): string {
 	switch (item.approvalState) {
@@ -94,9 +90,10 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 
 	const decideMutation = useMutation({
 		mutationFn: async ({ id, decision }: { id: string; decision: "approved" | "rejected" }) => {
+			// No approver named: the daemon records the OS user running it.
 			const { error } = await apiClient.POST("/api/v1/work-items/{id}/approval", {
 				params: { path: { id } },
-				body: { approver: OPERATOR, decision },
+				body: { decision },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 		},

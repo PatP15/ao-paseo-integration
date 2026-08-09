@@ -48,9 +48,10 @@ async function dispatchRemote(input: {
 	if (created.error) throw new Error(apiErrorMessage(created.error));
 	const workItemId = created.data.workItem.id;
 
+	// No approver named: the daemon records the OS user running it.
 	const approved = await apiClient.POST("/api/v1/work-items/{id}/approval", {
 		params: { path: { id: workItemId } },
-		body: { approver: "operator" },
+		body: {},
 	});
 	if (approved.error) throw new Error(apiErrorMessage(approved.error));
 

@@ -190,9 +190,19 @@ export function DispatchWorkItemDialog({
 			key: "mode",
 			label: t("dispatch.mode"),
 			value: mode,
+			// Mode ids come from inspecting a live agent of this provider on the
+			// host (re-derived per discovery, so it cannot drift); a host with no
+			// such agent yet offers only its reported default-mode id.
 			options: [
 				{ value: NONE, label: t("dispatch.providerDefault") },
-				...(providerInfo?.defaultMode ? [{ value: providerInfo.defaultMode, label: providerInfo.defaultMode }] : []),
+				...(providerInfo?.modes.length
+					? providerInfo.modes.map((entry) => ({
+							value: entry.id,
+							label: entry.label ? `${entry.label} (${entry.id})` : entry.id,
+						}))
+					: providerInfo?.defaultMode
+						? [{ value: providerInfo.defaultMode, label: providerInfo.defaultMode }]
+						: []),
 			],
 			placeholder: t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,

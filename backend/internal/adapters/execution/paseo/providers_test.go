@@ -20,6 +20,11 @@ func TestProvidersFetchesModelsForAvailableProvidersOnly(t *testing.T) {
 			ThinkingOptionIDs: []string{"off", "low", "high"}, DefaultThinkingOptionID: "low",
 		}},
 	}
+	client.agents = []Agent{{ID: "agent-9", Provider: "claude/claude-opus-5", Status: "idle"}}
+	client.details["agent-9"] = AgentDetail{
+		ID: "agent-9", Provider: "claude", Status: "idle",
+		AvailableModes: []Mode{{ID: "plan", Label: "Plan Mode"}, {ID: "bypassPermissions", Label: "Bypass"}},
+	}
 	backend := newBackend(client, newMemoryExecutionStore(nil), func() time.Time { return backendTestNow })
 
 	providers, err := backend.Providers(context.Background(), "host-1")
@@ -42,6 +47,11 @@ func TestProvidersFetchesModelsForAvailableProvidersOnly(t *testing.T) {
 	}
 	if len(providers[1].Models) != 0 {
 		t.Fatalf("unavailable provider has models: %#v", providers[1].Models)
+	}
+	// Mode ids are learned from inspecting one live agent of the provider —
+	// re-derived per discovery, never a hardcoded label→id table.
+	if len(providers[0].Modes) != 2 || providers[0].Modes[0].ID != "plan" || providers[0].Modes[0].Label != "Plan Mode" {
+		t.Fatalf("claude modes = %#v", providers[0].Modes)
 	}
 	// One models fetch, for the available provider only: each is a ~0.9s CLI
 	// invocation, so an unavailable provider must not cost one.

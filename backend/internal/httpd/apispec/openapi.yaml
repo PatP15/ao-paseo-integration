@@ -3693,6 +3693,8 @@ components:
     ApproveWorkItemRequest:
       properties:
         approver:
+          description: Identity recorded on the decision. Defaults to the OS user
+            running the daemon.
           type: string
         decision:
           description: Approval decision; defaults to approved when omitted.
@@ -3700,8 +3702,6 @@ components:
           - approved
           - rejected
           type: string
-      required:
-      - approver
       type: object
     BrowserCommandRequest:
       properties:
@@ -4073,6 +4073,15 @@ components:
       required:
       - prefs
       type: object
+    ControllersExecutionProviderModeResponse:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      type: object
     ControllersExecutionProviderModelResponse:
       properties:
         defaultThinkingOptionId:
@@ -4109,6 +4118,12 @@ components:
           items:
             $ref: '#/components/schemas/ControllersExecutionProviderModelResponse'
           type: array
+        modes:
+          description: Mode ids with labels, learned from a live agent of this provider
+            on the host. Empty when the host has none yet.
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderModeResponse'
+          type: array
         provider:
           type: string
         status:
@@ -4121,6 +4136,7 @@ components:
       - status
       - enabled
       - modeLabels
+      - modes
       - models
       type: object
     ControllersExecutionScheduleResponse:

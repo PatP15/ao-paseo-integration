@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -345,6 +346,19 @@ func (m maintenanceChannel) WritePrefs(
 		return domain.ExecutionHostPrefs{}, m.typed(host, err)
 	}
 	return prefs, nil
+}
+
+// operatorIdentity is the identity recorded on dashboard decisions when the
+// caller names none: the OS username of whoever runs the daemon. The fallback
+// matches the CLI's historical default so an unresolvable user never blocks a
+// decision.
+func operatorIdentity() string {
+	if current, err := user.Current(); err == nil {
+		if name := strings.TrimSpace(current.Username); name != "" {
+			return name
+		}
+	}
+	return "operator"
 }
 
 // newQuestionResolvedHook closes the notification for one answered question.

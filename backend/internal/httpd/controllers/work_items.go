@@ -117,9 +117,10 @@ type ListWorkItemsQuery struct {
 
 // ApproveWorkItemRequest records the human responsible for the approval
 // decision. Decision defaults to approved when absent so existing callers
-// keep working.
+// keep working; an absent approver is recorded as the OS user running the
+// daemon.
 type ApproveWorkItemRequest struct {
-	Approver string `json:"approver"`
+	Approver string `json:"approver,omitempty" description:"Identity recorded on the decision. Defaults to the OS user running the daemon."`
 	Decision string `json:"decision,omitempty" enum:"approved,rejected" description:"Approval decision; defaults to approved when omitted."`
 }
 

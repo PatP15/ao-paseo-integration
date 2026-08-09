@@ -1248,7 +1248,8 @@ export interface components {
             answeredBy?: string;
         };
         ApproveWorkItemRequest: {
-            approver: string;
+            /** @description Identity recorded on the decision. Defaults to the OS user running the daemon. */
+            approver?: string;
             /**
              * @description Approval decision; defaults to approved when omitted.
              * @enum {string}
@@ -1407,6 +1408,10 @@ export interface components {
         ControllersExecutionPreferencesEnvelope: {
             prefs: components["schemas"]["ControllersExecutionHostPrefsResponse"];
         };
+        ControllersExecutionProviderModeResponse: {
+            id: string;
+            label?: string;
+        };
         ControllersExecutionProviderModelResponse: {
             defaultThinkingOptionId?: string;
             description?: string;
@@ -1421,6 +1426,8 @@ export interface components {
             modeLabels: string[];
             /** @description Populated for available providers only. */
             models: components["schemas"]["ControllersExecutionProviderModelResponse"][];
+            /** @description Mode ids with labels, learned from a live agent of this provider on the host. Empty when the host has none yet. */
+            modes: components["schemas"]["ControllersExecutionProviderModeResponse"][];
             provider: string;
             /** @description Provider availability as the host daemon reports it, e.g. available or unavailable. */
             status: string;

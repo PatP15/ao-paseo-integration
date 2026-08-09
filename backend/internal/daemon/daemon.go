@@ -274,6 +274,11 @@ func Run() error {
 	execSvc.SetQuestionResolvedHook(newQuestionResolvedHook(notificationWriter, log))
 	execSvc.SetScheduleChannel(newScheduleChannel(executionClients))
 	execSvc.SetMaintenanceChannel(maintenanceChannel{backends: executionClients})
+	// Decisions made from the dashboard carry the identity of whoever runs the
+	// daemon; explicit identities (the CLI's --by) always win over this default.
+	execSvc.SetDefaultActor(operatorIdentity)
+	workItemSvc := workitemsvc.New(store)
+	workItemSvc.SetDefaultApprover(operatorIdentity)
 	// Dispatch settings are validated against the same discovery (and its
 	// cache) the providers endpoint serves, so what the UI offered and what
 	// dispatch accepts can never be two different vocabularies.
@@ -313,7 +318,7 @@ func Run() error {
 		Execution:         execSvc,
 		ExecutionDispatch: dispatchSvc,
 		ExecutionSecrets:  secretstore.New(cfg.DataDir),
-		WorkItems:         workitemsvc.New(store),
+		WorkItems:         workItemSvc,
 	})
 	if err != nil {
 		stop()

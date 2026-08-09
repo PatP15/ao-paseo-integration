@@ -83,7 +83,12 @@ type ExecutionDispatchSeed struct {
 	Model              string
 	Mode               string
 	ThinkingOptionID   string
-	Prompt             string
+	// SkillPolicyOverrides are recorded as audit events in the dispatch
+	// transaction; they never change what launches. Actor is the identity the
+	// audit rows carry.
+	SkillPolicyOverrides []string
+	Actor                string
+	Prompt               string
 	IntentID           ExecutionIntentID
 	Attempt            int
 	DispatchGeneration int

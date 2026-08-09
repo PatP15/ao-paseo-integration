@@ -285,6 +285,7 @@ func Run() error {
 	// dispatch accepts can never be two different vocabularies.
 	dispatchSvc := dispatchsvc.New(store)
 	dispatchSvc.SetSettingsValidator(execSvc.ValidateDispatchSettings)
+	dispatchSvc.SetDefaultActor(operatorIdentity)
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,

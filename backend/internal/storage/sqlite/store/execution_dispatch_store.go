@@ -120,6 +120,29 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 		if err := q.InsertExecutionCommand(ctx, executionCommandParams(command)); err != nil {
 			return fmt.Errorf("insert execution command: %w", err)
 		}
+		// Policy-gated skill overrides are durable audit facts committed with
+		// the dispatch itself: queryable later, and gone if the dispatch rolls
+		// back. They alter nothing about the launch.
+		actor := seed.Actor
+		if actor == "" {
+			actor = "human"
+		}
+		for _, skill := range seed.SkillPolicyOverrides {
+			detail, err := json.Marshal(map[string]string{
+				"skill": skill, "hostId": string(seed.HostID), "sessionId": string(rec.ID),
+			})
+			if err != nil {
+				return fmt.Errorf("marshal skill override audit: %w", err)
+			}
+			if _, err := q.InsertAuditEvent(ctx, gen.InsertAuditEventParams{
+				ID: fmt.Sprintf("%s:skill-override:%s", seed.CommandID, skill),
+				EventType: "execution.skill_policy_override", ActorType: "human", ActorID: actor,
+				SubjectType: "work_item", SubjectID: seed.WorkItemID,
+				DetailJson: string(detail), CreatedAt: encodeExecutionTime(now),
+			}); err != nil {
+				return fmt.Errorf("insert skill override audit: %w", err)
+			}
+		}
 		result = domain.ExecutionDispatch{Session: rec, Binding: binding, Command: command}
 		return nil
 	})

@@ -4229,6 +4229,12 @@ components:
           description: Provider feature toggles. Not supported by the pinned Paseo
             CLI; any entry is refused.
           type: object
+        skillPolicyOverrides:
+          description: Policy-gated skills explicitly enabled for this task; each
+            is recorded in the audit log with the dispatch.
+          items:
+            type: string
+          type: array
         thinkingOptionId:
           description: Thinking option id from the host's provider discovery; requires
             model to be set.
@@ -4403,8 +4409,11 @@ components:
           type: string
         name:
           type: string
+        policyGated:
+          type: boolean
       required:
       - name
+      - policyGated
       type: object
     ControllersExecutionInstructionsEnvelope:
       properties:

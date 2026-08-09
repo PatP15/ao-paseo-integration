@@ -67,6 +67,8 @@ export function DispatchWorkItemDialog({
 			setThinking(NONE);
 			setProgress(null);
 			setCommandState(null);
+			setOverrides([]);
+			setPendingGate(null);
 		}
 	}, [open, workItem]);
 
@@ -110,6 +112,43 @@ export function DispatchWorkItemDialog({
 	const providerInfo = providers.find((entry) => entry.provider === provider);
 	const modelInfo = providerInfo?.models.find((entry) => entry.id === model);
 
+	// The host's cached skill inventory drives insertable prompt snippets. A
+	// host never inventoried degrades to a plain prompt box — absence of
+	// affordances, never a blocked dispatch.
+	const inventoryQuery = useQuery({
+		queryKey: ["execution-inventory", hostId],
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/execution/hosts/{hostId}/inventory", {
+				params: { path: { hostId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+			return data.skills;
+		},
+		enabled: open && hostId !== "",
+		retry: 1,
+	});
+	const skills = inventoryQuery.data ?? [];
+	const [pendingGate, setPendingGate] = useState<string | null>(null);
+	const [overrides, setOverrides] = useState<string[]>([]);
+
+	const insertSkill = (skill: { name: string; description?: string; policyGated: boolean }) => {
+		if (skill.policyGated && !overrides.includes(skill.name)) {
+			setPendingGate(skill.name);
+			return;
+		}
+		appendSkillSnippet(skill);
+	};
+	const appendSkillSnippet = (skill: { name: string; description?: string }) => {
+		setPendingGate(null);
+		setPrompt(
+			(current) =>
+				`${current.trimEnd()}\n\n${t("dispatch.skillSnippet", {
+					name: skill.name,
+					description: skill.description || skill.name,
+				})}\n`,
+		);
+	};
+
 	const dispatchMutation = useMutation({
 		mutationFn: async (): Promise<DispatchResponse> => {
 			if (!workItem || !host) throw new Error(t("dispatch.hostRequired"));
@@ -124,7 +163,12 @@ export function DispatchWorkItemDialog({
 					model: model === NONE ? undefined : model,
 					mode: mode === NONE ? undefined : mode,
 					settings:
-						thinking === NONE || model === NONE ? undefined : { thinkingOptionId: thinking },
+						(thinking !== NONE && model !== NONE) || overrides.length > 0
+							? {
+									thinkingOptionId: thinking !== NONE && model !== NONE ? thinking : undefined,
+									skillPolicyOverrides: overrides.length > 0 ? overrides : undefined,
+								}
+							: undefined,
 					prompt,
 				},
 			});
@@ -309,6 +353,53 @@ export function DispatchWorkItemDialog({
 								</div>
 							))}
 						</div>
+						{skills.length > 0 ? (
+							<div className="flex flex-col gap-1.5">
+								<span className="text-xs font-medium text-settings-label">{t("dispatch.skills")}</span>
+								<div className="flex flex-wrap items-center gap-1.5">
+									{skills.map((skill) => (
+										<button
+											key={skill.name}
+											type="button"
+											className="settings-option-trigger"
+											title={skill.description || skill.name}
+											onClick={() => insertSkill(skill)}
+										>
+											{skill.name}
+											{skill.policyGated ? ` ${t("dispatch.gatedMark")}` : ""}
+										</button>
+									))}
+								</div>
+								<p className="text-xs text-settings-muted">{t("dispatch.skillsHint")}</p>
+								{pendingGate ? (
+									<div className="flex flex-col gap-1.5 rounded-md border border-(--color-border-settings-input) px-3 py-2">
+										<p className="text-xs text-warning">
+											{t("dispatch.gateExplanation", { name: pendingGate })}
+										</p>
+										<div className="flex items-center gap-2">
+											<button
+												type="button"
+												className="settings-option-trigger"
+												onClick={() => {
+													setOverrides((current) => [...current, pendingGate]);
+													const skill = skills.find((entry) => entry.name === pendingGate);
+													if (skill) appendSkillSnippet(skill);
+												}}
+											>
+												{t("dispatch.gateEnable")}
+											</button>
+											<button
+												type="button"
+												className="settings-option-trigger"
+												onClick={() => setPendingGate(null)}
+											>
+												{t("dispatch.gateCancel")}
+											</button>
+										</div>
+									</div>
+								) : null}
+							</div>
+						) : null}
 						<div className="flex flex-col gap-1.5">
 							<label className="text-xs font-medium text-settings-label" htmlFor="dispatchBranch">
 								{t("dispatch.branch")}

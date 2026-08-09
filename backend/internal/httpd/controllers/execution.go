@@ -270,7 +270,7 @@ func (c *ExecutionController) syncSkill(w http.ResponseWriter, r *http.Request) 
 	}
 	skills := make([]ExecutionHostSkillResponse, 0, len(inventory.Skills))
 	for _, skill := range inventory.Skills {
-		skills = append(skills, ExecutionHostSkillResponse{Name: skill.Name, Description: skill.Description})
+		skills = append(skills, hostSkillResponse(skill))
 	}
 	envelope.WriteJSON(w, http.StatusOK, ExecutionHostInventoryResponse{
 		Skills: skills, SkillsAsOf: inventory.SkillsAsOf, Refreshed: true,
@@ -287,6 +287,17 @@ type ExecutionInventoryQuery struct {
 type ExecutionHostSkillResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// PolicyGated marks skills that orchestrate through Paseo (spawning
+	// agents, scheduling): AO owns scheduling and drives no-MCP daemons (D6),
+	// so these are off by default at dispatch and badged in host detail.
+	PolicyGated bool `json:"policyGated"`
+}
+
+func hostSkillResponse(skill domain.ExecutionHostSkill) ExecutionHostSkillResponse {
+	return ExecutionHostSkillResponse{
+		Name: skill.Name, Description: skill.Description,
+		PolicyGated: domain.SkillPolicyGated(skill.Name, skill.Description),
+	}
 }
 
 // ExecutionHostPrefsResponse is the host's orchestration preferences as last
@@ -333,7 +344,7 @@ func (c *ExecutionController) hostInventory(w http.ResponseWriter, r *http.Reque
 	}
 	skills := make([]ExecutionHostSkillResponse, 0, len(inventory.Skills))
 	for _, skill := range inventory.Skills {
-		skills = append(skills, ExecutionHostSkillResponse{Name: skill.Name, Description: skill.Description})
+		skills = append(skills, hostSkillResponse(skill))
 	}
 	out := ExecutionHostInventoryResponse{
 		Skills: skills, SkillsAsOf: inventory.SkillsAsOf, Refreshed: inventory.FromLiveProbe,
@@ -888,6 +899,7 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 	if in.Settings != nil {
 		req.ThinkingOptionID = strings.TrimSpace(in.Settings.ThinkingOptionID)
 		req.Features = in.Settings.Features
+		req.SkillPolicyOverrides = in.Settings.SkillPolicyOverrides
 	}
 	result, err := c.Dispatch.Dispatch(r.Context(), req)
 	if err != nil {
@@ -1129,6 +1141,9 @@ type DispatchSettings struct {
 	// Features are refused by the pinned Paseo CLI (no discovery, no run flag);
 	// the field exists so the request shape is stable when the CLI grows one.
 	Features map[string]bool `json:"features,omitempty" description:"Provider feature toggles. Not supported by the pinned Paseo CLI; any entry is refused."`
+	// SkillPolicyOverrides are audited, never forwarded: they record which
+	// policy-gated skills the operator explicitly enabled for this task.
+	SkillPolicyOverrides []string `json:"skillPolicyOverrides,omitempty" description:"Policy-gated skills explicitly enabled for this task; each is recorded in the audit log with the dispatch."`
 }
 
 // DispatchExecutionResponse reports what AO committed. Nothing remote exists

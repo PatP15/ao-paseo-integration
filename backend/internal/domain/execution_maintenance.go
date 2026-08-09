@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ExecutionHostSkill is one skill installed under ~/.claude/skills on a host,
 // as the maintenance channel captured it.
@@ -9,6 +12,29 @@ type ExecutionHostSkill struct {
 	Name        string
 	Description string
 	CapturedAt  time.Time
+}
+
+// SkillPolicyGated reports whether a skill orchestrates THROUGH Paseo —
+// spawning agents, scheduling, delegating — which decision D6 gates: AO owns
+// scheduling and drives daemons running without MCP tool injection, so such a
+// skill can only mislead an agent into asking for what the host refuses.
+// Deliberately conservative and centralized so every surface (dispatch
+// affordances, host detail badges) gates the same set.
+func SkillPolicyGated(name, description string) bool {
+	switch name {
+	case "paseo-loop", "paseo-handoff", "paseo-committee":
+		return true
+	}
+	lowered := strings.ToLower(description)
+	if !strings.Contains(lowered, "agent") {
+		return false
+	}
+	for _, marker := range []string{"spawn", "schedule", "delegat", "orchestrat", "hand off", "handoff", "committee", "loop until"} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecutionHostPrefs is one AO-managed file on the host as the maintenance

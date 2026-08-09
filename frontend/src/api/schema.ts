@@ -1418,6 +1418,8 @@ export interface components {
             features?: {
                 [key: string]: boolean;
             };
+            /** @description Policy-gated skills explicitly enabled for this task; each is recorded in the audit log with the dispatch. */
+            skillPolicyOverrides?: string[];
             /** @description Thinking option id from the host's provider discovery; requires model to be set. */
             thinkingOptionId?: string;
         };
@@ -1491,6 +1493,7 @@ export interface components {
         ControllersExecutionHostSkillResponse: {
             description?: string;
             name: string;
+            policyGated: boolean;
         };
         ControllersExecutionInstructionsEnvelope: {
             /** @description Absent when the host has never been read. */

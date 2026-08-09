@@ -37,7 +37,12 @@ type Request struct {
 	// Paseo CLI has no feature discovery or forwarding surface, so any entry is
 	// refused; the field exists so the API shape is stable when the CLI grows one.
 	Features map[string]bool
-	Prompt   string
+	// SkillPolicyOverrides names policy-gated skills the operator explicitly
+	// enabled for this task. They change nothing about the launch — a skill
+	// reference is prompt text — but each override is recorded in the audit
+	// log alongside the dispatch (F8).
+	SkillPolicyOverrides []string
+	Prompt               string
 }
 
 // SettingsValidator checks dispatch settings against what provider discovery
@@ -57,6 +62,14 @@ type Service struct {
 	// discovery for the selected host. When unset, a request carrying settings
 	// is refused outright: forwarding an unvalidated id is never an option.
 	settingsValidator SettingsValidator
+	// defaultActor, when set, names the identity audit rows carry when the
+	// caller supplied none.
+	defaultActor func() string
+}
+
+// SetDefaultActor installs the identity recorded on dispatch audit facts.
+func (s *Service) SetDefaultActor(identity func() string) {
+	s.defaultActor = identity
 }
 
 // SetSettingsValidator installs discovery-backed settings validation. Set
@@ -96,9 +109,13 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 			return domain.ExecutionDispatch{}, err
 		}
 	}
+	actor := ""
+	if s.defaultActor != nil {
+		actor = strings.TrimSpace(s.defaultActor())
+	}
 	now := s.now().UTC()
 	return s.store.CreateExecutionDispatch(ctx, domain.ExecutionDispatchSeed{
-		WorkItemID: req.WorkItemID,
+		WorkItemID: req.WorkItemID, Actor: actor,
 		Session: domain.SessionRecord{
 			ProjectID: req.ProjectID, IssueID: req.IssueID, Kind: domain.KindWorker,
 			Harness: req.Harness, DisplayName: req.DisplayName,
@@ -106,10 +123,21 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 		HostID: selection.Host.ID, BoundServerID: selection.Host.ServerID,
 		HostRepoPath: selection.Binding.HostRepoPath, BaseBranch: selection.Binding.BaseBranch,
 		Branch: req.Branch, Provider: req.Provider, Model: req.Model, Mode: req.Mode,
-		ThinkingOptionID: req.ThinkingOptionID, Prompt: req.Prompt,
+		ThinkingOptionID: req.ThinkingOptionID, SkillPolicyOverrides: normalizeOverrides(req.SkillPolicyOverrides),
+		Prompt: req.Prompt,
 		IntentID: domain.ExecutionIntentID(s.newID()), Attempt: 1, DispatchGeneration: 1,
 		LaunchID: s.newID(), CommandID: s.newID(), CreatedAt: now,
 	})
+}
+
+func normalizeOverrides(overrides []string) []string {
+	out := make([]string, 0, len(overrides))
+	for _, name := range overrides {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func validateRequest(req Request) error {

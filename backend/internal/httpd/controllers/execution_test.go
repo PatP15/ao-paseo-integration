@@ -46,6 +46,53 @@ type fakeExecutionService struct {
 	inventory        executionsvc.HostInventory
 	inventoryRefresh bool
 	putPrefs         struct{ content, baseSHA string }
+
+	instructions        domain.ExecutionHostPrefs
+	instructionsFound   bool
+	projectInstructions executionsvc.ProjectInstructions
+	syncedBinding       executionsvc.BindingDrift
+	syncedSkill         struct{ name, source string }
+}
+
+func (f *fakeExecutionService) Instructions(_ context.Context, id domain.ExecutionHostID, refresh bool) (domain.ExecutionHostPrefs, bool, error) {
+	f.providersHostID = id
+	f.inventoryRefresh = refresh
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, false, f.err
+	}
+	return f.instructions, f.instructionsFound, nil
+}
+
+func (f *fakeExecutionService) PutInstructions(_ context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.providersHostID = id
+	f.putPrefs.content, f.putPrefs.baseSHA = content, baseSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: id, Content: content, SHA256: "confirmed-hash", Exists: true}, nil
+}
+
+func (f *fakeExecutionService) ProjectInstructionsView(_ context.Context, projectID domain.ProjectID) (executionsvc.ProjectInstructions, error) {
+	if f.err != nil {
+		return executionsvc.ProjectInstructions{}, f.err
+	}
+	return f.projectInstructions, nil
+}
+
+func (f *fakeExecutionService) SyncBinding(_ context.Context, projectID domain.ProjectID, hostID domain.ExecutionHostID) (executionsvc.BindingDrift, error) {
+	if f.err != nil {
+		return executionsvc.BindingDrift{}, f.err
+	}
+	return f.syncedBinding, nil
+}
+
+func (f *fakeExecutionService) SyncSkill(_ context.Context, id domain.ExecutionHostID, name, source string) (executionsvc.HostInventory, error) {
+	f.providersHostID = id
+	f.syncedSkill.name, f.syncedSkill.source = name, source
+	if f.err != nil {
+		return executionsvc.HostInventory{}, f.err
+	}
+	return f.inventory, nil
 }
 
 func (f *fakeExecutionService) Inventory(_ context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error) {
@@ -258,6 +305,10 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodDelete, "/api/v1/execution/hosts/worker-1/schedules/sch-1", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/inventory", ""},
 		{http.MethodPut, "/api/v1/execution/hosts/worker-1/preferences", `{}`},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/instructions", ""},
+		{http.MethodPut, "/api/v1/execution/hosts/worker-1/instructions", `{}`},
+		{http.MethodPost, "/api/v1/execution/bindings/project-1/worker-1/sync", ""},
+		{http.MethodPost, "/api/v1/execution/hosts/worker-1/skills/advisor/sync", `{}`},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},

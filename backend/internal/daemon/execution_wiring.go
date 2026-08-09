@@ -361,6 +361,88 @@ func operatorIdentity() string {
 	return "operator"
 }
 
+// InstructionsChannel (U9a): the same resolve-and-type pattern for the
+// instruction-file, repo, and skill operations.
+
+func (m maintenanceChannel) ReadInstructions(ctx context.Context, host domain.ExecutionHost) (domain.ExecutionHostPrefs, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	instructions, err := backend.HostInstructions(ctx, host.ID)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, m.typed(host, err)
+	}
+	return instructions, nil
+}
+
+func (m maintenanceChannel) WriteInstructions(
+	ctx context.Context, host domain.ExecutionHost, content []byte, expectSHA256 string,
+) (domain.ExecutionHostPrefs, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	instructions, err := backend.WriteHostInstructions(ctx, host.ID, content, expectSHA256)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, m.typed(host, err)
+	}
+	return instructions, nil
+}
+
+func (m maintenanceChannel) RepoStatus(
+	ctx context.Context, host domain.ExecutionHost, repoPath, baseBranch string,
+) (domain.ExecutionRepoStatus, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return domain.ExecutionRepoStatus{}, err
+	}
+	status, err := backend.HostRepoStatus(ctx, host.ID, repoPath, baseBranch)
+	if err != nil {
+		return domain.ExecutionRepoStatus{}, m.typed(host, err)
+	}
+	return status, nil
+}
+
+func (m maintenanceChannel) RepoFF(ctx context.Context, host domain.ExecutionHost, repoPath string) (string, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return "", err
+	}
+	head, err := backend.HostRepoFF(ctx, host.ID, repoPath)
+	if err != nil {
+		return "", m.typed(host, err)
+	}
+	return head, nil
+}
+
+func (m maintenanceChannel) SkillRead(
+	ctx context.Context, host domain.ExecutionHost, name string,
+) ([]domain.ExecutionSkillFile, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	files, err := backend.HostSkillRead(ctx, host.ID, name)
+	if err != nil {
+		return nil, m.typed(host, err)
+	}
+	return files, nil
+}
+
+func (m maintenanceChannel) SkillPush(
+	ctx context.Context, host domain.ExecutionHost, name string, files []domain.ExecutionSkillFile,
+) error {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return err
+	}
+	if err := backend.HostSkillPush(ctx, host.ID, name, files); err != nil {
+		return m.typed(host, err)
+	}
+	return nil
+}
+
 // newQuestionResolvedHook closes the notification for one answered question.
 func newQuestionResolvedHook(
 	notifications *notify.Manager,

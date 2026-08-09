@@ -288,3 +288,94 @@ func TestValidateDispatchSettingsRefusesUndiscoveredIDs(t *testing.T) {
 		t.Fatalf("unknown thinking option error = %v", err)
 	}
 }
+
+type fakeInstructions struct {
+	fakeMaintenance
+	repoStatus domain.ExecutionRepoStatus
+	repoErr    error
+	ffHead     string
+	ffErr      error
+	pushed     struct {
+		name  string
+		files int
+	}
+	sourceFiles []domain.ExecutionSkillFile
+}
+
+func (f *fakeInstructions) ReadInstructions(context.Context, domain.ExecutionHost) (domain.ExecutionHostPrefs, error) {
+	return f.prefs, f.err
+}
+
+func (f *fakeInstructions) WriteInstructions(_ context.Context, _ domain.ExecutionHost, content []byte, expectSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.written, f.expectSHA = content, expectSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: "worker-1", Content: string(content), SHA256: "confirmed", Exists: true}, nil
+}
+
+func (f *fakeInstructions) RepoStatus(context.Context, domain.ExecutionHost, string, string) (domain.ExecutionRepoStatus, error) {
+	return f.repoStatus, f.repoErr
+}
+
+func (f *fakeInstructions) RepoFF(context.Context, domain.ExecutionHost, string) (string, error) {
+	return f.ffHead, f.ffErr
+}
+
+func (f *fakeInstructions) SkillRead(context.Context, domain.ExecutionHost, string) ([]domain.ExecutionSkillFile, error) {
+	return f.sourceFiles, f.err
+}
+
+func (f *fakeInstructions) SkillPush(_ context.Context, _ domain.ExecutionHost, name string, files []domain.ExecutionSkillFile) error {
+	f.pushed.name, f.pushed.files = name, len(files)
+	return f.err
+}
+
+func TestSyncSkillIsConfirmedByTheHostsOwnReInventory(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+	if _, err := svc.RegisterHost(ctx, validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+	channel := &fakeInstructions{}
+	channel.sourceFiles = []domain.ExecutionSkillFile{{Path: "SKILL.md", Content: []byte("---\nname: advisor\n---\n")}}
+	// The confirming re-inventory does NOT list the skill: the sync must
+	// refuse to claim success.
+	channel.skills = nil
+	svc.SetInstructionsChannel(channel)
+	svc.SetMaintenanceChannel(&channel.fakeMaintenance)
+
+	if _, err := svc.SyncSkill(ctx, "worker-1", "advisor", "worker-1"); errCode(t, err) != "SKILL_SYNC_UNCONFIRMED" {
+		t.Fatalf("unconfirmed sync error = %v", err)
+	}
+	if channel.pushed.name != "advisor" || channel.pushed.files != 1 {
+		t.Fatalf("pushed = %+v", channel.pushed)
+	}
+
+	channel.skills = []domain.ExecutionHostSkill{{HostID: "worker-1", Name: "advisor"}}
+	inventory, err := svc.SyncSkill(ctx, "worker-1", "advisor", "worker-1")
+	if err != nil || len(inventory.Skills) != 1 {
+		t.Fatalf("confirmed sync = (%+v, %v)", inventory, err)
+	}
+	if _, err := svc.SyncSkill(ctx, "worker-1", "../evil", "worker-1"); errCode(t, err) != "SKILL_NAME_INVALID" {
+		t.Fatalf("bad name error = %v", err)
+	}
+}
+
+func TestDiffInstructionHashesFlagsBothDirections(t *testing.T) {
+	canonical := map[string]string{"CLAUDE.md": "aaa", "AGENTS.md": "bbb"}
+	drifted, inSync := diffInstructionHashes(canonical, []domain.ExecutionRepoFile{
+		{Path: "CLAUDE.md", SHA256: "aaa"},
+		{Path: "AGENTS.md", SHA256: "STALE"},
+		{Path: ".claude/skills/extra/SKILL.md", SHA256: "ccc"},
+	})
+	if inSync || len(drifted) != 2 || drifted[0] != ".claude/skills/extra/SKILL.md" || drifted[1] != "AGENTS.md" {
+		t.Fatalf("drift = (%v, %v)", drifted, inSync)
+	}
+	if drifted, inSync := diffInstructionHashes(canonical, []domain.ExecutionRepoFile{
+		{Path: "CLAUDE.md", SHA256: "aaa"}, {Path: "AGENTS.md", SHA256: "bbb"},
+	}); !inSync || len(drifted) != 0 {
+		t.Fatalf("in-sync drift = (%v, %v)", drifted, inSync)
+	}
+}

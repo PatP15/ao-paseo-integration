@@ -81,6 +81,46 @@ func (s *Store) UpsertExecutionHostPrefs(ctx context.Context, prefs domain.Execu
 	return nil
 }
 
+// UpsertExecutionHostInstructions stores the confirmed machine-scope
+// CLAUDE.md copy and hash.
+func (s *Store) UpsertExecutionHostInstructions(ctx context.Context, instructions domain.ExecutionHostPrefs) error {
+	if instructions.HostID == "" || instructions.SHA256 == "" {
+		return fmt.Errorf("upsert host instructions: host id and sha256 are required")
+	}
+	exists := int64(0)
+	if instructions.Exists {
+		exists = 1
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpsertExecutionHostInstructions(ctx, gen.UpsertExecutionHostInstructionsParams{
+		HostID: string(instructions.HostID), Content: instructions.Content, Sha256: instructions.SHA256,
+		FileExists: exists, ConfirmedAt: encodeExecutionTime(instructions.ConfirmedAt),
+	}); err != nil {
+		return fmt.Errorf("upsert host %s instructions: %w", instructions.HostID, err)
+	}
+	return nil
+}
+
+// GetExecutionHostInstructions returns the confirmed machine CLAUDE.md copy.
+func (s *Store) GetExecutionHostInstructions(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error) {
+	row, err := s.qr.GetExecutionHostInstructions(ctx, string(hostID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ExecutionHostPrefs{}, false, nil
+	}
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, false, fmt.Errorf("get host %s instructions: %w", hostID, err)
+	}
+	confirmedAt, err := decodeExecutionTime(row.ConfirmedAt)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, false, fmt.Errorf("decode host %s instructions confirmed_at: %w", hostID, err)
+	}
+	return domain.ExecutionHostPrefs{
+		HostID: domain.ExecutionHostID(row.HostID), Content: row.Content, SHA256: row.Sha256,
+		Exists: row.FileExists != 0, ConfirmedAt: confirmedAt,
+	}, true, nil
+}
+
 // GetExecutionHostPrefs returns the confirmed preferences copy, if any.
 func (s *Store) GetExecutionHostPrefs(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error) {
 	row, err := s.qr.GetExecutionHostPrefs(ctx, string(hostID))

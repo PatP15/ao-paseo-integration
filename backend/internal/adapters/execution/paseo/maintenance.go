@@ -60,7 +60,7 @@ var newMaintenanceNonce = func() (string, error) {
 // HostInventory runs the inventory verb and returns the host's installed
 // skills, name-sorted.
 func (b *Backend) HostInventory(ctx context.Context, hostID domain.ExecutionHostID) ([]domain.ExecutionHostSkill, error) {
-	result, err := b.runMaintenance(ctx, hostID, "inventory", nil)
+	result, err := b.runMaintenance(ctx, hostID, "inventory", nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (b *Backend) HostInventory(ctx context.Context, hostID domain.ExecutionHost
 // HostPrefs runs the prefs-read verb and returns the preferences file exactly
 // as it is on the host, with its hash.
 func (b *Backend) HostPrefs(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, error) {
-	result, err := b.runMaintenance(ctx, hostID, "prefs-read", nil)
+	result, err := b.runMaintenance(ctx, hostID, "prefs-read", nil, nil)
 	if err != nil {
 		return domain.ExecutionHostPrefs{}, err
 	}
@@ -107,11 +107,177 @@ func (b *Backend) WriteHostPrefs(
 		"--sha256", sha256HexOf(content),
 		"--expect-sha256", strings.ToLower(strings.TrimSpace(expectSHA256)),
 	}
-	result, err := b.runMaintenance(ctx, hostID, "prefs-write", args)
+	result, err := b.runMaintenance(ctx, hostID, "prefs-write", args, nil)
 	if err != nil {
 		return domain.ExecutionHostPrefs{}, err
 	}
 	return assemblePrefs(hostID, result)
+}
+
+// HostInstructions reads the machine-scope CLAUDE.md through the channel.
+func (b *Backend) HostInstructions(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, error) {
+	result, err := b.runMaintenance(ctx, hostID, "file-read", []string{"--target", "machine-claude"}, nil)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	return assemblePrefs(hostID, result)
+}
+
+// WriteHostInstructions replaces the machine-scope CLAUDE.md under the same
+// drift precondition and confirm-read as the preferences write.
+func (b *Backend) WriteHostInstructions(
+	ctx context.Context, hostID domain.ExecutionHostID, content []byte, expectSHA256 string,
+) (domain.ExecutionHostPrefs, error) {
+	if len(content) == 0 {
+		return domain.ExecutionHostPrefs{}, fmt.Errorf("instructions content is empty")
+	}
+	if len(content) > paseoevent.MaxPrefsFileBytes {
+		return domain.ExecutionHostPrefs{}, fmt.Errorf("instructions content is %d bytes, over the %d byte cap",
+			len(content), paseoevent.MaxPrefsFileBytes)
+	}
+	args := []string{
+		"--target", "machine-claude",
+		"--expect-sha256", strings.ToLower(strings.TrimSpace(expectSHA256)),
+	}
+	build := func(nonce string) ([]string, error) {
+		lines, seq, err := paseoevent.EncodeFileChunkEvents(
+			nonce, paseoevent.MaintenancePushFile, "content", content, 1)
+		if err != nil {
+			return nil, err
+		}
+		end, err := paseoevent.EncodeMaintenanceEvent(nonce, seq, paseoevent.MaintenancePushEnd,
+			paseoevent.MaintenancePushEndPayload{Files: 1})
+		if err != nil {
+			return nil, err
+		}
+		return append(lines, end...), nil
+	}
+	result, err := b.runMaintenance(ctx, hostID, "file-write", args, build)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	return assemblePrefs(hostID, result)
+}
+
+// HostRepoStatus hashes one checkout's instruction files at its base branch.
+func (b *Backend) HostRepoStatus(
+	ctx context.Context, hostID domain.ExecutionHostID, repoPath, baseBranch string,
+) (domain.ExecutionRepoStatus, error) {
+	if err := validateHostPathArg(repoPath); err != nil {
+		return domain.ExecutionRepoStatus{}, err
+	}
+	if err := validateHostNameArg(baseBranch); err != nil {
+		return domain.ExecutionRepoStatus{}, err
+	}
+	result, err := b.runMaintenance(ctx, hostID, "repo-status",
+		[]string{"--repo", repoPath, "--base", baseBranch}, nil)
+	if err != nil {
+		return domain.ExecutionRepoStatus{}, err
+	}
+	if result.Done.Count != len(result.RepoFiles) {
+		return domain.ExecutionRepoStatus{}, fmt.Errorf("repo status reported %d files but carried %d",
+			result.Done.Count, len(result.RepoFiles))
+	}
+	status := domain.ExecutionRepoStatus{Head: result.Done.Head}
+	for _, file := range result.RepoFiles {
+		status.Files = append(status.Files, domain.ExecutionRepoFile{Path: file.Path, SHA256: file.SHA256})
+	}
+	return status, nil
+}
+
+// HostRepoFF fast-forwards one checkout; anything else is a typed refusal
+// carrying git's own words.
+func (b *Backend) HostRepoFF(ctx context.Context, hostID domain.ExecutionHostID, repoPath string) (string, error) {
+	if err := validateHostPathArg(repoPath); err != nil {
+		return "", err
+	}
+	result, err := b.runMaintenance(ctx, hostID, "repo-ff", []string{"--repo", repoPath}, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.Done.Head, nil
+}
+
+// HostSkillRead fetches one installed skill's files from the host.
+func (b *Backend) HostSkillRead(
+	ctx context.Context, hostID domain.ExecutionHostID, name string,
+) ([]domain.ExecutionSkillFile, error) {
+	if err := validateHostNameArg(name); err != nil {
+		return nil, err
+	}
+	result, err := b.runMaintenance(ctx, hostID, "skill-read", []string{"--name", name}, nil)
+	if err != nil {
+		return nil, err
+	}
+	assembled, err := paseoevent.AssembleFileChunks(result.FileChunks)
+	if err != nil {
+		return nil, err
+	}
+	if result.Done.Count != len(assembled) {
+		return nil, fmt.Errorf("skill read reported %d files but carried %d", result.Done.Count, len(assembled))
+	}
+	files := make([]domain.ExecutionSkillFile, 0, len(assembled))
+	for _, file := range assembled {
+		files = append(files, domain.ExecutionSkillFile{Path: file.Path, Content: file.Content})
+	}
+	return files, nil
+}
+
+// HostSkillPush installs one skill directory on the host by typing its files
+// into the maintenance terminal as inbound frames; the worker verifies every
+// hash before the staged directory atomically replaces the old one.
+func (b *Backend) HostSkillPush(
+	ctx context.Context, hostID domain.ExecutionHostID, name string, files []domain.ExecutionSkillFile,
+) error {
+	if err := validateHostNameArg(name); err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("skill %s has no files to push", name)
+	}
+	return b.runMaintenancePush(ctx, hostID, name, files)
+}
+
+func (b *Backend) runMaintenancePush(
+	ctx context.Context, hostID domain.ExecutionHostID, name string, files []domain.ExecutionSkillFile,
+) error {
+	// The input frames are nonce-scoped like everything else; encoding happens
+	// after runMaintenance mints the nonce, so the input builder is a closure.
+	build := func(nonce string) ([]string, error) {
+		var lines []string
+		seq := 1
+		for _, file := range files {
+			encoded, next, err := paseoevent.EncodeFileChunkEvents(
+				nonce, paseoevent.MaintenancePushFile, file.Path, file.Content, seq)
+			if err != nil {
+				return nil, err
+			}
+			lines = append(lines, encoded...)
+			seq = next
+		}
+		end, err := paseoevent.EncodeMaintenanceEvent(nonce, seq, paseoevent.MaintenancePushEnd,
+			paseoevent.MaintenancePushEndPayload{Files: len(files)})
+		if err != nil {
+			return nil, err
+		}
+		return append(lines, end...), nil
+	}
+	_, err := b.runMaintenance(ctx, hostID, "skill-push", []string{"--name", name}, build)
+	return err
+}
+
+func validateHostPathArg(path string) error {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, " \t\r\n") {
+		return fmt.Errorf("host path %q must be absolute with no whitespace", path)
+	}
+	return nil
+}
+
+func validateHostNameArg(name string) error {
+	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, " \t\r\n/\\") {
+		return fmt.Errorf("%q is not a valid bare name", name)
+	}
+	return nil
 }
 
 // MaintenanceRefusedError is a worker-side refusal (drift, corruption, cap)
@@ -122,6 +288,7 @@ func (e *MaintenanceRefusedError) Error() string { return "maintenance refused: 
 
 func (b *Backend) runMaintenance(
 	ctx context.Context, hostID domain.ExecutionHostID, verb string, extraArgs []string,
+	buildInput func(nonce string) ([]string, error),
 ) (paseoevent.MaintenanceResult, error) {
 	host, err := b.registeredHost(ctx, hostID)
 	if err != nil {
@@ -188,6 +355,28 @@ func (b *Backend) runMaintenance(
 	}
 	if err := client.SendTerminalKeys(ctx, terminal.ID, "C-c", strings.Join(command, " "), "Enter"); err != nil {
 		return paseoevent.MaintenanceResult{}, fmt.Errorf("start maintenance command on host %s: %w", hostID, err)
+	}
+
+	if buildInput != nil {
+		lines, err := buildInput(nonce)
+		if err != nil {
+			return paseoevent.MaintenanceResult{}, err
+		}
+		// Frames are 76 columns each, far under the PTY's canonical line
+		// limit; batches keep each send-keys argv modest, and the ~1s cost of
+		// each CLI invocation naturally paces input well below what the
+		// reading process drains.
+		const batch = 30
+		for start := 0; start < len(lines); start += batch {
+			end := min(start+batch, len(lines))
+			keys := make([]string, 0, (end-start)*2)
+			for _, line := range lines[start:end] {
+				keys = append(keys, line, "Enter")
+			}
+			if err := client.SendTerminalKeys(ctx, terminal.ID, keys...); err != nil {
+				return paseoevent.MaintenanceResult{}, fmt.Errorf("send maintenance input on host %s: %w", hostID, err)
+			}
+		}
 	}
 
 	for {

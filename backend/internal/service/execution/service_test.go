@@ -36,8 +36,10 @@ type fakeStore struct {
 	eventsSeenAfter string
 	eventsSeenLimit int
 
-	hostSkills map[domain.ExecutionHostID][]domain.ExecutionHostSkill
-	hostPrefs  map[domain.ExecutionHostID]domain.ExecutionHostPrefs
+	hostSkills       map[domain.ExecutionHostID][]domain.ExecutionHostSkill
+	hostPrefs        map[domain.ExecutionHostID]domain.ExecutionHostPrefs
+	hostInstructions map[domain.ExecutionHostID]domain.ExecutionHostPrefs
+	projects         map[string]domain.ProjectRecord
 }
 
 func (f *fakeStore) ReplaceExecutionHostSkills(
@@ -70,6 +72,24 @@ func (f *fakeStore) UpsertExecutionHostPrefs(_ context.Context, prefs domain.Exe
 func (f *fakeStore) GetExecutionHostPrefs(_ context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error) {
 	prefs, ok := f.hostPrefs[hostID]
 	return prefs, ok, nil
+}
+
+func (f *fakeStore) UpsertExecutionHostInstructions(_ context.Context, instructions domain.ExecutionHostPrefs) error {
+	if f.hostInstructions == nil {
+		f.hostInstructions = map[domain.ExecutionHostID]domain.ExecutionHostPrefs{}
+	}
+	f.hostInstructions[instructions.HostID] = instructions
+	return nil
+}
+
+func (f *fakeStore) GetExecutionHostInstructions(_ context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error) {
+	instructions, ok := f.hostInstructions[hostID]
+	return instructions, ok, nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	project, ok := f.projects[id]
+	return project, ok, nil
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {

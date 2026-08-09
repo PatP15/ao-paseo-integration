@@ -161,6 +161,50 @@ func TestMaintenanceBootstrapsTheWorkerHomeFromDoneEvents(t *testing.T) {
 	}
 }
 
+func TestWriteInstructionsSurvivesItsOwnEchoedInputFrames(t *testing.T) {
+	withFixedNonce(t)
+	content := []byte("# Machine rules\nalways run tests\n")
+	// The capture contains what a real PTY shows: AO's echoed inbound push
+	// frames (same nonce, seqs from 1) FOLLOWED by the worker's outbound
+	// confirm-read (also seqs from 1). The outbound must not be dropped as
+	// seq-duplicates of the echo.
+	client := &fakeMaintenanceClient{
+		fakeExecutionClient: newFakeExecutionClient(nil),
+		workspaceID:         "wks-maint",
+		captureLines: framedLines(t, func(out *bytes.Buffer) error {
+			lines, seq, err := paseoevent.EncodeFileChunkEvents(
+				maintenanceTestNonce, paseoevent.MaintenancePushFile, "content", content, 1)
+			if err != nil {
+				return err
+			}
+			end, err := paseoevent.EncodeMaintenanceEvent(maintenanceTestNonce, seq, paseoevent.MaintenancePushEnd,
+				paseoevent.MaintenancePushEndPayload{Files: 1})
+			if err != nil {
+				return err
+			}
+			for _, line := range append(lines, end...) {
+				if _, err := out.WriteString(line + "\n"); err != nil {
+					return err
+				}
+			}
+			return emitTestPrefs(out, maintenanceTestNonce, content)
+		}),
+	}
+	backend := newBackend(client, newMemoryExecutionStore(nil), func() time.Time { return backendTestNow })
+
+	confirmed, err := backend.WriteHostInstructions(context.Background(), "host-1", content, sha256HexOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.Content != string(content) || confirmed.SHA256 != sha256HexOf(content) {
+		t.Fatalf("confirmed = %+v", confirmed)
+	}
+	// The push frames went in as terminal input.
+	if len(client.sentCommands) < 2 || !strings.Contains(client.sentCommands[0], "maintain file-write") {
+		t.Fatalf("sent = %v", client.sentCommands)
+	}
+}
+
 func TestMaintenanceRefusalSurfacesTheWorkerMessage(t *testing.T) {
 	withFixedNonce(t)
 	client := &fakeMaintenanceClient{

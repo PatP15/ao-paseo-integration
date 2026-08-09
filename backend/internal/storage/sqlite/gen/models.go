@@ -95,6 +95,14 @@ type ExecutionHostCapability struct {
 	Capability string
 }
 
+type ExecutionHostInstruction struct {
+	HostID      string
+	Content     string
+	Sha256      string
+	FileExists  int64
+	ConfirmedAt string
+}
+
 type ExecutionHostPref struct {
 	HostID      string
 	Content     string

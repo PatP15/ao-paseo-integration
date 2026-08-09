@@ -2,6 +2,9 @@ package paseoevent
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +31,18 @@ const (
 	MaintenanceSkill = "skill"
 	// MaintenancePrefs is one chunk of the preferences file content.
 	MaintenancePrefs = "prefs"
+	// MaintenanceRepoFile is one instruction file's content hash at the
+	// checkout's base branch.
+	MaintenanceRepoFile = "repo_file"
+	// MaintenanceSkillFile is one chunk of one skill file, worker → AO.
+	MaintenanceSkillFile = "skill_file"
+	// MaintenancePushFile is one chunk of one skill file, AO → worker, typed
+	// into the terminal as input. It is deliberately a DIFFERENT kind from
+	// skill_file: the PTY echoes input back into the capture, so the outbound
+	// parser must be able to recognize and skip AO's own inbound frames.
+	MaintenancePushFile = "push_file"
+	// MaintenancePushEnd terminates an inbound push stream.
+	MaintenancePushEnd = "push_end"
 	// MaintenanceDone terminates a successful run and carries the totals the
 	// receiver verifies against what it assembled.
 	MaintenanceDone = "done"
@@ -78,11 +93,39 @@ type MaintenanceDonePayload struct {
 	SHA256 string `json:"sha256,omitempty"`
 	Exists bool   `json:"exists,omitempty"`
 	Home   string `json:"home,omitempty"`
+	// Head is the checkout's HEAD commit for repo operations.
+	Head string `json:"head,omitempty"`
 }
 
 // MaintenanceErrorPayload names why the worker refused or failed.
 type MaintenanceErrorPayload struct {
 	Message string `json:"message"`
+}
+
+// MaintenanceRepoFilePayload is one instruction file's identity at the
+// checkout's base branch: its repo-relative path and the sha256 of its
+// committed content there.
+type MaintenanceRepoFilePayload struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+// MaintenanceFileChunkPayload is one chunk of one named file, used by both
+// transfer directions (kinds skill_file and push_file). SHA256 is the digest
+// of the COMPLETE file and rides every chunk so a receiver can verify the
+// assembled file no matter which chunk arrived last.
+type MaintenanceFileChunkPayload struct {
+	Path       string `json:"path"`
+	Part       int    `json:"part"`
+	Parts      int    `json:"parts"`
+	ContentB64 string `json:"contentB64"`
+	SHA256     string `json:"sha256"`
+}
+
+// MaintenancePushEndPayload closes an inbound push stream; Files is the total
+// the receiver must have assembled and verified.
+type MaintenancePushEndPayload struct {
+	Files int `json:"files"`
 }
 
 // EncodeMaintenanceEvent frames one maintenance event for the terminal.
@@ -129,7 +172,8 @@ func DecodeMaintenanceEvent(payload []byte) (MaintenanceEvent, error) {
 		return MaintenanceEvent{}, fmt.Errorf("maintenance event schema %q is not %s", event.Schema, MaintenanceSchema)
 	}
 	switch event.Kind {
-	case MaintenanceSkill, MaintenancePrefs, MaintenanceDone, MaintenanceError:
+	case MaintenanceSkill, MaintenancePrefs, MaintenanceRepoFile, MaintenanceSkillFile,
+		MaintenancePushFile, MaintenancePushEnd, MaintenanceDone, MaintenanceError:
 	default:
 		return MaintenanceEvent{}, fmt.Errorf("unknown maintenance kind %q", event.Kind)
 	}
@@ -160,6 +204,8 @@ func SplitPrefsChunks(content []byte) [][]byte {
 type MaintenanceResult struct {
 	Skills     []MaintenanceSkillPayload
 	PrefsParts map[int]string
+	RepoFiles  []MaintenanceRepoFilePayload
+	FileChunks []MaintenanceFileChunkPayload
 	Done       *MaintenanceDonePayload
 	Err        *MaintenanceErrorPayload
 }
@@ -170,16 +216,21 @@ type MaintenanceResult struct {
 func ParseMaintenanceRun(nonce string, lines []string) (MaintenanceResult, error) {
 	result := MaintenanceResult{PrefsParts: map[int]string{}}
 	decoded := Decode(nonce, lines)
-	seen := map[int]bool{}
+	// Dedupe per (kind, seq), never per seq alone: the PTY echoes AO's own
+	// inbound push frames into the same capture, and the two directions each
+	// number from 1 — a shared-seq dedupe would drop the worker's real output
+	// as duplicates of the echoed input (found live).
+	seen := map[string]bool{}
 	for _, payload := range decoded.Payloads {
 		event, err := DecodeMaintenanceEvent(payload.Data)
 		if err != nil {
 			return MaintenanceResult{}, err
 		}
-		if seen[event.Seq] {
+		key := fmt.Sprintf("%s:%d", event.Kind, event.Seq)
+		if seen[key] {
 			continue
 		}
-		seen[event.Seq] = true
+		seen[key] = true
 		switch event.Kind {
 		case MaintenanceSkill:
 			var skill MaintenanceSkillPayload
@@ -199,6 +250,26 @@ func ParseMaintenanceRun(nonce string, lines []string) (MaintenanceResult, error
 				return MaintenanceResult{}, fmt.Errorf("maintenance prefs chunk is malformed")
 			}
 			result.PrefsParts[chunk.Part] = chunk.ContentB64
+		case MaintenanceRepoFile:
+			var repoFile MaintenanceRepoFilePayload
+			if err := strictUnmarshal(event.Payload, &repoFile); err != nil {
+				return MaintenanceResult{}, err
+			}
+			if repoFile.Path == "" || repoFile.SHA256 == "" {
+				return MaintenanceResult{}, fmt.Errorf("maintenance repo_file event is malformed")
+			}
+			result.RepoFiles = append(result.RepoFiles, repoFile)
+		case MaintenanceSkillFile:
+			var chunk MaintenanceFileChunkPayload
+			if err := strictUnmarshal(event.Payload, &chunk); err != nil {
+				return MaintenanceResult{}, err
+			}
+			if chunk.Path == "" || chunk.Part < 1 || chunk.Parts < chunk.Part || chunk.SHA256 == "" {
+				return MaintenanceResult{}, fmt.Errorf("maintenance skill_file chunk is malformed")
+			}
+			result.FileChunks = append(result.FileChunks, chunk)
+		case MaintenancePushFile, MaintenancePushEnd:
+			// AO's own inbound frames, echoed back by the PTY. Not output.
 		case MaintenanceDone:
 			var done MaintenanceDonePayload
 			if err := strictUnmarshal(event.Payload, &done); err != nil {
@@ -214,6 +285,133 @@ func ParseMaintenanceRun(nonce string, lines []string) (MaintenanceResult, error
 		}
 	}
 	return result, nil
+}
+
+// MaintenanceFile is one complete, hash-verified transferred file.
+type MaintenanceFile struct {
+	Path    string
+	Content []byte
+}
+
+// AssembleFileChunks reorders and concatenates per-file chunks and verifies
+// each assembled file against the digest its chunks declared. Order-stable by
+// first appearance, so a directory round-trips in a deterministic order.
+func AssembleFileChunks(chunks []MaintenanceFileChunkPayload) ([]MaintenanceFile, error) {
+	type pending struct {
+		parts  map[int]string
+		total  int
+		sha256 string
+	}
+	order := []string{}
+	byPath := map[string]*pending{}
+	for _, chunk := range chunks {
+		entry, ok := byPath[chunk.Path]
+		if !ok {
+			entry = &pending{parts: map[int]string{}, total: chunk.Parts, sha256: chunk.SHA256}
+			byPath[chunk.Path] = entry
+			order = append(order, chunk.Path)
+		}
+		if entry.total != chunk.Parts || entry.sha256 != chunk.SHA256 {
+			return nil, fmt.Errorf("file %s chunks disagree about their whole", chunk.Path)
+		}
+		entry.parts[chunk.Part] = chunk.ContentB64
+	}
+	files := make([]MaintenanceFile, 0, len(order))
+	for _, path := range order {
+		entry := byPath[path]
+		var content []byte
+		for part := 1; part <= entry.total; part++ {
+			encoded, ok := entry.parts[part]
+			if !ok {
+				return nil, fmt.Errorf("file %s is missing part %d of %d", path, part, entry.total)
+			}
+			raw, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, fmt.Errorf("file %s part %d is not valid base64: %w", path, part, err)
+			}
+			content = append(content, raw...)
+		}
+		digest := sha256.Sum256(content)
+		if hex.EncodeToString(digest[:]) != entry.sha256 {
+			return nil, fmt.Errorf("file %s arrived corrupted: content does not match its declared sha256", path)
+		}
+		files = append(files, MaintenanceFile{Path: path, Content: content})
+	}
+	return files, nil
+}
+
+// EncodeFileChunkEvents frames one file as chunk events of the given kind
+// (skill_file outbound, push_file inbound), starting at seq and returning the
+// next free seq.
+func EncodeFileChunkEvents(nonce, kind, path string, content []byte, seq int) ([]string, int, error) {
+	digest := sha256.Sum256(content)
+	sum := hex.EncodeToString(digest[:])
+	chunks := SplitPrefsChunks(content)
+	if len(chunks) == 0 {
+		chunks = [][]byte{{}}
+	}
+	var lines []string
+	for index, chunk := range chunks {
+		frames, err := EncodeMaintenanceEvent(nonce, seq, kind, MaintenanceFileChunkPayload{
+			Path: path, Part: index + 1, Parts: len(chunks),
+			ContentB64: base64.StdEncoding.EncodeToString(chunk), SHA256: sum,
+		})
+		if err != nil {
+			return nil, seq, err
+		}
+		lines = append(lines, frames...)
+		seq++
+	}
+	return lines, seq, nil
+}
+
+// ParseMaintenancePush decodes an inbound push stream (kinds push_file and
+// push_end) from accumulated terminal-input lines. It returns (nil, false,
+// nil) while the end marker has not arrived, so a reader can keep
+// accumulating; any malformed or foreign content among this nonce's frames is
+// an error, because a partially applied push is worse than a refused one.
+func ParseMaintenancePush(nonce string, lines []string) ([]MaintenanceFile, bool, error) {
+	decoded := Decode(nonce, lines)
+	var chunks []MaintenanceFileChunkPayload
+	declared := -1
+	seen := map[int]bool{}
+	for _, payload := range decoded.Payloads {
+		event, err := DecodeMaintenanceEvent(payload.Data)
+		if err != nil {
+			return nil, false, err
+		}
+		if seen[event.Seq] {
+			continue
+		}
+		seen[event.Seq] = true
+		switch event.Kind {
+		case MaintenancePushFile:
+			var chunk MaintenanceFileChunkPayload
+			if err := strictUnmarshal(event.Payload, &chunk); err != nil {
+				return nil, false, err
+			}
+			chunks = append(chunks, chunk)
+		case MaintenancePushEnd:
+			var end MaintenancePushEndPayload
+			if err := strictUnmarshal(event.Payload, &end); err != nil {
+				return nil, false, err
+			}
+			declared = end.Files
+		default:
+			return nil, false, fmt.Errorf("unexpected %s event in an inbound push stream", event.Kind)
+		}
+	}
+	if declared < 0 {
+		return nil, false, nil
+	}
+	files, err := AssembleFileChunks(chunks)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(files) != declared {
+		return nil, false, fmt.Errorf("push declared %d files but carried %d", declared, len(files))
+	}
+	return files, true, nil
 }
 
 func strictUnmarshal(raw json.RawMessage, into any) error {

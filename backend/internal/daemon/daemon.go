@@ -274,6 +274,7 @@ func Run() error {
 	execSvc.SetQuestionResolvedHook(newQuestionResolvedHook(notificationWriter, log))
 	execSvc.SetScheduleChannel(newScheduleChannel(executionClients))
 	execSvc.SetMaintenanceChannel(maintenanceChannel{backends: executionClients})
+	execSvc.SetInstructionsChannel(maintenanceChannel{backends: executionClients})
 	// Decisions made from the dashboard carry the identity of whoever runs the
 	// daemon; explicit identities (the CLI's --by) always win over this default.
 	execSvc.SetDefaultActor(operatorIdentity)

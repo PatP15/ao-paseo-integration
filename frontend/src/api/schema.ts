@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/bindings/{projectId}/{hostId}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fast-forward one binding's checkout and return its refreshed drift; non-ff is refused with git's own words */
+        post: operations["syncExecutionBinding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/commands/{commandId}": {
         parameters: {
             query?: never;
@@ -201,6 +218,24 @@ export interface paths {
         get?: never;
         /** Register or replace one remote execution host */
         put: operations["registerExecutionHost"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts/{hostId}/instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the host's machine-scope CLAUDE.md, cached with confirmedAt; refresh=true reads live */
+        get: operations["getExecutionHostInstructions"];
+        /** Replace the host's machine-scope CLAUDE.md: write, worker confirm-read, persist; drift refused whole */
+        put: operations["putExecutionHostInstructions"];
         post?: never;
         delete?: never;
         options?: never;
@@ -305,6 +340,23 @@ export interface paths {
         post?: never;
         /** Delete one schedule on one host */
         delete: operations["deleteExecutionHostSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts/{hostId}/skills/{name}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Push one skill onto the host from 'local' or another host, confirmed by the host's own re-inventory */
+        post: operations["syncExecutionHostSkill"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -632,6 +684,23 @@ export interface paths {
         get?: never;
         /** Replace a project's per-project config */
         put: operations["setProjectConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's committed instruction files plus live per-binding drift against them */
+        get: operations["getProjectInstructions"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1318,6 +1387,24 @@ export interface components {
             priority: number;
             projectId: string;
         };
+        ControllersBindingDriftEnvelope: {
+            binding: components["schemas"]["ControllersBindingDriftResponse"];
+        };
+        ControllersBindingDriftResponse: {
+            baseBranch: string;
+            driftedPaths: string[];
+            /** @description Per-binding read failure; one unreachable host does not blank the view. */
+            error?: string;
+            head?: string;
+            hostId: string;
+            hostRepoPath: string;
+            inSync: boolean;
+        };
+        ControllersCanonicalInstructionFileResponse: {
+            content: string;
+            path: string;
+            sha256: string;
+        };
         ControllersCreateExecutionSecretRequest: {
             /** @description Bare file name the ref will use: no path separators, whitespace, or leading dot. */
             name: string;
@@ -1405,6 +1492,10 @@ export interface components {
             description?: string;
             name: string;
         };
+        ControllersExecutionInstructionsEnvelope: {
+            /** @description Absent when the host has never been read. */
+            instructions: components["schemas"]["ControllersExecutionHostPrefsResponse"];
+        };
         ControllersExecutionPreferencesEnvelope: {
             prefs: components["schemas"]["ControllersExecutionHostPrefsResponse"];
         };
@@ -1464,6 +1555,17 @@ export interface components {
         ControllersListExecutionSecretsResponse: {
             refs: string[];
         };
+        ControllersProjectInstructionsResponse: {
+            bindings: components["schemas"]["ControllersBindingDriftResponse"][];
+            branch: string;
+            files: components["schemas"]["ControllersCanonicalInstructionFileResponse"][];
+        };
+        ControllersPutExecutionInstructionsRequest: {
+            /** @description Hex sha256 of the content currently on the host. A mismatch is refused as drift. */
+            baseSha256: string;
+            /** @description Complete new file content. */
+            content: string;
+        };
         ControllersPutExecutionPreferencesRequest: {
             /** @description Hex sha256 of the content currently on the host, from the inventory read. A mismatch on the host is refused as drift. */
             baseSha256: string;
@@ -1506,6 +1608,10 @@ export interface components {
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
+        };
+        ControllersSyncSkillRequest: {
+            /** @description 'local' for the AO machine's own ~/.claude/skills, or a registered host id. */
+            source: string;
         };
         CreateWorkItemInput: {
             acceptanceCriteria?: string[];
@@ -2733,6 +2839,76 @@ export interface operations {
             };
         };
     };
+    syncExecutionBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bound project. */
+                projectId: string;
+                /** @description Bound execution host. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersBindingDriftEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getExecutionCommand: {
         parameters: {
             query?: never;
@@ -2926,6 +3102,149 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getExecutionHostInstructions: {
+        parameters: {
+            query?: {
+                /** @description Read the file live through the maintenance channel and persist before answering. */
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Registered execution host. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionInstructionsEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putExecutionHostInstructions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Execution host identifier. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersPutExecutionInstructionsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionInstructionsEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3320,6 +3639,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    syncExecutionHostSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Target execution host. */
+                hostId: string;
+                /** @description Bare skill directory name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSyncSkillRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionHostInventoryResponse"];
+                };
             };
             /** @description Bad Request */
             400: {
@@ -4559,6 +4952,74 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getProjectInstructions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersProjectInstructionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

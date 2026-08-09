@@ -339,6 +339,65 @@ paths:
       summary: List project-to-host bindings, optionally filtered by project or host
       tags:
       - execution
+  /api/v1/execution/bindings/{projectId}/{hostId}/sync:
+    post:
+      operationId: syncExecutionBinding
+      parameters:
+      - description: Bound project.
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Bound project.
+          type: string
+      - description: Bound execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Bound execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersBindingDriftEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fast-forward one binding's checkout and return its refreshed drift;
+        non-ff is refused with git's own words
+      tags:
+      - execution
   /api/v1/execution/commands/{commandId}:
     get:
       operationId: getExecutionCommand
@@ -503,6 +562,123 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Register or replace one remote execution host
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/instructions:
+    get:
+      operationId: getExecutionHostInstructions
+      parameters:
+      - description: Read the file live through the maintenance channel and persist
+          before answering.
+        in: query
+        name: refresh
+        schema:
+          description: Read the file live through the maintenance channel and persist
+            before answering.
+          type: boolean
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionInstructionsEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the host's machine-scope CLAUDE.md, cached with confirmedAt; refresh=true
+        reads live
+      tags:
+      - execution
+    put:
+      operationId: putExecutionHostInstructions
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPutExecutionInstructionsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionInstructionsEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Replace the host''s machine-scope CLAUDE.md: write, worker confirm-read,
+        persist; drift refused whole'
       tags:
       - execution
   /api/v1/execution/hosts/{hostId}/inventory:
@@ -829,6 +1005,71 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Delete one schedule on one host
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/skills/{name}/sync:
+    post:
+      operationId: syncExecutionHostSkill
+      parameters:
+      - description: Target execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Target execution host.
+          type: string
+      - description: Bare skill directory name.
+        in: path
+        name: name
+        required: true
+        schema:
+          description: Bare skill directory name.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSyncSkillRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionHostInventoryResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Push one skill onto the host from 'local' or another host, confirmed
+        by the host's own re-inventory
       tags:
       - execution
   /api/v1/execution/permissions/{questionId}/decision:
@@ -1739,6 +1980,58 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/instructions:
+    get:
+      operationId: getProjectInstructions
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersProjectInstructionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: The project's committed instruction files plus live per-binding drift
+        against them
+      tags:
+      - execution
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -3863,6 +4156,53 @@ components:
       - priority
       - enabled
       type: object
+    ControllersBindingDriftEnvelope:
+      properties:
+        binding:
+          $ref: '#/components/schemas/ControllersBindingDriftResponse'
+      required:
+      - binding
+      type: object
+    ControllersBindingDriftResponse:
+      properties:
+        baseBranch:
+          type: string
+        driftedPaths:
+          items:
+            type: string
+          type: array
+        error:
+          description: Per-binding read failure; one unreachable host does not blank
+            the view.
+          type: string
+        head:
+          type: string
+        hostId:
+          type: string
+        hostRepoPath:
+          type: string
+        inSync:
+          type: boolean
+      required:
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - inSync
+      - driftedPaths
+      type: object
+    ControllersCanonicalInstructionFileResponse:
+      properties:
+        content:
+          type: string
+        path:
+          type: string
+        sha256:
+          type: string
+      required:
+      - path
+      - sha256
+      - content
+      type: object
     ControllersCreateExecutionSecretRequest:
       properties:
         name:
@@ -4066,6 +4406,14 @@ components:
       required:
       - name
       type: object
+    ControllersExecutionInstructionsEnvelope:
+      properties:
+        instructions:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+          description: Absent when the host has never been read.
+      required:
+      - instructions
+      type: object
     ControllersExecutionPreferencesEnvelope:
       properties:
         prefs:
@@ -4222,6 +4570,36 @@ components:
       required:
       - refs
       type: object
+    ControllersProjectInstructionsResponse:
+      properties:
+        bindings:
+          items:
+            $ref: '#/components/schemas/ControllersBindingDriftResponse'
+          type: array
+        branch:
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/ControllersCanonicalInstructionFileResponse'
+          type: array
+      required:
+      - branch
+      - files
+      - bindings
+      type: object
+    ControllersPutExecutionInstructionsRequest:
+      properties:
+        baseSha256:
+          description: Hex sha256 of the content currently on the host. A mismatch
+            is refused as drift.
+          type: string
+        content:
+          description: Complete new file content.
+          type: string
+      required:
+      - content
+      - baseSha256
+      type: object
     ControllersPutExecutionPreferencesRequest:
       properties:
         baseSha256:
@@ -4336,6 +4714,15 @@ components:
           type: string
       required:
       - data
+      type: object
+    ControllersSyncSkillRequest:
+      properties:
+        source:
+          description: '''local'' for the AO machine''s own ~/.claude/skills, or a
+            registered host id.'
+          type: string
+      required:
+      - source
       type: object
     CreateWorkItemInput:
       properties:

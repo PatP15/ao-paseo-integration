@@ -79,6 +79,26 @@ func (c *captureExecutionService) PutPreferences(context.Context, domain.Executi
 	return domain.ExecutionHostPrefs{}, nil
 }
 
+func (c *captureExecutionService) Instructions(context.Context, domain.ExecutionHostID, bool) (domain.ExecutionHostPrefs, bool, error) {
+	return domain.ExecutionHostPrefs{}, false, nil
+}
+
+func (c *captureExecutionService) PutInstructions(context.Context, domain.ExecutionHostID, string, string) (domain.ExecutionHostPrefs, error) {
+	return domain.ExecutionHostPrefs{}, nil
+}
+
+func (c *captureExecutionService) ProjectInstructionsView(context.Context, domain.ProjectID) (executionsvc.ProjectInstructions, error) {
+	return executionsvc.ProjectInstructions{}, nil
+}
+
+func (c *captureExecutionService) SyncBinding(context.Context, domain.ProjectID, domain.ExecutionHostID) (executionsvc.BindingDrift, error) {
+	return executionsvc.BindingDrift{}, nil
+}
+
+func (c *captureExecutionService) SyncSkill(context.Context, domain.ExecutionHostID, string, string) (executionsvc.HostInventory, error) {
+	return executionsvc.HostInventory{}, nil
+}
+
 func (c *captureExecutionService) ListBindings(context.Context, executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
 	return nil, nil
 }

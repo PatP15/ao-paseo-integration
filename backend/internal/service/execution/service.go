@@ -52,6 +52,9 @@ type Store interface {
 	ListExecutionHostSkills(context.Context, domain.ExecutionHostID) ([]domain.ExecutionHostSkill, error)
 	UpsertExecutionHostPrefs(context.Context, domain.ExecutionHostPrefs) error
 	GetExecutionHostPrefs(context.Context, domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error)
+	UpsertExecutionHostInstructions(context.Context, domain.ExecutionHostPrefs) error
+	GetExecutionHostInstructions(context.Context, domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error)
+	GetProject(context.Context, string) (domain.ProjectRecord, bool, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -82,6 +85,9 @@ type Service struct {
 	scheduleDeleter func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error
 	// maintenance, when set, is the live host maintenance channel (U9).
 	maintenance MaintenanceChannel
+	// instructions, when set, is the U9a half of the channel: instruction
+	// files, repo drift, and skill transfer.
+	instructions InstructionsChannel
 	// defaultActor, when set, names the identity recorded for answers and
 	// permission decisions whose caller supplied none. Explicit names win.
 	defaultActor func() string

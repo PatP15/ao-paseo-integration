@@ -36,6 +36,11 @@ type ExecutionService interface {
 	DeleteHostSchedule(ctx context.Context, id domain.ExecutionHostID, scheduleID string) error
 	Inventory(ctx context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error)
 	PutPreferences(ctx context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error)
+	Instructions(ctx context.Context, id domain.ExecutionHostID, refresh bool) (domain.ExecutionHostPrefs, bool, error)
+	PutInstructions(ctx context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error)
+	ProjectInstructionsView(ctx context.Context, projectID domain.ProjectID) (executionsvc.ProjectInstructions, error)
+	SyncBinding(ctx context.Context, projectID domain.ProjectID, hostID domain.ExecutionHostID) (executionsvc.BindingDrift, error)
+	SyncSkill(ctx context.Context, hostID domain.ExecutionHostID, name, source string) (executionsvc.HostInventory, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -86,6 +91,190 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Delete("/execution/hosts/{hostId}/schedules/{scheduleId}", c.deleteHostSchedule)
 	r.Get("/execution/hosts/{hostId}/inventory", c.hostInventory)
 	r.Put("/execution/hosts/{hostId}/preferences", c.putHostPreferences)
+	r.Get("/execution/hosts/{hostId}/instructions", c.hostInstructions)
+	r.Put("/execution/hosts/{hostId}/instructions", c.putHostInstructions)
+	r.Get("/projects/{id}/instructions", c.projectInstructions)
+	r.Post("/execution/bindings/{projectId}/{hostId}/sync", c.syncBinding)
+	r.Post("/execution/hosts/{hostId}/skills/{name}/sync", c.syncSkill)
+}
+
+// ExecutionInstructionsQuery selects one host's machine-scope CLAUDE.md view.
+type ExecutionInstructionsQuery struct {
+	HostID  string `path:"hostId" description:"Registered execution host."`
+	Refresh bool   `query:"refresh" description:"Read the file live through the maintenance channel and persist before answering."`
+}
+
+// PutExecutionInstructionsRequest replaces the host's machine-scope CLAUDE.md.
+type PutExecutionInstructionsRequest struct {
+	Content    string `json:"content" description:"Complete new file content."`
+	BaseSHA256 string `json:"baseSha256" description:"Hex sha256 of the content currently on the host. A mismatch is refused as drift."`
+}
+
+// ExecutionInstructionsEnvelope wraps the confirmed machine-scope CLAUDE.md.
+type ExecutionInstructionsEnvelope struct {
+	Instructions *ExecutionHostPrefsResponse `json:"instructions" description:"Absent when the host has never been read."`
+}
+
+func (c *ExecutionController) hostInstructions(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/hosts/{hostId}/instructions")
+		return
+	}
+	refresh := r.URL.Query().Get("refresh") == "true"
+	instructions, found, err := c.Svc.Instructions(r.Context(), domain.ExecutionHostID(chi.URLParam(r, "hostId")), refresh)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := ExecutionInstructionsEnvelope{}
+	if found {
+		out.Instructions = &ExecutionHostPrefsResponse{
+			Content: instructions.Content, SHA256: instructions.SHA256,
+			Exists: instructions.Exists, ConfirmedAt: instructions.ConfirmedAt,
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, out)
+}
+
+func (c *ExecutionController) putHostInstructions(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPut, "/api/v1/execution/hosts/{hostId}/instructions")
+		return
+	}
+	var in PutExecutionInstructionsRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	instructions, err := c.Svc.PutInstructions(r.Context(),
+		domain.ExecutionHostID(chi.URLParam(r, "hostId")), in.Content, in.BaseSHA256)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExecutionInstructionsEnvelope{Instructions: &ExecutionHostPrefsResponse{
+		Content: instructions.Content, SHA256: instructions.SHA256,
+		Exists: instructions.Exists, ConfirmedAt: instructions.ConfirmedAt,
+	}})
+}
+
+// CanonicalInstructionFileResponse is one committed instruction file at the
+// project's default branch.
+type CanonicalInstructionFileResponse struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	Content string `json:"content"`
+}
+
+// BindingDriftResponse is one host binding's instruction state against canon.
+type BindingDriftResponse struct {
+	HostID       string   `json:"hostId"`
+	HostRepoPath string   `json:"hostRepoPath"`
+	BaseBranch   string   `json:"baseBranch"`
+	Head         string   `json:"head,omitempty"`
+	InSync       bool     `json:"inSync"`
+	DriftedPaths []string `json:"driftedPaths"`
+	Error        string   `json:"error,omitempty" description:"Per-binding read failure; one unreachable host does not blank the view."`
+}
+
+// ProjectInstructionsResponse is the body of GET /api/v1/projects/{id}/instructions.
+type ProjectInstructionsResponse struct {
+	Branch   string                             `json:"branch"`
+	Files    []CanonicalInstructionFileResponse `json:"files"`
+	Bindings []BindingDriftResponse             `json:"bindings"`
+}
+
+// BindingSyncParams identifies one project↔host binding.
+type BindingSyncParams struct {
+	ProjectID string `path:"projectId" description:"Bound project."`
+	HostID    string `path:"hostId" description:"Bound execution host."`
+}
+
+// SkillSyncParams identifies one skill on one target host.
+type SkillSyncParams struct {
+	HostID string `path:"hostId" description:"Target execution host."`
+	Name   string `path:"name" description:"Bare skill directory name."`
+}
+
+// SyncSkillRequest names where the skill comes from.
+type SyncSkillRequest struct {
+	Source string `json:"source" description:"'local' for the AO machine's own ~/.claude/skills, or a registered host id."`
+}
+
+// BindingDriftEnvelope wraps one refreshed binding state after a sync.
+type BindingDriftEnvelope struct {
+	Binding BindingDriftResponse `json:"binding"`
+}
+
+func bindingDriftResponse(drift executionsvc.BindingDrift) BindingDriftResponse {
+	paths := drift.DriftedPaths
+	if paths == nil {
+		paths = []string{}
+	}
+	return BindingDriftResponse{
+		HostID: string(drift.HostID), HostRepoPath: drift.HostRepoPath, BaseBranch: drift.BaseBranch,
+		Head: drift.Head, InSync: drift.InSync, DriftedPaths: paths, Error: drift.Error,
+	}
+}
+
+func (c *ExecutionController) projectInstructions(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/projects/{id}/instructions")
+		return
+	}
+	view, err := c.Svc.ProjectInstructionsView(r.Context(), domain.ProjectID(chi.URLParam(r, "id")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	files := make([]CanonicalInstructionFileResponse, 0, len(view.Files))
+	for _, file := range view.Files {
+		files = append(files, CanonicalInstructionFileResponse{Path: file.Path, SHA256: file.SHA256, Content: file.Content})
+	}
+	bindings := make([]BindingDriftResponse, 0, len(view.Bindings))
+	for _, drift := range view.Bindings {
+		bindings = append(bindings, bindingDriftResponse(drift))
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectInstructionsResponse{Branch: view.Branch, Files: files, Bindings: bindings})
+}
+
+func (c *ExecutionController) syncBinding(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/bindings/{projectId}/{hostId}/sync")
+		return
+	}
+	drift, err := c.Svc.SyncBinding(r.Context(),
+		domain.ProjectID(chi.URLParam(r, "projectId")), domain.ExecutionHostID(chi.URLParam(r, "hostId")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, BindingDriftEnvelope{Binding: bindingDriftResponse(drift)})
+}
+
+func (c *ExecutionController) syncSkill(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/hosts/{hostId}/skills/{name}/sync")
+		return
+	}
+	var in SyncSkillRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	inventory, err := c.Svc.SyncSkill(r.Context(),
+		domain.ExecutionHostID(chi.URLParam(r, "hostId")), chi.URLParam(r, "name"), in.Source)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	skills := make([]ExecutionHostSkillResponse, 0, len(inventory.Skills))
+	for _, skill := range inventory.Skills {
+		skills = append(skills, ExecutionHostSkillResponse{Name: skill.Name, Description: skill.Description})
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExecutionHostInventoryResponse{
+		Skills: skills, SkillsAsOf: inventory.SkillsAsOf, Refreshed: true,
+	})
 }
 
 // ExecutionInventoryQuery selects one host's maintenance view.

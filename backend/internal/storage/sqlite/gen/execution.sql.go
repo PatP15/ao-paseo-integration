@@ -363,6 +363,23 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 	return i, err
 }
 
+const getExecutionHostInstructions = `-- name: GetExecutionHostInstructions :one
+SELECT host_id, content, sha256, file_exists, confirmed_at FROM execution_host_instructions WHERE host_id = ?
+`
+
+func (q *Queries) GetExecutionHostInstructions(ctx context.Context, hostID string) (ExecutionHostInstruction, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionHostInstructions, hostID)
+	var i ExecutionHostInstruction
+	err := row.Scan(
+		&i.HostID,
+		&i.Content,
+		&i.Sha256,
+		&i.FileExists,
+		&i.ConfirmedAt,
+	)
+	return i, err
+}
+
 const getExecutionHostPrefs = `-- name: GetExecutionHostPrefs :one
 SELECT host_id, content, sha256, file_exists, confirmed_at FROM execution_host_prefs WHERE host_id = ?
 `
@@ -1587,6 +1604,33 @@ func (q *Queries) UpsertExecutionHost(ctx context.Context, arg UpsertExecutionHo
 		arg.LastProbeError,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const upsertExecutionHostInstructions = `-- name: UpsertExecutionHostInstructions :exec
+INSERT INTO execution_host_instructions (host_id, content, sha256, file_exists, confirmed_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(host_id) DO UPDATE SET
+    content = excluded.content, sha256 = excluded.sha256,
+    file_exists = excluded.file_exists, confirmed_at = excluded.confirmed_at
+`
+
+type UpsertExecutionHostInstructionsParams struct {
+	HostID      string
+	Content     string
+	Sha256      string
+	FileExists  int64
+	ConfirmedAt string
+}
+
+func (q *Queries) UpsertExecutionHostInstructions(ctx context.Context, arg UpsertExecutionHostInstructionsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertExecutionHostInstructions,
+		arg.HostID,
+		arg.Content,
+		arg.Sha256,
+		arg.FileExists,
+		arg.ConfirmedAt,
 	)
 	return err
 }

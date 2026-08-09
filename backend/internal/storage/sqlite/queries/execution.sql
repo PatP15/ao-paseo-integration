@@ -279,6 +279,16 @@ ON CONFLICT(host_id) DO UPDATE SET
 -- name: GetExecutionHostPrefs :one
 SELECT * FROM execution_host_prefs WHERE host_id = ?;
 
+-- name: UpsertExecutionHostInstructions :exec
+INSERT INTO execution_host_instructions (host_id, content, sha256, file_exists, confirmed_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(host_id) DO UPDATE SET
+    content = excluded.content, sha256 = excluded.sha256,
+    file_exists = excluded.file_exists, confirmed_at = excluded.confirmed_at;
+
+-- name: GetExecutionHostInstructions :one
+SELECT * FROM execution_host_instructions WHERE host_id = ?;
+
 -- Agent-authored reports are recorded before they are applied, so the applied
 -- flag is what a replay after a crash reads to know it still owes the apply.
 -- name: GetExecutionReportApplied :one

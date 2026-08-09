@@ -554,7 +554,7 @@ func workItemOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/work-items/{id}/approval", id: "approveWorkItem", tag: "workItems",
-			summary:    "Approve a draft or proposed work item",
+			summary:    "Record the approval decision (approve or reject) for a draft or proposed work item",
 			pathParams: []any{controllers.WorkItemIDParam{}},
 			reqBody:    controllers.ApproveWorkItemRequest{},
 			resps: []respUnit{
@@ -562,6 +562,18 @@ func workItemOperations() []operation {
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/work-items/{id}", id: "getWorkItem", tag: "workItems",
+			summary:    "Read one work item by ID",
+			pathParams: []any{controllers.WorkItemIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

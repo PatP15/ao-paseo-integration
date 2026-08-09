@@ -23,7 +23,7 @@ const (
 // Store is the durable work-item state used by the service.
 type Store interface {
 	UpsertWorkItem(context.Context, domain.WorkItem) error
-	SetWorkItemApproval(context.Context, string, string, time.Time) (domain.WorkItem, bool, error)
+	SetWorkItemApproval(context.Context, string, string, domain.WorkItemApproval, time.Time) (domain.WorkItem, bool, error)
 	ListWorkItemsByProject(context.Context, domain.ProjectID) ([]domain.WorkItem, error)
 	GetWorkItem(context.Context, string) (domain.WorkItem, bool, error)
 }
@@ -107,6 +107,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.WorkItem, 
 // Approve promotes a draft or proposed item and records who made the durable
 // decision. Approval cannot be used to rewrite an existing decision.
 func (s *Service) Approve(ctx context.Context, id, approver string) (domain.WorkItem, error) {
+	return s.Decide(ctx, id, approver, domain.WorkItemApproved)
+}
+
+// Decide records a human approval decision — approved or rejected — on a
+// draft or proposed work item. Rejection is terminal the same way approval
+// is: the store's guard only permits deciding from draft/proposed, so neither
+// decision can overwrite the other.
+func (s *Service) Decide(ctx context.Context, id, approver string, decision domain.WorkItemApproval) (domain.WorkItem, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return domain.WorkItem{}, apierr.Invalid("WORK_ITEM_ID_REQUIRED", "work item id is required", nil)
@@ -115,9 +123,12 @@ func (s *Service) Approve(ctx context.Context, id, approver string) (domain.Work
 	if approver == "" {
 		return domain.WorkItem{}, apierr.Invalid("APPROVER_REQUIRED", "approver is required", nil)
 	}
-	item, changed, err := s.store.SetWorkItemApproval(ctx, id, approver, s.now().UTC())
+	if decision != domain.WorkItemApproved && decision != domain.WorkItemRejected {
+		return domain.WorkItem{}, apierr.Invalid("DECISION_INVALID", "decision must be approved or rejected", nil)
+	}
+	item, changed, err := s.store.SetWorkItemApproval(ctx, id, approver, decision, s.now().UTC())
 	if err != nil {
-		return domain.WorkItem{}, fmt.Errorf("approve work item: %w", err)
+		return domain.WorkItem{}, fmt.Errorf("decide work item: %w", err)
 	}
 	if changed {
 		return item, nil
@@ -130,7 +141,7 @@ func (s *Service) Approve(ctx context.Context, id, approver string) (domain.Work
 		return domain.WorkItem{}, apierr.NotFound("WORK_ITEM_NOT_FOUND", "work item "+id+" was not found")
 	}
 	return domain.WorkItem{}, apierr.Conflict("WORK_ITEM_NOT_APPROVABLE",
-		fmt.Sprintf("work item %s is %s and cannot be approved", id, existing.ApprovalState), nil)
+		fmt.Sprintf("work item %s is %s and can no longer be decided", id, existing.ApprovalState), nil)
 }
 
 // List returns all work items belonging to one project.

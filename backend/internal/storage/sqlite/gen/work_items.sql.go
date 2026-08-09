@@ -243,20 +243,22 @@ func (q *Queries) ReleaseWorkItemSession(ctx context.Context, arg ReleaseWorkIte
 
 const setWorkItemApproval = `-- name: SetWorkItemApproval :one
 UPDATE work_items
-SET approval_state = 'approved', approved_by = ?, approved_at = ?, updated_at = ?
+SET approval_state = ?, approved_by = ?, approved_at = ?, updated_at = ?
 WHERE id = ? AND approval_state IN ('draft', 'proposed')
 RETURNING id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at
 `
 
 type SetWorkItemApprovalParams struct {
-	ApprovedBy string
-	ApprovedAt string
-	UpdatedAt  string
-	ID         string
+	ApprovalState string
+	ApprovedBy    string
+	ApprovedAt    string
+	UpdatedAt     string
+	ID            string
 }
 
 func (q *Queries) SetWorkItemApproval(ctx context.Context, arg SetWorkItemApprovalParams) (WorkItem, error) {
 	row := q.db.QueryRowContext(ctx, setWorkItemApproval,
+		arg.ApprovalState,
 		arg.ApprovedBy,
 		arg.ApprovedAt,
 		arg.UpdatedAt,

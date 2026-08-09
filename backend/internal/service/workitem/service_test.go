@@ -24,7 +24,7 @@ func (f *fakeStore) UpsertWorkItem(_ context.Context, item domain.WorkItem) erro
 	return nil
 }
 
-func (f *fakeStore) SetWorkItemApproval(_ context.Context, id, approver string, at time.Time) (domain.WorkItem, bool, error) {
+func (f *fakeStore) SetWorkItemApproval(_ context.Context, id, approver string, decision domain.WorkItemApproval, at time.Time) (domain.WorkItem, bool, error) {
 	if f.err != nil {
 		return domain.WorkItem{}, false, f.err
 	}
@@ -32,7 +32,7 @@ func (f *fakeStore) SetWorkItemApproval(_ context.Context, id, approver string, 
 	if !ok || (item.ApprovalState != domain.WorkItemDraft && item.ApprovalState != domain.WorkItemProposed) {
 		return domain.WorkItem{}, false, nil
 	}
-	item.ApprovalState = domain.WorkItemApproved
+	item.ApprovalState = decision
 	item.ApprovedBy = approver
 	item.ApprovedAt = at
 	item.UpdatedAt = at
@@ -108,6 +108,39 @@ func TestApproveStampsHumanFactAndCannotRestamp(t *testing.T) {
 	var apiError *apierr.Error
 	if !errors.As(err, &apiError) || apiError.Code != "WORK_ITEM_NOT_APPROVABLE" || apiError.Kind != apierr.KindConflict {
 		t.Fatalf("second approval error = %#v", err)
+	}
+}
+
+func TestRejectStampsIdentityAndIsTerminal(t *testing.T) {
+	now := time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC)
+	store := &fakeStore{items: map[string]domain.WorkItem{
+		"wi_1": {ID: "wi_1", ApprovalState: domain.WorkItemProposed},
+	}}
+	svc := newService(store, func() time.Time { return now }, func() string { return "unused" })
+
+	item, err := svc.Decide(context.Background(), "wi_1", " operator ", domain.WorkItemRejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ApprovalState != domain.WorkItemRejected || item.ApprovedBy != "operator" || !item.ApprovedAt.Equal(now) {
+		t.Fatalf("rejected item = %#v", item)
+	}
+	_, err = svc.Decide(context.Background(), "wi_1", "someone-else", domain.WorkItemApproved)
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "WORK_ITEM_NOT_APPROVABLE" || apiError.Kind != apierr.KindConflict {
+		t.Fatalf("decide after rejection error = %#v", err)
+	}
+}
+
+func TestDecideRejectsUnknownDecision(t *testing.T) {
+	store := &fakeStore{items: map[string]domain.WorkItem{
+		"wi_1": {ID: "wi_1", ApprovalState: domain.WorkItemProposed},
+	}}
+	svc := newService(store, time.Now, func() string { return "unused" })
+	_, err := svc.Decide(context.Background(), "wi_1", "operator", domain.WorkItemDraft)
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "DECISION_INVALID" || apiError.Kind != apierr.KindInvalid {
+		t.Fatalf("Decide error = %#v", err)
 	}
 }
 

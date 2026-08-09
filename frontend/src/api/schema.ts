@@ -1073,6 +1073,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/work-items/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one work item by ID */
+        get: operations["getWorkItem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/work-items/{id}/approval": {
         parameters: {
             query?: never;
@@ -1082,7 +1099,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve a draft or proposed work item */
+        /** Record the approval decision (approve or reject) for a draft or proposed work item */
         post: operations["approveWorkItem"];
         delete?: never;
         options?: never;
@@ -1130,6 +1147,11 @@ export interface components {
         };
         ApproveWorkItemRequest: {
             approver: string;
+            /**
+             * @description Approval decision; defaults to approved when omitted.
+             * @enum {string}
+             */
+            decision?: "approved" | "rejected";
         };
         BrowserCommandRequest: {
             action: string;
@@ -6150,6 +6172,65 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getWorkItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Work-item identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkItemEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -23,15 +23,29 @@ func TestWorkItemApprovalAndProjectList(t *testing.T) {
 	}
 
 	approvedAt := now.Add(time.Minute)
-	approved, changed, err := s.SetWorkItemApproval(ctx, "first", "operator", approvedAt)
+	approved, changed, err := s.SetWorkItemApproval(ctx, "first", "operator", domain.WorkItemApproved, approvedAt)
 	if err != nil || !changed {
 		t.Fatalf("approve = (%#v, %v, %v)", approved, changed, err)
 	}
 	if approved.ApprovalState != domain.WorkItemApproved || approved.ApprovedBy != "operator" || !approved.ApprovedAt.Equal(approvedAt) {
 		t.Fatalf("approved item = %#v", approved)
 	}
-	if _, changed, err := s.SetWorkItemApproval(ctx, "first", "other", approvedAt.Add(time.Minute)); err != nil || changed {
+	if _, changed, err := s.SetWorkItemApproval(ctx, "first", "other", domain.WorkItemApproved, approvedAt.Add(time.Minute)); err != nil || changed {
 		t.Fatalf("second approval changed=%v err=%v", changed, err)
+	}
+
+	rejected, changed, err := s.SetWorkItemApproval(ctx, "later", "operator", domain.WorkItemRejected, approvedAt)
+	if err != nil || !changed {
+		t.Fatalf("reject = (%#v, %v, %v)", rejected, changed, err)
+	}
+	if rejected.ApprovalState != domain.WorkItemRejected || rejected.ApprovedBy != "operator" || !rejected.ApprovedAt.Equal(approvedAt) {
+		t.Fatalf("rejected item = %#v", rejected)
+	}
+	if _, changed, err := s.SetWorkItemApproval(ctx, "later", "other", domain.WorkItemApproved, approvedAt.Add(time.Minute)); err != nil || changed {
+		t.Fatalf("approval after rejection changed=%v err=%v", changed, err)
+	}
+	if _, _, err := s.SetWorkItemApproval(ctx, "later", "other", domain.WorkItemDraft, approvedAt); err == nil {
+		t.Fatal("draft decision should be refused")
 	}
 
 	items, err := s.ListWorkItemsByProject(ctx, "project")

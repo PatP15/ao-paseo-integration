@@ -17,8 +17,9 @@ import (
 // WorkItemService is the controller-facing work-graph surface.
 type WorkItemService interface {
 	Create(context.Context, workitemsvc.CreateInput) (domain.WorkItem, error)
-	Approve(context.Context, string, string) (domain.WorkItem, error)
+	Decide(context.Context, string, string, domain.WorkItemApproval) (domain.WorkItem, error)
 	List(context.Context, domain.ProjectID) ([]domain.WorkItem, error)
+	Get(context.Context, string) (domain.WorkItem, error)
 }
 
 // WorkItemsController owns the work-item create, approval, and list routes.
@@ -31,6 +32,7 @@ func (c *WorkItemsController) Register(r chi.Router) {
 	r.Post("/work-items", c.create)
 	r.Post("/work-items/{id}/approval", c.approve)
 	r.Get("/work-items", c.list)
+	r.Get("/work-items/{id}", c.get)
 }
 
 func (c *WorkItemsController) create(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +63,24 @@ func (c *WorkItemsController) approve(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	item, err := c.Svc.Approve(r.Context(), chi.URLParam(r, "id"), in.Approver)
+	decision := domain.WorkItemApproval(strings.TrimSpace(in.Decision))
+	if decision == "" {
+		decision = domain.WorkItemApproved
+	}
+	item, err := c.Svc.Decide(r.Context(), chi.URLParam(r, "id"), in.Approver, decision)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, WorkItemEnvelope{WorkItem: workItemResponse(item)})
+}
+
+func (c *WorkItemsController) get(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/work-items/{id}")
+		return
+	}
+	item, err := c.Svc.Get(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -96,9 +115,12 @@ type ListWorkItemsQuery struct {
 	ProjectID domain.ProjectID `query:"projectId" description:"Project whose work items should be returned."`
 }
 
-// ApproveWorkItemRequest records the human responsible for approval.
+// ApproveWorkItemRequest records the human responsible for the approval
+// decision. Decision defaults to approved when absent so existing callers
+// keep working.
 type ApproveWorkItemRequest struct {
 	Approver string `json:"approver"`
+	Decision string `json:"decision,omitempty" enum:"approved,rejected" description:"Approval decision; defaults to approved when omitted."`
 }
 
 // WorkItemResponse is one durable work-graph node.

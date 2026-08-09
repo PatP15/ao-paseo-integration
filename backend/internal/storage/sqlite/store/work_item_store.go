@@ -55,17 +55,22 @@ func (s *Store) GetWorkItem(ctx context.Context, id string) (domain.WorkItem, bo
 	return item, true, nil
 }
 
-// SetWorkItemApproval atomically promotes a draft or proposed work item. A
-// false result means either the item does not exist or its approval state no
-// longer permits promotion; callers can GetWorkItem to distinguish the two.
-func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver string, at time.Time) (domain.WorkItem, bool, error) {
+// SetWorkItemApproval atomically decides a draft or proposed work item as
+// approved or rejected. A false result means either the item does not exist or
+// its approval state no longer permits a decision; callers can GetWorkItem to
+// distinguish the two.
+func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver string, decision domain.WorkItemApproval, at time.Time) (domain.WorkItem, bool, error) {
+	if decision != domain.WorkItemApproved && decision != domain.WorkItemRejected {
+		return domain.WorkItem{}, false, fmt.Errorf("approval decision must be approved or rejected, got %q", decision)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	row, err := s.qw.SetWorkItemApproval(ctx, gen.SetWorkItemApprovalParams{
-		ApprovedBy: approver,
-		ApprovedAt: encodeExecutionTime(at),
-		UpdatedAt:  encodeExecutionTime(at),
-		ID:         id,
+		ApprovalState: string(decision),
+		ApprovedBy:    approver,
+		ApprovedAt:    encodeExecutionTime(at),
+		UpdatedAt:     encodeExecutionTime(at),
+		ID:            id,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.WorkItem{}, false, nil

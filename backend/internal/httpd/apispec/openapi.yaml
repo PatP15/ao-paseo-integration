@@ -3179,6 +3179,51 @@ paths:
       summary: Create a draft work item in a project's durable work graph
       tags:
       - workItems
+  /api/v1/work-items/{id}:
+    get:
+      operationId: getWorkItem
+      parameters:
+      - description: Work-item identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Work-item identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one work item by ID
+      tags:
+      - workItems
   /api/v1/work-items/{id}/approval:
     post:
       operationId: approveWorkItem
@@ -3233,7 +3278,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Approve a draft or proposed work item
+      summary: Record the approval decision (approve or reject) for a draft or proposed
+        work item
       tags:
       - workItems
 components:
@@ -3313,6 +3359,12 @@ components:
     ApproveWorkItemRequest:
       properties:
         approver:
+          type: string
+        decision:
+          description: Approval decision; defaults to approved when omitted.
+          enum:
+          - approved
+          - rejected
           type: string
       required:
       - approver

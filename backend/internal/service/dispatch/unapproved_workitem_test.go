@@ -25,3 +25,21 @@ func TestDispatchStillRefusesCreatedDraftWorkItem(t *testing.T) {
 		t.Fatalf("Dispatch error = %v, want unapproved refusal", err)
 	}
 }
+
+func TestDispatchRefusesRejectedWorkItem(t *testing.T) {
+	now := time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC)
+	store := newDispatchTestStore(t, now)
+	if err := store.UpsertWorkItem(context.Background(), domain.WorkItem{
+		ID: "work-1", ProjectID: "project", Title: "Rejected work",
+		ApprovalState: domain.WorkItemRejected, LifecycleFact: domain.WorkItemOpen,
+		CreatedByType: "human", ApprovedBy: "operator", ApprovedAt: now,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := New(store).Dispatch(context.Background(), testDispatchRequest())
+	if err == nil || !strings.Contains(err.Error(), "is not approved") {
+		t.Fatalf("Dispatch error = %v, want rejected refusal", err)
+	}
+}

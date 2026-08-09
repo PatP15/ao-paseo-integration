@@ -1,9 +1,10 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../api/schema";
 import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import {
@@ -44,6 +45,7 @@ export function DispatchWorkItemDialog({
 }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const [hostId, setHostId] = useState("");
 	const [provider, setProvider] = useState("");
 	const [model, setModel] = useState(NONE);
@@ -53,6 +55,7 @@ export function DispatchWorkItemDialog({
 	const [prompt, setPrompt] = useState("");
 	const [progress, setProgress] = useState<DispatchResponse | null>(null);
 	const [commandState, setCommandState] = useState<string | null>(null);
+	const [commandError, setCommandError] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (open && workItem) {
@@ -67,6 +70,7 @@ export function DispatchWorkItemDialog({
 			setThinking(NONE);
 			setProgress(null);
 			setCommandState(null);
+			setCommandError(null);
 			setOverrides([]);
 			setPendingGate(null);
 		}
@@ -178,6 +182,11 @@ export function DispatchWorkItemDialog({
 		onSuccess: (data) => {
 			setProgress(data);
 			setCommandState(data.commandState);
+			setCommandError(null);
+			void queryClient.invalidateQueries({
+				queryKey: ["work-items", projectId],
+			});
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
 
@@ -190,7 +199,10 @@ export function DispatchWorkItemDialog({
 				const { data, error } = await apiClient.GET("/api/v1/execution/commands/{commandId}", {
 					params: { path: { commandId: progress.commandId } },
 				});
-				if (!error) setCommandState(data.commandState);
+				if (!error) {
+					setCommandState(data.commandState);
+					setCommandError(data.lastError ?? null);
+				}
 			})();
 		}, 2000);
 		return () => clearInterval(interval);
@@ -198,14 +210,23 @@ export function DispatchWorkItemDialog({
 
 	const busy = dispatchMutation.isPending;
 	const canSubmit =
-		!busy && !progress && workItem !== null && host !== undefined && provider !== "" && branch.trim() !== "" && prompt.trim() !== "";
+		!busy &&
+		!progress &&
+		workItem !== null &&
+		host !== undefined &&
+		provider !== "" &&
+		branch.trim() !== "" &&
+		prompt.trim() !== "";
 
 	const optionMenus = [
 		{
 			key: "provider",
 			label: t("dispatch.provider"),
 			value: provider,
-			options: providers.map((entry) => ({ value: entry.provider, label: entry.label || entry.provider })),
+			options: providers.map((entry) => ({
+				value: entry.provider,
+				label: entry.label || entry.provider,
+			})),
 			placeholder: providersQuery.isFetching ? t("dispatch.discovering") : t("dispatch.selectProvider"),
 			disabled: hostId === "" || providers.length === 0,
 			onChange: (value: string) => {
@@ -221,7 +242,10 @@ export function DispatchWorkItemDialog({
 			value: model,
 			options: [
 				{ value: NONE, label: t("dispatch.providerDefault") },
-				...(providerInfo?.models ?? []).map((entry) => ({ value: entry.id, label: entry.label || entry.id })),
+				...(providerInfo?.models ?? []).map((entry) => ({
+					value: entry.id,
+					label: entry.label || entry.id,
+				})),
 			],
 			placeholder: t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,
@@ -245,7 +269,12 @@ export function DispatchWorkItemDialog({
 							label: entry.label ? `${entry.label} (${entry.id})` : entry.id,
 						}))
 					: providerInfo?.defaultMode
-						? [{ value: providerInfo.defaultMode, label: providerInfo.defaultMode }]
+						? [
+								{
+									value: providerInfo.defaultMode,
+									label: providerInfo.defaultMode,
+								},
+							]
 						: []),
 			],
 			placeholder: t("dispatch.providerDefault"),
@@ -258,7 +287,10 @@ export function DispatchWorkItemDialog({
 			value: thinking,
 			options: [
 				{ value: NONE, label: t("dispatch.providerDefault") },
-				...(modelInfo?.thinkingOptionIds ?? []).map((id) => ({ value: id, label: id })),
+				...(modelInfo?.thinkingOptionIds ?? []).map((id) => ({
+					value: id,
+					label: id,
+				})),
 			],
 			placeholder: t("dispatch.providerDefault"),
 			disabled: modelInfo === undefined,
@@ -282,11 +314,21 @@ export function DispatchWorkItemDialog({
 								? t("dispatch.launched")
 								: commandState === "failed"
 									? t("dispatch.failed")
-									: t("dispatch.progress", { state: commandState ?? "pending" })}
+									: t("dispatch.progress", {
+											state: commandState ?? "pending",
+										})}
 						</p>
 						<p className="text-xs text-settings-muted">
-							{t("dispatch.sessionLine", { sessionId: progress.sessionId, hostId: progress.hostId })}
+							{t("dispatch.sessionLine", {
+								sessionId: progress.sessionId,
+								hostId: progress.hostId,
+							})}
 						</p>
+						{commandState === "failed" && commandError ? (
+							<p className="text-xs text-error" role="alert">
+								{commandError}
+							</p>
+						) : null}
 						<div className={settingsDialogFooterClass}>
 							<button
 								type="button"
@@ -315,7 +357,10 @@ export function DispatchWorkItemDialog({
 							<span className="text-xs font-medium text-settings-label">{t("dispatch.computer")}</span>
 							<SettingsOptionMenu
 								value={hostId}
-								options={boundHosts.map((entry) => ({ value: entry.id, label: entry.name }))}
+								options={boundHosts.map((entry) => ({
+									value: entry.id,
+									label: entry.name,
+								}))}
 								onChange={(value) => {
 									setHostId(value);
 									setProvider("");
@@ -324,7 +369,9 @@ export function DispatchWorkItemDialog({
 									setThinking(NONE);
 								}}
 								placeholder={
-									boundHosts.length === 0 ? t("dispatch.noBoundComputers") : t("dispatch.selectComputer")
+									boundHosts.length === 0
+										? t("dispatch.noBoundComputers")
+										: t("dispatch.selectComputer")
 								}
 								disabled={boundHosts.length === 0}
 								aria-label={t("dispatch.computer")}

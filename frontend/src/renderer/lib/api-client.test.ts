@@ -47,7 +47,12 @@ describe("apiClient runtime base URL", () => {
 		// Regression: `new Request(target, input)` needs the source request's
 		// `duplex` getter, which Electron's Chromium lacks — every request with a
 		// body threw. The rewrite must copy fields explicitly instead.
-		const seen: { url: string; method?: string; body?: string; contentType?: string | null }[] = [];
+		const seen: {
+			url: string;
+			method?: string;
+			body?: string;
+			contentType?: string | null;
+		}[] = [];
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const headers = new Headers(init?.headers);
 			seen.push({
@@ -73,7 +78,10 @@ describe("apiClient runtime base URL", () => {
 		expect(seen[0].url).toBe("http://127.0.0.1:3037/api/v1/sessions");
 		expect(seen[0].method).toBe("POST");
 		expect(seen[0].contentType).toBe("application/json");
-		expect(JSON.parse(seen[0].body ?? "{}")).toEqual({ projectId: "p1", prompt: "hello" });
+		expect(JSON.parse(seen[0].body ?? "{}")).toEqual({
+			projectId: "p1",
+			prompt: "hello",
+		});
 	});
 
 	it("skips the rebase when the request already targets the runtime base URL", async () => {
@@ -141,7 +149,10 @@ describe("apiClient runtime base URL", () => {
 
 		const { error } = await apiClient.GET("/api/v1/projects");
 
-		expect(error).toEqual({ code: "exited", message: "AO daemon exited with code 1" });
+		expect(error).toEqual({
+			code: "exited",
+			message: "AO daemon exited with code 1",
+		});
 	});
 });
 
@@ -200,7 +211,9 @@ describe("normalizeApiOperation", () => {
 	it("keeps static child routes instead of treating them as ids", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
-		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe(
+			"POST /api/v1/notifications/read-all",
+		);
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
@@ -219,6 +232,21 @@ describe("normalizeApiOperation", () => {
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
+	});
+
+	it("normalizes every identifier in remote-execution operations", () => {
+		expect(normalizeApiOperation("GET", "/api/v1/execution/commands/command-sensitive")).toBe(
+			"GET /api/v1/execution/commands/:id",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/execution/hosts/my-laptop/skills/private-skill/sync")).toBe(
+			"POST /api/v1/execution/hosts/:id/skills/:id/sync",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/execution/bindings/private-project/my-laptop/sync")).toBe(
+			"POST /api/v1/execution/bindings/:id/:id/sync",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/work-items/customer-name/approval")).toBe(
+			"POST /api/v1/work-items/:id/approval",
+		);
 	});
 });
 
@@ -317,9 +345,12 @@ describe("api error telemetry", () => {
 
 describe("apiErrorMessage", () => {
 	it("preserves daemon error codes next to human messages", () => {
-		expect(apiErrorMessage({ code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" })).toBe(
-			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
-		);
+		expect(
+			apiErrorMessage({
+				code: "AGENT_BINARY_NOT_FOUND",
+				message: "agent binary not found on PATH",
+			}),
+		).toBe("agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)");
 	});
 
 	it("does not duplicate a code that is already present in the message", () => {

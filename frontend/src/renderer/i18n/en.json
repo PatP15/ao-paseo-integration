@@ -280,6 +280,8 @@
 	"hostDetail.noSkills": "No skills installed on this computer.",
 	"hostDetail.prefsConfirmed": "Confirmed on the computer {{time}}",
 	"hostDetail.prefsNotRead": "Preferences have not been read yet — refresh the Skills tab to run the channel.",
+	"hostDetail.prefsInvalid": "The preferences file is not valid JSON and cannot be edited safely.",
+	"hostDetail.prefsInvalidDetail": "The preferences file cannot be saved safely: {{error}}",
 	"hostDetail.readingInstructions": "Reading ~/.claude/CLAUDE.md from the computer…",
 	"hostDetail.refresh": "Refresh from computer",
 	"hostDetail.refreshFailed": "Refresh failed.",

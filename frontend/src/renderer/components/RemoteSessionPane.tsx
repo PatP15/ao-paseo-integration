@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Monitor } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,6 +9,27 @@ import { formatTimeCompact } from "../lib/format-time";
 import type { WorkspaceSession } from "../types/workspace";
 
 type ExecutionEvent = components["schemas"]["ControllersExecutionEventResponse"];
+
+export function executionEventsQueryKey(sessionId: string) {
+	return ["execution-events", sessionId] as const;
+}
+
+// Poll from the last durable cursor already rendered, draining every page that
+// exists at this read. A fixed first-page query would stop advancing forever
+// once a session reached the page limit.
+export async function fetchExecutionEvents(sessionId: string, known: ExecutionEvent[] = []): Promise<ExecutionEvent[]> {
+	const events = [...known];
+	let after = known.at(-1)?.id;
+	for (;;) {
+		const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/execution-events", {
+			params: { path: { sessionId }, query: { limit: 500, after } },
+		});
+		if (error) throw new Error(apiErrorMessage(error));
+		events.push(...data.events);
+		if (!data.nextAfter) return events;
+		after = data.nextAfter;
+	}
+}
 
 // The center pane for a session that runs on another machine. There is no
 // local PTY to attach: what AO holds is the durable ingested record — agent
@@ -22,20 +43,19 @@ export function RemoteSessionPane({
 	topbarActions?: ReactNode;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const hostId = session.executionHostId ?? "";
 	const hostsQuery = useQuery(executionHostsQueryOptions);
 	const host = (hostsQuery.data ?? []).find((candidate) => candidate.id === hostId);
 	const unreachable = host !== undefined && !host.reachable;
 
 	const eventsQuery = useQuery({
-		queryKey: ["execution-events", session.id],
-		queryFn: async (): Promise<ExecutionEvent[]> => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/execution-events", {
-				params: { path: { sessionId: session.id }, query: { limit: 500 } },
-			});
-			if (error) throw new Error(apiErrorMessage(error));
-			return data.events;
-		},
+		queryKey: executionEventsQueryKey(session.id),
+		queryFn: () =>
+			fetchExecutionEvents(
+				session.id,
+				queryClient.getQueryData<ExecutionEvent[]>(executionEventsQueryKey(session.id)) ?? [],
+			),
 		refetchInterval: 3000,
 		retry: 1,
 	});

@@ -34,9 +34,13 @@ export function ExecutionQuestionActions({ questionId }: { questionId: string })
 
 	const settle = () => {
 		setActionError(null);
-		void queryClient.invalidateQueries({ queryKey: executionQuestionsQueryKey });
+		void queryClient.invalidateQueries({
+			queryKey: executionQuestionsQueryKey,
+		});
 		// Covers both history variants (["notifications","history",…]).
-		void queryClient.invalidateQueries({ queryKey: ["notifications", "history"] });
+		void queryClient.invalidateQueries({
+			queryKey: ["notifications", "history"],
+		});
 	};
 	const answerMutation = useMutation({
 		mutationFn: async (text: string) => {
@@ -47,8 +51,7 @@ export function ExecutionQuestionActions({ questionId }: { questionId: string })
 			if (error) throw new Error(apiErrorMessage(error));
 		},
 		onSuccess: settle,
-		onError: (error: unknown) =>
-			setActionError(error instanceof Error ? error.message : t("inbox.actionFailed")),
+		onError: (error: unknown) => setActionError(error instanceof Error ? error.message : t("inbox.actionFailed")),
 	});
 	const decideMutation = useMutation({
 		mutationFn: async (decision: "allow" | "deny") => {
@@ -59,12 +62,18 @@ export function ExecutionQuestionActions({ questionId }: { questionId: string })
 			if (error) throw new Error(apiErrorMessage(error));
 		},
 		onSuccess: settle,
-		onError: (error: unknown) =>
-			setActionError(error instanceof Error ? error.message : t("inbox.actionFailed")),
+		onError: (error: unknown) => setActionError(error instanceof Error ? error.message : t("inbox.actionFailed")),
 	});
 
 	if (questionsQuery.isLoading) {
 		return <p className="mt-1.5 text-caption text-passive">{t("inbox.loading")}</p>;
+	}
+	if (questionsQuery.isError) {
+		return (
+			<p className="mt-1.5 text-caption text-error" role="alert">
+				{questionsQuery.error instanceof Error ? questionsQuery.error.message : t("inbox.actionFailed")}
+			</p>
+		);
 	}
 	if (!question) {
 		// Gone from the open list: someone already answered or decided it.

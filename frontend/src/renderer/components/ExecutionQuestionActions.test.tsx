@@ -15,7 +15,9 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 function renderActions(questionId: string) {
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
 	return render(
 		<QueryClientProvider client={queryClient}>
 			<ExecutionQuestionActions questionId={questionId} />
@@ -85,5 +87,12 @@ describe("ExecutionQuestionActions", () => {
 		getMock.mockResolvedValue({ data: { questions: [] }, error: undefined });
 		renderActions("q-gone");
 		expect(await screen.findByText("Already answered.")).toBeInTheDocument();
+	});
+
+	it("does not misreport a failed inbox read as already answered", async () => {
+		getMock.mockResolvedValue({ error: "worker unavailable" });
+		renderActions("q-unknown");
+		expect(await screen.findByRole("alert", undefined, { timeout: 3000 })).toHaveTextContent("worker unavailable");
+		expect(screen.queryByText("Already answered.")).not.toBeInTheDocument();
 	});
 });

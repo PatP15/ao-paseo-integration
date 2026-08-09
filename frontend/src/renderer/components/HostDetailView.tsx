@@ -7,6 +7,11 @@ import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../api/schema";
 import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import {
+	parseExecutionPreferences,
+	serializeExecutionPreferences,
+	type ParsedExecutionPreferences,
+} from "../lib/execution-preferences";
 import { formatTimeCompact } from "../lib/format-time";
 import { transportLabel, trustZoneLabel } from "./settings/ComputersSection";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
@@ -110,14 +115,20 @@ function OverviewTab({ hostId }: { hostId: string }) {
 			if (error) throw new Error(apiErrorMessage(error));
 			return data.host;
 		},
-		onSettled: () => void queryClient.invalidateQueries({ queryKey: executionHostsQueryOptions.queryKey }),
+		onSettled: () =>
+			void queryClient.invalidateQueries({
+				queryKey: executionHostsQueryOptions.queryKey,
+			}),
 	});
 	if (!host) return <p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>;
 	const rows: Array<[string, string]> = [
 		[t("hostDetail.endpoint"), host.endpoint],
 		[t("hostDetail.transport"), transportLabel(host.transport, t)],
 		[t("hostDetail.trustZone"), trustZoneLabel(host.trustZone, t)],
-		[t("hostDetail.status"), host.reachable ? t("settings.computers.statusOnline") : t("settings.computers.statusOffline")],
+		[
+			t("hostDetail.status"),
+			host.reachable ? t("settings.computers.statusOnline") : t("settings.computers.statusOffline"),
+		],
 		[t("hostDetail.version"), host.paseoVersion || "—"],
 		[t("hostDetail.serverId"), host.serverId || "—"],
 		[t("hostDetail.sessions"), `${host.activeSessions}/${host.maxConcurrentSessions}`],
@@ -142,7 +153,9 @@ function OverviewTab({ hostId }: { hostId: string }) {
 				</button>
 				{probeMutation.isError ? (
 					<span className="text-xs text-error">
-						{probeMutation.error instanceof Error ? probeMutation.error.message : t("settings.computers.probeFailed")}
+						{probeMutation.error instanceof Error
+							? probeMutation.error.message
+							: t("settings.computers.probeFailed")}
 					</span>
 				) : null}
 			</div>
@@ -151,7 +164,7 @@ function OverviewTab({ hostId }: { hostId: string }) {
 	);
 }
 
-function SkillsTab({ hostId }: { hostId: string }) {
+export function SkillsTab({ hostId }: { hostId: string }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [refreshing, setRefreshing] = useState(false);
@@ -204,10 +217,10 @@ function SkillsTab({ hostId }: { hostId: string }) {
 		onSuccess: (data) => queryClient.setQueryData(inventoryQueryKey(hostId), data),
 	});
 	const syncMutation = useMutation({
-		mutationFn: async () => {
+		mutationFn: async ({ source, name }: { source: string; name: string }) => {
 			const { data, error } = await apiClient.POST("/api/v1/execution/hosts/{hostId}/skills/{name}/sync", {
-				params: { path: { hostId, name: syncName.trim() } },
-				body: { source: syncSource },
+				params: { path: { hostId, name } },
+				body: { source },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			return data;
@@ -219,8 +232,7 @@ function SkillsTab({ hostId }: { hostId: string }) {
 				current ? { ...current, skills: data.skills, skillsAsOf: data.skillsAsOf } : data,
 			);
 		},
-		onError: (error: unknown) =>
-			setSyncError(error instanceof Error ? error.message : t("hostDetail.syncFailed")),
+		onError: (error: unknown) => setSyncError(error instanceof Error ? error.message : t("hostDetail.syncFailed")),
 	});
 
 	const inventory = inventoryQuery.data;
@@ -243,7 +255,9 @@ function SkillsTab({ hostId }: { hostId: string }) {
 			<div className="flex items-center justify-between gap-2">
 				<span className="text-xs text-settings-muted">
 					{inventory?.skillsAsOf
-						? t("hostDetail.asOf", { time: formatTimeCompact(inventory.skillsAsOf) })
+						? t("hostDetail.asOf", {
+								time: formatTimeCompact(inventory.skillsAsOf),
+							})
 						: t("hostDetail.neverInventoried")}
 				</span>
 				<button
@@ -252,17 +266,26 @@ function SkillsTab({ hostId }: { hostId: string }) {
 					disabled={refreshing}
 					onClick={() => refreshMutation.mutate()}
 				>
-					<RefreshCw className={refreshing ? "size-icon-base animate-spin" : "size-icon-base"} aria-hidden="true" />
+					<RefreshCw
+						className={refreshing ? "size-icon-base animate-spin" : "size-icon-base"}
+						aria-hidden="true"
+					/>
 					{refreshing ? t("hostDetail.refreshing") : t("hostDetail.refresh")}
 				</button>
 			</div>
 			{refreshMutation.isError ? (
 				<p className="text-xs text-error" role="alert">
-					{refreshMutation.error instanceof Error ? refreshMutation.error.message : t("hostDetail.refreshFailed")}
+					{refreshMutation.error instanceof Error
+						? refreshMutation.error.message
+						: t("hostDetail.refreshFailed")}
 				</p>
 			) : null}
 			{inventoryQuery.isLoading ? (
 				<p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>
+			) : inventoryQuery.isError ? (
+				<p className="text-sm text-error" role="alert">
+					{inventoryQuery.error instanceof Error ? inventoryQuery.error.message : t("hostDetail.loadFailed")}
+				</p>
 			) : skills.length === 0 ? (
 				<p className="text-sm text-settings-muted">{t("hostDetail.noSkills")}</p>
 			) : (
@@ -288,7 +311,10 @@ function SkillsTab({ hostId }: { hostId: string }) {
 			{missingElsewhere.map((row) => (
 				<div key={row.name} className={`${rowClass} flex items-center justify-between gap-3`}>
 					<span className="min-w-0 truncate text-xs text-settings-muted">
-						{t("hostDetail.missingSkill", { name: row.name, source: row.source })}
+						{t("hostDetail.missingSkill", {
+							name: row.name,
+							source: row.source,
+						})}
 					</span>
 					<button
 						type="button"
@@ -297,7 +323,7 @@ function SkillsTab({ hostId }: { hostId: string }) {
 						onClick={() => {
 							setSyncSource(row.source);
 							setSyncName(row.name);
-							syncMutation.mutate();
+							syncMutation.mutate({ source: row.source, name: row.name });
 						}}
 					>
 						{t("hostDetail.syncHere")}
@@ -311,7 +337,10 @@ function SkillsTab({ hostId }: { hostId: string }) {
 						value={syncSource}
 						options={[
 							{ value: "local", label: t("hostDetail.sourceLocal") },
-							...otherHosts.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+							...otherHosts.map((candidate) => ({
+								value: candidate.id,
+								label: candidate.name,
+							})),
 						]}
 						onChange={setSyncSource}
 						aria-label={t("hostDetail.syncSource")}
@@ -326,7 +355,7 @@ function SkillsTab({ hostId }: { hostId: string }) {
 						type="button"
 						className="settings-option-trigger"
 						disabled={syncMutation.isPending || syncName.trim() === ""}
-						onClick={() => syncMutation.mutate()}
+						onClick={() => syncMutation.mutate({ source: syncSource, name: syncName.trim() })}
 					>
 						{syncMutation.isPending ? t("hostDetail.syncing") : t("hostDetail.syncHere")}
 					</button>
@@ -385,37 +414,37 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 	const [roles, setRoles] = useState<Record<string, string>>({});
 	const [freeform, setFreeform] = useState("");
 	const [loadedHash, setLoadedHash] = useState<string | null>(null);
+	const [parsedPrefs, setParsedPrefs] = useState<ParsedExecutionPreferences | null>(null);
+	const [parseError, setParseError] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [savedAt, setSavedAt] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!prefs || prefs.sha256 === loadedHash) return;
 		try {
-			const parsed = JSON.parse(prefs.content || "{}") as {
-				providers?: Record<string, string>;
-				preferences?: string[];
-			};
-			setRoles(parsed.providers ?? {});
-			setFreeform((parsed.preferences ?? []).join("\n"));
-		} catch {
+			const parsed = parseExecutionPreferences(prefs.content);
+			setParsedPrefs(parsed);
+			setRoles(parsed.providers);
+			setFreeform(parsed.preferences.join("\n"));
+			setParseError(null);
+		} catch (error) {
+			setParsedPrefs(null);
 			setRoles({});
 			setFreeform("");
+			setParseError(error instanceof Error ? error.message : t("hostDetail.prefsInvalid"));
 		}
 		setLoadedHash(prefs.sha256);
-	}, [prefs, loadedHash]);
+	}, [prefs, loadedHash, t]);
 
 	const saveMutation = useMutation({
 		mutationFn: async () => {
 			if (!prefs) throw new Error(t("hostDetail.prefsNotRead"));
-			const providers: Record<string, string> = {};
-			for (const role of PREF_ROLES) {
-				if (roles[role]) providers[role] = roles[role];
-			}
+			if (!parsedPrefs) throw new Error(t("hostDetail.prefsInvalid"));
 			const preferences = freeform
 				.split("\n")
 				.map((line) => line.trim())
 				.filter(Boolean);
-			const content = JSON.stringify({ providers, preferences }, null, 2);
+			const content = serializeExecutionPreferences(parsedPrefs, PREF_ROLES, roles, preferences);
 			const { data, error } = await apiClient.PUT("/api/v1/execution/hosts/{hostId}/preferences", {
 				params: { path: { hostId } },
 				body: { content, baseSha256: prefs.sha256 },
@@ -437,21 +466,33 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 	});
 
 	if (inventoryQuery.isLoading) return <p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>;
+	if (inventoryQuery.isError) {
+		return (
+			<p className="text-sm text-error" role="alert">
+				{inventoryQuery.error instanceof Error ? inventoryQuery.error.message : t("hostDetail.loadFailed")}
+			</p>
+		);
+	}
 	if (!prefs) return <p className="text-sm text-settings-muted">{t("hostDetail.prefsNotRead")}</p>;
 
 	return (
 		<>
 			<p className="text-xs text-settings-muted">
-				{t("hostDetail.prefsConfirmed", { time: formatTimeCompact(prefs.confirmedAt) })}
+				{t("hostDetail.prefsConfirmed", {
+					time: formatTimeCompact(prefs.confirmedAt),
+				})}
 			</p>
+			{parseError ? (
+				<p className="text-xs text-error" role="alert">
+					{t("hostDetail.prefsInvalidDetail", { error: parseError })}
+				</p>
+			) : null}
 			{PREF_ROLES.map((role) => {
 				const current = roles[role] ?? "";
 				// The file's current value stays visible even when the live
 				// catalog no longer contains it — replacing it is how the drift
 				// gets fixed, and only catalog values are offered as replacements.
-				const options = catalog.includes(current) || current === ""
-					? catalog
-					: [current, ...catalog];
+				const options = catalog.includes(current) || current === "" ? catalog : [current, ...catalog];
 				return (
 					<div key={role} className={`${rowClass} flex items-center justify-between gap-4`}>
 						<span className="font-mono text-xs text-settings-label">{role}</span>
@@ -462,7 +503,9 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 								label: catalog.includes(entry) ? entry : t("hostDetail.roleStale", { value: entry }),
 							}))}
 							onChange={(value) => setRoles((existing) => ({ ...existing, [role]: value }))}
-							placeholder={providersQuery.isFetching ? t("dispatch.discovering") : t("hostDetail.roleUnset")}
+							placeholder={
+								providersQuery.isFetching ? t("dispatch.discovering") : t("hostDetail.roleUnset")
+							}
 							disabled={catalog.length === 0}
 							aria-label={role}
 						/>
@@ -485,7 +528,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 				<button
 					type="button"
 					className="settings-footer-button settings-footer-button-primary"
-					disabled={saveMutation.isPending}
+					disabled={saveMutation.isPending || parsedPrefs === null}
 					onClick={() => saveMutation.mutate()}
 				>
 					{saveMutation.isPending ? t("hostDetail.saving") : t("hostDetail.save")}
@@ -669,7 +712,9 @@ function SchedulesTab({ hostId }: { hostId: string }) {
 			)}
 			{deleteMutation.isError ? (
 				<p className="text-xs text-error" role="alert">
-					{deleteMutation.error instanceof Error ? deleteMutation.error.message : t("hostDetail.deleteFailed")}
+					{deleteMutation.error instanceof Error
+						? deleteMutation.error.message
+						: t("hostDetail.deleteFailed")}
 				</p>
 			) : null}
 		</>

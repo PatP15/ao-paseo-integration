@@ -280,6 +280,8 @@
 	"hostDetail.noSkills": "该计算机上未安装技能。",
 	"hostDetail.prefsConfirmed": "已于 {{time}} 在计算机上确认",
 	"hostDetail.prefsNotRead": "尚未读取偏好设置——请在“技能”标签页刷新以运行通道。",
+	"hostDetail.prefsInvalid": "偏好设置文件不是有效的 JSON，无法安全编辑。",
+	"hostDetail.prefsInvalidDetail": "无法安全保存偏好设置文件：{{error}}",
 	"hostDetail.readingInstructions": "正在从计算机读取 ~/.claude/CLAUDE.md…",
 	"hostDetail.refresh": "从计算机刷新",
 	"hostDetail.refreshFailed": "刷新失败。",

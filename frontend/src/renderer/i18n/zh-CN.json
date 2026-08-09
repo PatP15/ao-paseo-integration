@@ -456,6 +456,7 @@
 	"session.notFound": "找不到会话。它可能已被清理——请从侧边栏选择另一个会话。",
 	"settings.bindings.baseBranch": "基于 {{branch}}",
 	"settings.bindings.baseBranchLabel": "基础分支",
+	"settings.bindings.baseBranchPlaceholder": "main",
 	"settings.bindings.bind": "绑定计算机",
 	"settings.bindings.bindFailed": "无法绑定计算机。",
 	"settings.bindings.binding": "绑定中…",

@@ -189,7 +189,7 @@ function BindComputerDialog({
 							className="settings-inline-input w-full"
 							value={baseBranch}
 							onChange={(e) => setBaseBranch(e.target.value)}
-							placeholder="main"
+							placeholder={t("settings.bindings.baseBranchPlaceholder")}
 						/>
 					</div>
 					{bindMutation.isError ? (

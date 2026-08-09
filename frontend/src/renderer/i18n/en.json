@@ -456,6 +456,7 @@
 	"session.notFound": "Session not found. It may have been cleaned up — pick another from the sidebar.",
 	"settings.bindings.baseBranch": "base {{branch}}",
 	"settings.bindings.baseBranchLabel": "Base branch",
+	"settings.bindings.baseBranchPlaceholder": "main",
 	"settings.bindings.bind": "Bind computer",
 	"settings.bindings.bindFailed": "Could not bind the computer.",
 	"settings.bindings.binding": "Binding…",

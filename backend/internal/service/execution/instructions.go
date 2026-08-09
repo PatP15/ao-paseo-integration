@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -366,13 +367,33 @@ func localSkillFiles(name string) ([]domain.ExecutionSkillFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
-	// Root-scoped on purpose: a symlink inside the skill directory must not
-	// let the read escape it.
-	root, err := os.OpenRoot(filepath.Join(home, ".claude", "skills", name))
+	return localSkillFilesFrom(filepath.Join(home, ".claude", "skills"), name)
+}
+
+func localSkillFilesFrom(skillsDir, name string) ([]domain.ExecutionSkillFile, error) {
+	skillPath := filepath.Join(skillsDir, name)
+	info, err := os.Lstat(skillPath)
+	if err != nil {
+		return nil, fmt.Errorf("open local skill %s: %w", name, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("open local skill %s: skill root is not a directory", name)
+	}
+	// Pin the selected directory by inode. OpenRoot follows the path supplied
+	// as its root, so containment alone is insufficient when the skill name is
+	// itself a symlink or is swapped between validation and open.
+	root, err := os.OpenRoot(skillPath)
 	if err != nil {
 		return nil, fmt.Errorf("open local skill %s: %w", name, err)
 	}
 	defer func() { _ = root.Close() }()
+	openedInfo, err := root.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("open local skill %s: %w", name, err)
+	}
+	if !openedInfo.IsDir() || !os.SameFile(info, openedInfo) {
+		return nil, fmt.Errorf("open local skill %s: skill root changed while opening", name)
+	}
 	var files []domain.ExecutionSkillFile
 	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -381,7 +402,13 @@ func localSkillFiles(name string) ([]domain.ExecutionSkillFile, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		content, readErr := fs.ReadFile(root.FS(), path)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("local skill %s contains symbolic link %q", name, filepath.ToSlash(path))
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("local skill %s contains non-regular file %q", name, filepath.ToSlash(path))
+		}
+		content, readErr := readLocalSkillFile(root, path)
 		if readErr != nil {
 			return readErr
 		}
@@ -396,4 +423,27 @@ func localSkillFiles(name string) ([]domain.ExecutionSkillFile, error) {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
+}
+
+func readLocalSkillFile(root *os.Root, path string) ([]byte, error) {
+	info, err := root.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("local skill file %q is not regular", filepath.ToSlash(path))
+	}
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, fmt.Errorf("local skill file %q changed while opening", filepath.ToSlash(path))
+	}
+	return io.ReadAll(file)
 }

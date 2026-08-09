@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -42,13 +43,47 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 		if host.Enabled == 0 || host.BackendType != string(domain.ExecutionBackendPaseo) || host.MaxConcurrentSessions <= 0 {
 			return fmt.Errorf("execution host %s is not dispatchable", seed.HostID)
 		}
+		// Routing is a read-only choice made before this transaction. Recheck all
+		// policy facts here so a concurrent registry/probe update cannot move the
+		// chosen host into another trust zone, remove a capability, or mark it
+		// unreachable between selection and the durable claim.
+		if seed.RequestedTrustZone != "" {
+			if host.TrustZone != string(seed.RequestedTrustZone) && host.TrustZone != string(domain.ExecutionTrustZoneMixed) {
+				return fmt.Errorf("execution host %s no longer matches trust zone %s", seed.HostID, seed.RequestedTrustZone)
+			}
+			lastSuccessful, err := decodeExecutionTime(host.LastSuccessfulProbeAt)
+			if err != nil {
+				return fmt.Errorf("decode execution host %s successful probe: %w", seed.HostID, err)
+			}
+			lastFailed, err := decodeExecutionTime(host.LastFailedProbeAt)
+			if err != nil {
+				return fmt.Errorf("decode execution host %s failed probe: %w", seed.HostID, err)
+			}
+			if lastSuccessful.IsZero() || (!lastFailed.IsZero() && !lastSuccessful.After(lastFailed)) {
+				return fmt.Errorf("execution host %s is no longer reachable", seed.HostID)
+			}
+			capabilities, err := q.ListExecutionHostCapabilities(ctx, string(seed.HostID))
+			if err != nil {
+				return fmt.Errorf("list execution host %s capabilities: %w", seed.HostID, err)
+			}
+			available := make(map[string]struct{}, len(capabilities))
+			for _, capability := range capabilities {
+				available[strings.TrimSpace(capability)] = struct{}{}
+			}
+			for _, required := range seed.RequiredCapabilities {
+				if _, ok := available[strings.TrimSpace(required)]; !ok {
+					return fmt.Errorf("execution host %s no longer has required capability %s", seed.HostID, required)
+				}
+			}
+		}
 		bindingRow, err := q.GetProjectHostBinding(ctx, gen.GetProjectHostBindingParams{
 			ProjectID: item.ProjectID, HostID: string(seed.HostID),
 		})
 		if err != nil {
 			return fmt.Errorf("get project host binding: %w", err)
 		}
-		if bindingRow.Enabled == 0 || bindingRow.HostRepoPath == "" || bindingRow.HostRepoPath != seed.HostRepoPath {
+		if bindingRow.Enabled == 0 || bindingRow.HostRepoPath == "" || bindingRow.HostRepoPath != seed.HostRepoPath ||
+			bindingRow.BaseBranch != seed.BaseBranch {
 			return fmt.Errorf("project %s is not enabled at execution host %s", item.ProjectID, seed.HostID)
 		}
 		active, err := q.CountActiveSessionExecutionBindingsByHost(ctx, string(seed.HostID))

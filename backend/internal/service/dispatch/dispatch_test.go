@@ -101,6 +101,91 @@ func TestSecondDispatchClaimRollsBackSessionAndCommand(t *testing.T) {
 	}
 }
 
+func TestDispatchRechecksRoutingFactsInsideAtomicClaim(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(context.Context, *sqlite.Store, time.Time) error
+		want   string
+	}{
+		{
+			name: "trust zone changed",
+			mutate: func(ctx context.Context, store *sqlite.Store, now time.Time) error {
+				host, capabilities, _, err := store.GetExecutionHost(ctx, "host")
+				if err != nil {
+					return err
+				}
+				host.TrustZone = domain.ExecutionTrustZoneHobby
+				return store.UpsertExecutionHost(ctx, host, capabilities)
+			},
+			want: "no longer matches trust zone",
+		},
+		{
+			name: "required capability removed",
+			mutate: func(ctx context.Context, store *sqlite.Store, now time.Time) error {
+				host, _, _, err := store.GetExecutionHost(ctx, "host")
+				if err != nil {
+					return err
+				}
+				return store.UpsertExecutionHost(ctx, host, nil)
+			},
+			want: "no longer has required capability linux",
+		},
+		{
+			name: "host became unreachable",
+			mutate: func(ctx context.Context, store *sqlite.Store, now time.Time) error {
+				return store.RecordExecutionHostProbe(ctx, domain.ExecutionHostProbe{
+					HostID: "host", Reachable: false, Error: "offline", ObservedAt: now.Add(time.Second),
+				})
+			},
+			want: "no longer reachable",
+		},
+		{
+			name: "binding base branch changed",
+			mutate: func(ctx context.Context, store *sqlite.Store, now time.Time) error {
+				return store.UpsertProjectHostBinding(ctx, domain.ProjectHostBinding{
+					ProjectID: "project", HostID: "host", HostRepoPath: "/remote/project",
+					BaseBranch: "release", Priority: 1, Enabled: true, CreatedAt: now, UpdatedAt: now,
+				})
+			},
+			want: "is not enabled at execution host",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Date(2026, time.August, 7, 3, 30, 0, 0, time.UTC)
+			store := newDispatchTestStore(t, now)
+			mutating := &routingMutationStore{Store: store, beforeCommit: func(seed domain.ExecutionDispatchSeed) error {
+				return test.mutate(ctx, store, now)
+			}}
+			_, err := New(mutating).Dispatch(ctx, testDispatchRequest())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("dispatch error = %v, want %q", err, test.want)
+			}
+			sessions, listErr := store.ListSessions(ctx, "project")
+			if listErr != nil || len(sessions) != 0 {
+				t.Fatalf("sessions after stale route = (%+v, %v), want none", sessions, listErr)
+			}
+		})
+	}
+}
+
+type routingMutationStore struct {
+	*sqlite.Store
+	beforeCommit func(domain.ExecutionDispatchSeed) error
+}
+
+func (s *routingMutationStore) CreateExecutionDispatch(ctx context.Context, seed domain.ExecutionDispatchSeed) (domain.ExecutionDispatch, error) {
+	if s.beforeCommit != nil {
+		if err := s.beforeCommit(seed); err != nil {
+			return domain.ExecutionDispatch{}, err
+		}
+		s.beforeCommit = nil
+	}
+	return s.Store.CreateExecutionDispatch(ctx, seed)
+}
+
 func TestOutboxPreservesPerSessionFIFO(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.August, 7, 4, 0, 0, 0, time.UTC)

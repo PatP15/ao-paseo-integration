@@ -121,6 +121,7 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 			Harness: req.Harness, DisplayName: req.DisplayName,
 		},
 		HostID: selection.Host.ID, BoundServerID: selection.Host.ServerID,
+		RequestedTrustZone: req.TrustZone, RequiredCapabilities: normalizedCapabilities(req.RequiredCapabilities),
 		HostRepoPath: selection.Binding.HostRepoPath, BaseBranch: selection.Binding.BaseBranch,
 		Branch: req.Branch, Provider: req.Provider, Model: req.Model, Mode: req.Mode,
 		ThinkingOptionID: req.ThinkingOptionID, SkillPolicyOverrides: normalizeOverrides(req.SkillPolicyOverrides),

@@ -143,6 +143,13 @@ type SessionView struct {
 	// Metadata.
 	PreviewRevision int64            `json:"previewRevision,omitempty"`
 	PRs             []SessionPRFacts `json:"prs"`
+	// Remote execution facts, present only for sessions bound to an execution
+	// host. A local session omits all four, byte-identical to before they
+	// existed; absence of executionBackend therefore means local.
+	ExecutionHostID  string `json:"executionHostId,omitempty" description:"Registered host this session runs on. Absent for local sessions."`
+	ExecutionBackend string `json:"executionBackend,omitempty" description:"Execution substrate that owns the session's process, e.g. paseo. Absent for local sessions."`
+	WorkspaceTitle   string `json:"workspaceTitle,omitempty" description:"AO-owned remote workspace title, e.g. ao:<session>:<attempt>."`
+	ExecutionAttempt int    `json:"executionAttempt,omitempty" description:"Provision attempt this session is bound to; bumps on ambiguous-create escalation."`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -668,9 +675,14 @@ type NotificationIDParam struct {
 
 // NotificationTarget is the dashboard navigation target for a notification.
 type NotificationTarget struct {
-	Kind      string `json:"kind" enum:"session,pr"`
+	Kind      string `json:"kind" enum:"session,pr,execution_question"`
 	SessionID string `json:"sessionId"`
 	PRURL     string `json:"prUrl,omitempty"`
+	// QuestionID and WorkItemID deep-link an execution_question target to the
+	// answerable inbox item. They identify; answering still goes through the
+	// execution questions/permissions endpoints.
+	QuestionID string `json:"questionId,omitempty"`
+	WorkItemID string `json:"workItemId,omitempty"`
 }
 
 // NotificationResponse is one stored notification returned by the API.

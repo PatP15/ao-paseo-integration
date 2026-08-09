@@ -16,13 +16,22 @@ import (
 )
 
 // releaseRepo is the GitHub "owner/repo" that `ao start` fetches the desktop app
-// from. It defaults to the production target and is overridable at build time so
-// a test binary fetches from the fork without a source edit:
+// from. It is overridable at build time so a test binary fetches elsewhere
+// without a source edit:
 //
-//	go build -ldflags "-X github.com/aoagents/agent-orchestrator/backend/internal/cli.releaseRepo=harshitsinghbhandari/agent-orchestrator" ./cmd/ao
+//	go build -ldflags "-X github.com/aoagents/agent-orchestrator/backend/internal/cli.releaseRepo=owner/repo" ./cmd/ao
 //
 // Mirrors how version.go's Version var is stamped by release tooling.
-var releaseRepo = "AgentWrapper/agent-orchestrator"
+//
+// FORK: this must name THIS fork, not upstream. Upstream's default was
+// "AgentWrapper/agent-orchestrator", which 301-redirects to
+// Untrivial-ai/agent-orchestrator — so an unmodified fork build of `ao start`
+// downloaded and launched UPSTREAM's desktop app, silently replacing the fork's
+// daemon with one that knows nothing about execution backends. Because the fork
+// publishes no releases, the download now fails with a plain 404 instead, which
+// is the correct outcome: build the app locally
+// (frontend/scripts/build-daemon.mjs) rather than fetching it.
+var releaseRepo = "PatP15/ao-paseo-integration"
 
 // appBundleName is the macOS bundle directory name produced by electron-forge
 // (spaced, per frontend/forge.config.ts).

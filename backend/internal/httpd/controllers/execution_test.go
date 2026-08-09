@@ -1,0 +1,1055 @@
+package controllers_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
+	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/secretstore"
+)
+
+type fakeExecutionService struct {
+	hosts      []executionsvc.Host
+	questions  []domain.ExecutionInboxQuestion
+	registered executionsvc.HostInput
+	answered   executionsvc.AnswerInput
+	decided    executionsvc.DecisionInput
+	err        error
+	bound      executionsvc.BindingInput
+	probed     domain.ExecutionHostID
+
+	bindingsList  []domain.ProjectHostBinding
+	bindingFilter executionsvc.BindingFilter
+
+	providers       []domain.ExecutionHostProvider
+	providersHostID domain.ExecutionHostID
+
+	events       []domain.ExecutionEventRecord
+	eventsFilter executionsvc.EventsFilter
+
+	schedules       []executionsvc.HostSchedule
+	deletedSchedule string
+
+	inventory        executionsvc.HostInventory
+	inventoryRefresh bool
+	putPrefs         struct{ content, baseSHA string }
+
+	instructions        domain.ExecutionHostPrefs
+	instructionsFound   bool
+	projectInstructions executionsvc.ProjectInstructions
+	syncedBinding       executionsvc.BindingDrift
+	syncedSkill         struct{ name, source string }
+}
+
+func (f *fakeExecutionService) Instructions(_ context.Context, id domain.ExecutionHostID, refresh bool) (domain.ExecutionHostPrefs, bool, error) {
+	f.providersHostID = id
+	f.inventoryRefresh = refresh
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, false, f.err
+	}
+	return f.instructions, f.instructionsFound, nil
+}
+
+func (f *fakeExecutionService) PutInstructions(_ context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.providersHostID = id
+	f.putPrefs.content, f.putPrefs.baseSHA = content, baseSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: id, Content: content, SHA256: "confirmed-hash", Exists: true}, nil
+}
+
+func (f *fakeExecutionService) ProjectInstructionsView(_ context.Context, projectID domain.ProjectID) (executionsvc.ProjectInstructions, error) {
+	if f.err != nil {
+		return executionsvc.ProjectInstructions{}, f.err
+	}
+	return f.projectInstructions, nil
+}
+
+func (f *fakeExecutionService) SyncBinding(_ context.Context, projectID domain.ProjectID, hostID domain.ExecutionHostID) (executionsvc.BindingDrift, error) {
+	if f.err != nil {
+		return executionsvc.BindingDrift{}, f.err
+	}
+	return f.syncedBinding, nil
+}
+
+func (f *fakeExecutionService) SyncSkill(_ context.Context, id domain.ExecutionHostID, name, source string) (executionsvc.HostInventory, error) {
+	f.providersHostID = id
+	f.syncedSkill.name, f.syncedSkill.source = name, source
+	if f.err != nil {
+		return executionsvc.HostInventory{}, f.err
+	}
+	return f.inventory, nil
+}
+
+func (f *fakeExecutionService) Inventory(_ context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error) {
+	f.providersHostID = id
+	f.inventoryRefresh = refresh
+	if f.err != nil {
+		return executionsvc.HostInventory{}, f.err
+	}
+	inventory := f.inventory
+	inventory.FromLiveProbe = refresh
+	return inventory, nil
+}
+
+func (f *fakeExecutionService) PutPreferences(_ context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.providersHostID = id
+	f.putPrefs.content, f.putPrefs.baseSHA = content, baseSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: id, Content: content, SHA256: "confirmed-hash", Exists: true}, nil
+}
+
+func (f *fakeExecutionService) HostSchedules(_ context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error) {
+	f.providersHostID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.schedules, nil
+}
+
+func (f *fakeExecutionService) DeleteHostSchedule(_ context.Context, id domain.ExecutionHostID, scheduleID string) error {
+	f.providersHostID = id
+	f.deletedSchedule = scheduleID
+	return f.err
+}
+
+func (f *fakeExecutionService) ListSessionEvents(_ context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error) {
+	f.eventsFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.events, nil
+}
+
+func (f *fakeExecutionService) HostProviders(_ context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
+	f.providersHostID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.providers, nil
+}
+
+// BindProject records a project's checkout path on a host.
+func (f *fakeExecutionService) BindProject(_ context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error) {
+	f.bound = in
+	return domain.ProjectHostBinding{
+		ProjectID: in.ProjectID, HostID: in.HostID, HostRepoPath: in.HostRepoPath,
+		BaseBranch: "main", Priority: 100, Enabled: true,
+	}, nil
+}
+
+var _ controllers.ExecutionService = (*fakeExecutionService)(nil)
+
+func (f *fakeExecutionService) ListHosts(context.Context) ([]executionsvc.Host, error) {
+	return f.hosts, f.err
+}
+
+func (f *fakeExecutionService) ProbeHost(_ context.Context, id domain.ExecutionHostID) (executionsvc.Host, error) {
+	f.probed = id
+	if f.err != nil {
+		return executionsvc.Host{}, f.err
+	}
+	if len(f.hosts) > 0 {
+		return f.hosts[0], nil
+	}
+	return executionsvc.Host{
+		ExecutionHost: domain.ExecutionHost{ID: id, Name: "probed"},
+		Reachable:     true,
+	}, nil
+}
+
+func (f *fakeExecutionService) RegisterHost(_ context.Context, in executionsvc.HostInput) (executionsvc.Host, error) {
+	f.registered = in
+	if f.err != nil {
+		return executionsvc.Host{}, f.err
+	}
+	return executionsvc.Host{
+		ExecutionHost: domain.ExecutionHost{
+			ID: in.ID, Name: in.Name, BackendType: domain.ExecutionBackendPaseo,
+			Transport: in.Transport, Endpoint: in.Endpoint, TrustZone: in.TrustZone,
+			Enabled: in.Enabled, MaxConcurrentSessions: in.MaxConcurrentSessions,
+			RequiresNoMCP: in.RequiresNoMCP,
+		},
+		Capabilities: in.Capabilities,
+	}, nil
+}
+
+func (f *fakeExecutionService) ListBindings(_ context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
+	f.bindingFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.bindingsList, nil
+}
+
+func (f *fakeExecutionService) GetCommand(_ context.Context, id string) (domain.ExecutionCommand, error) {
+	if f.err != nil {
+		return domain.ExecutionCommand{}, f.err
+	}
+	return domain.ExecutionCommand{
+		ID: id, SessionID: "project-1", HostID: "worker-1",
+		Type: domain.ExecutionCommandStartAgent, State: domain.ExecutionCommandAcknowledged,
+		AttemptCount: 1,
+	}, nil
+}
+
+func (f *fakeExecutionService) ListQuestions(context.Context) ([]domain.ExecutionInboxQuestion, error) {
+	return f.questions, f.err
+}
+
+func (f *fakeExecutionService) Answer(_ context.Context, in executionsvc.AnswerInput) (domain.ExecutionCommand, error) {
+	f.answered = in
+	if f.err != nil {
+		return domain.ExecutionCommand{}, f.err
+	}
+	return domain.ExecutionCommand{
+		ID: "command-1", SessionID: "project-1", Type: domain.ExecutionCommandSendMessage,
+		State: domain.ExecutionCommandPending,
+	}, nil
+}
+
+func (f *fakeExecutionService) Decide(_ context.Context, in executionsvc.DecisionInput) (domain.ExecutionCommand, error) {
+	f.decided = in
+	if f.err != nil {
+		return domain.ExecutionCommand{}, f.err
+	}
+	return domain.ExecutionCommand{
+		ID: "command-2", SessionID: "project-1", Type: domain.ExecutionCommandAnswerPermission,
+		State: domain.ExecutionCommandPending,
+	}, nil
+}
+
+type fakeDispatcher struct {
+	request dispatchsvc.Request
+	err     error
+}
+
+var _ controllers.ExecutionDispatcher = (*fakeDispatcher)(nil)
+
+func (f *fakeDispatcher) Dispatch(_ context.Context, req dispatchsvc.Request) (domain.ExecutionDispatch, error) {
+	f.request = req
+	if f.err != nil {
+		return domain.ExecutionDispatch{}, f.err
+	}
+	return domain.ExecutionDispatch{
+		Session: domain.SessionRecord{ID: "project-1"},
+		Binding: domain.SessionExecutionBinding{
+			HostID: "worker-1", WorkspaceTitle: "ao:project-1:1", IntentID: "intent-1", Attempt: 1,
+		},
+		Command: domain.ExecutionCommand{ID: "command-1", State: domain.ExecutionCommandPending},
+	}, nil
+}
+
+func executionServer(t *testing.T, deps httpd.APIDeps) *httptest.Server {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deps.Sessions = newFakeSessionService()
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func doJSON(t *testing.T, method, url, body string) (*http.Response, []byte) {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, data
+}
+
+// TestExecutionRoutesReport501WithoutServices proves the surface stays mounted on
+// a daemon that has no execution services wired, answering with the OpenAPI-backed
+// 501 rather than 404. A client can then discover the contract from the endpoint.
+func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
+	srv := executionServer(t, httpd.APIDeps{})
+	for _, route := range []struct {
+		method, path, body string
+	}{
+		{http.MethodGet, "/api/v1/execution/hosts", ""},
+		{http.MethodPut, "/api/v1/execution/hosts/worker-1", `{}`},
+		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/providers", ""},
+		{http.MethodGet, "/api/v1/sessions/project-1/execution-events", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/schedules", ""},
+		{http.MethodDelete, "/api/v1/execution/hosts/worker-1/schedules/sch-1", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/inventory", ""},
+		{http.MethodPut, "/api/v1/execution/hosts/worker-1/preferences", `{}`},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/instructions", ""},
+		{http.MethodPut, "/api/v1/execution/hosts/worker-1/instructions", `{}`},
+		{http.MethodPost, "/api/v1/execution/bindings/project-1/worker-1/sync", ""},
+		{http.MethodPost, "/api/v1/execution/hosts/worker-1/skills/advisor/sync", `{}`},
+		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
+		{http.MethodGet, "/api/v1/execution/questions", ""},
+		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
+		{http.MethodPost, "/api/v1/execution/permissions/q-1/decision", `{}`},
+		{http.MethodPost, "/api/v1/execution/secrets", `{}`},
+		{http.MethodGet, "/api/v1/execution/secrets", ""},
+	} {
+		resp, body := doJSON(t, route.method, srv.URL+route.path, route.body)
+		if resp.StatusCode != http.StatusNotImplemented {
+			t.Fatalf("%s %s = %d, want 501", route.method, route.path, resp.StatusCode)
+		}
+		var envelope struct {
+			Code string         `json:"code"`
+			Spec map[string]any `json:"spec"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			t.Fatalf("%s %s: decode %q: %v", route.method, route.path, body, err)
+		}
+		if envelope.Code != "NOT_IMPLEMENTED" || envelope.Spec["operationId"] == nil {
+			t.Fatalf("%s %s envelope = %s", route.method, route.path, body)
+		}
+	}
+}
+
+func TestListExecutionHostsSerialisesEmptyListsNotNull(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"hosts":[]`) {
+		t.Fatalf("body = %s, want an empty array", body)
+	}
+
+	svc.hosts = []executionsvc.Host{{
+		ExecutionHost:  domain.ExecutionHost{ID: "worker-1", Name: "worker", Endpoint: "worker:6780"},
+		ActiveSessions: 1, Reachable: true,
+	}}
+	_, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts", "")
+	var out controllers.ListExecutionHostsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Hosts) != 1 || out.Hosts[0].ID != "worker-1" || !out.Hosts[0].Reachable {
+		t.Fatalf("hosts = %#v", out.Hosts)
+	}
+	if out.Hosts[0].Capabilities == nil {
+		t.Fatal("capabilities must be an empty array, never null")
+	}
+}
+
+func TestRegisterExecutionHostPassesTheBodyThroughAndRejectsUnknownFields(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	body := `{"name":"worker","transport":"tailscale","endpoint":"worker:6780",` +
+		`"endpointSecretRef":"keychain://worker","trustZone":"work","enabled":true,` +
+		`"maxConcurrentSessions":4,"requiresNoMcp":true,"requiresNoRelay":true,"capabilities":["linux"]}`
+	resp, got := doJSON(t, http.MethodPut, srv.URL+"/api/v1/execution/hosts/worker-1", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, got)
+	}
+	if svc.registered.ID != "worker-1" {
+		t.Fatalf("host id = %q, want it taken from the path", svc.registered.ID)
+	}
+	if svc.registered.Endpoint != "worker:6780" || svc.registered.TrustZone != domain.ExecutionTrustZoneWork {
+		t.Fatalf("registered = %#v", svc.registered)
+	}
+	if !svc.registered.RequiresNoMCP || svc.registered.MaxConcurrentSessions != 4 {
+		t.Fatalf("registered = %#v", svc.registered)
+	}
+
+	// A field the daemon does not know is a constraint the operator believes they
+	// set. Dropping it silently would register a weaker host than they asked for.
+	resp, _ = doJSON(t, http.MethodPut, srv.URL+"/api/v1/execution/hosts/worker-1",
+		`{"name":"worker","endpoint":"worker:6780","requiresNoMcpInjection":true}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestDispatchValidatesBeforeCommitting(t *testing.T) {
+	valid := map[string]any{
+		"workItemId": "work-1", "projectId": "project", "trustZone": "work",
+		"harness": "codex", "branch": "ao/work-1", "provider": "codex",
+		"prompt": "Implement the approved task.",
+	}
+	tests := []struct {
+		name string
+		code string
+		edit func(map[string]any)
+	}{
+		{name: "no work item", code: "WORK_ITEM_ID_REQUIRED", edit: func(m map[string]any) { m["workItemId"] = " " }},
+		{name: "no prompt", code: "PROMPT_REQUIRED", edit: func(m map[string]any) { delete(m, "prompt") }},
+		{name: "unknown trust zone", code: "TRUST_ZONE_INVALID", edit: func(m map[string]any) { m["trustZone"] = "personal" }},
+		{
+			// A harness AO does not ship would be rejected by the sessions table
+			// mid-dispatch; the API is the honest place to say no.
+			name: "unknown harness", code: "HARNESS_INVALID",
+			edit: func(m map[string]any) { m["harness"] = "paseo" },
+		},
+		{
+			// Provider, model, mode, and branch each become one argv element for the
+			// remote CLI. A leading dash would be parsed as a flag.
+			name: "provider that is a flag", code: "PROVIDER_INVALID",
+			edit: func(m map[string]any) { m["provider"] = "--dangerously-skip-permissions" },
+		},
+		{
+			name: "branch with whitespace", code: "BRANCH_INVALID",
+			edit: func(m map[string]any) { m["branch"] = "ao/work 1" },
+		},
+		{
+			name: "empty capability", code: "CAPABILITY_INVALID",
+			edit: func(m map[string]any) { m["requiredCapabilities"] = []string{"linux", ""} },
+		},
+		{
+			// The pinned Paseo CLI has no feature discovery and no run flag to
+			// forward one; refusing is honest, silently dropping is not.
+			name: "provider features", code: "FEATURES_UNSUPPORTED",
+			edit: func(m map[string]any) { m["settings"] = map[string]any{"features": map[string]bool{"fast_mode": true}} },
+		},
+		{
+			name: "flag-shaped thinking option", code: "THINKING_OPTION_INVALID",
+			edit: func(m map[string]any) { m["settings"] = map[string]any{"thinkingOptionId": "--verbose"} },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dispatcher := &fakeDispatcher{}
+			srv := executionServer(t, httpd.APIDeps{ExecutionDispatch: dispatcher})
+			payload := map[string]any{}
+			for key, value := range valid {
+				payload[key] = value
+			}
+			test.edit(payload)
+			encoded, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/dispatch", string(encoded))
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", resp.StatusCode, body)
+			}
+			var envelope struct{ Code string }
+			if err := json.Unmarshal(body, &envelope); err != nil {
+				t.Fatalf("decode %q: %v", body, err)
+			}
+			if envelope.Code != test.code {
+				t.Fatalf("code = %q, want %q", envelope.Code, test.code)
+			}
+			if dispatcher.request.WorkItemID != "" {
+				t.Fatal("a rejected dispatch must not reach the service")
+			}
+		})
+	}
+
+	dispatcher := &fakeDispatcher{}
+	srv := executionServer(t, httpd.APIDeps{ExecutionDispatch: dispatcher})
+	encoded, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/dispatch", string(encoded))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var out controllers.DispatchExecutionResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.SessionID != "project-1" || out.HostID != "worker-1" || out.CommandID != "command-1" {
+		t.Fatalf("response = %#v", out)
+	}
+	// Nothing remote exists yet; the caller is told only that a command is queued.
+	if out.CommandState != domain.ExecutionCommandPending {
+		t.Fatalf("commandState = %q, want pending", out.CommandState)
+	}
+	if dispatcher.request.Harness != domain.HarnessCodex {
+		t.Fatalf("dispatched request = %#v", dispatcher.request)
+	}
+}
+
+func TestDispatchForwardsValidatedSettings(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	srv := executionServer(t, httpd.APIDeps{ExecutionDispatch: dispatcher})
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/dispatch", `{
+		"workItemId":"work-1","projectId":"project","trustZone":"work","harness":"codex",
+		"branch":"ao/work-1","provider":"claude","model":"claude-opus-5",
+		"settings":{"thinkingOptionId":"high"},"prompt":"Implement the approved task."
+	}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if dispatcher.request.ThinkingOptionID != "high" {
+		t.Fatalf("dispatched thinking option = %q", dispatcher.request.ThinkingOptionID)
+	}
+	if len(dispatcher.request.Features) != 0 {
+		t.Fatalf("dispatched features = %#v, want none", dispatcher.request.Features)
+	}
+}
+
+func TestListExecutionHostProviders(t *testing.T) {
+	svc := &fakeExecutionService{providers: []domain.ExecutionHostProvider{
+		{
+			Provider: "claude", Label: "Claude", Status: "available", Enabled: true,
+			DefaultMode: "auto", ModeLabels: []string{"Plan Mode", "Bypass"},
+			Models: []domain.ExecutionProviderModel{{
+				ID: "claude-opus-5", Label: "Opus 5",
+				ThinkingOptionIDs:       []string{"off", "low", "high"},
+				DefaultThinkingOptionID: "low",
+			}},
+		},
+		{Provider: "copilot", Label: "Copilot", Status: "unavailable", Enabled: true},
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/providers", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.providersHostID != "worker-1" {
+		t.Fatalf("service saw host %q", svc.providersHostID)
+	}
+	var out controllers.ListExecutionProvidersResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Providers) != 2 || out.Providers[0].Provider != "claude" {
+		t.Fatalf("providers = %#v", out.Providers)
+	}
+	claude := out.Providers[0]
+	if len(claude.Models) != 1 || claude.Models[0].ID != "claude-opus-5" || len(claude.Models[0].ThinkingOptionIDs) != 3 {
+		t.Fatalf("claude models = %#v", claude.Models)
+	}
+	// The unavailable provider is present with empty (not null) collections, so
+	// a UI can render "configured but unavailable" without null checks.
+	if !strings.Contains(string(body), `"models":[]`) || !strings.Contains(string(body), `"modeLabels":[]`) {
+		t.Fatalf("empty collections serialise as null: %s", body)
+	}
+}
+
+func TestListSessionExecutionEventsPagesAndSignalsMore(t *testing.T) {
+	at := time.Unix(300, 0).UTC()
+	svc := &fakeExecutionService{events: []domain.ExecutionEventRecord{
+		{ID: "evt-1", SessionID: "project-1", HostID: "worker-1", LaunchID: "launch-1",
+			EventType: "checkpoint", Transport: domain.ExecutionEventTerminal,
+			PayloadJSON: `{"summary":"step"}`, ObservedAt: at, IngestedAt: at, Applied: true},
+		{ID: "evt-2", SessionID: "project-1", HostID: "worker-1",
+			EventType: "status_transition", Transport: domain.ExecutionEventInspect,
+			PayloadJSON: `{"to":"idle"}`, ObservedAt: at, IngestedAt: at},
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+	resp, body := doJSON(t, http.MethodGet,
+		srv.URL+"/api/v1/sessions/project-1/execution-events?after=evt-0&limit=2", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.eventsFilter.SessionID != "project-1" || svc.eventsFilter.AfterID != "evt-0" || svc.eventsFilter.Limit != 2 {
+		t.Fatalf("service saw filter %#v", svc.eventsFilter)
+	}
+	var out controllers.ListExecutionEventsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Events) != 2 || out.Events[0].Kind != "checkpoint" || out.Events[0].Transport != domain.ExecutionEventTerminal {
+		t.Fatalf("events = %#v", out.Events)
+	}
+	// A full page names the last event as the next cursor.
+	if out.NextAfter != "evt-2" {
+		t.Fatalf("nextAfter = %q", out.NextAfter)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/project-1/execution-events?limit=50", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	out = controllers.ListExecutionEventsResponse{}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAfter != "" {
+		t.Fatalf("short page nextAfter = %q, want empty", out.NextAfter)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/project-1/execution-events?limit=zero", "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad limit status = %d body = %s", resp.StatusCode, body)
+	}
+}
+
+func TestHostScheduleRoutesListAndDelete(t *testing.T) {
+	svc := &fakeExecutionService{schedules: []executionsvc.HostSchedule{{
+		ExecutionHostSchedule: domain.ExecutionHostSchedule{
+			HostID: "worker-1", ID: "sch-1", Name: "nightly",
+			Cadence: "cron:0 3 * * *", Target: "new-agent:claude", Status: "active",
+		},
+		PolicyViolation: true,
+	}}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/schedules", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d body = %s", resp.StatusCode, body)
+	}
+	var out controllers.ListExecutionSchedulesResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Schedules) != 1 || out.Schedules[0].ID != "sch-1" || !out.Schedules[0].PolicyViolation {
+		t.Fatalf("schedules = %#v", out.Schedules)
+	}
+
+	resp, body = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/execution/hosts/worker-1/schedules/sch-1", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.deletedSchedule != "sch-1" {
+		t.Fatalf("service saw schedule %q", svc.deletedSchedule)
+	}
+
+	// An empty list is a valid answer, not an error, and stays [] over the wire.
+	svc.schedules = nil
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/schedules", "")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"schedules":[]`) {
+		t.Fatalf("empty list = %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestHostInventoryAndPreferencesRoutes(t *testing.T) {
+	at := time.Unix(400, 0).UTC()
+	svc := &fakeExecutionService{inventory: executionsvc.HostInventory{
+		Skills: []domain.ExecutionHostSkill{
+			{HostID: "worker-1", Name: "deploy", Description: "Deploy safely", CapturedAt: at},
+		},
+		SkillsAsOf: at,
+		Prefs: &domain.ExecutionHostPrefs{
+			HostID: "worker-1", Content: `{"providers":{}}`, SHA256: "hash-1", Exists: true, ConfirmedAt: at,
+		},
+		PrefsAsOf: at,
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/inventory?refresh=true", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("inventory status = %d body = %s", resp.StatusCode, body)
+	}
+	if !svc.inventoryRefresh || svc.providersHostID != "worker-1" {
+		t.Fatalf("service saw refresh=%v host=%q", svc.inventoryRefresh, svc.providersHostID)
+	}
+	var inventory controllers.ExecutionHostInventoryResponse
+	if err := json.Unmarshal(body, &inventory); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(inventory.Skills) != 1 || inventory.Skills[0].Name != "deploy" || !inventory.Refreshed {
+		t.Fatalf("inventory = %#v", inventory)
+	}
+	if inventory.Prefs == nil || inventory.Prefs.SHA256 != "hash-1" {
+		t.Fatalf("inventory prefs = %#v", inventory.Prefs)
+	}
+
+	resp, body = doJSON(t, http.MethodPut, srv.URL+"/api/v1/execution/hosts/worker-1/preferences",
+		`{"content":"{\"providers\":{}}","baseSha256":"hash-1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("preferences status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.putPrefs.content != `{"providers":{}}` || svc.putPrefs.baseSHA != "hash-1" {
+		t.Fatalf("service saw put = %#v", svc.putPrefs)
+	}
+	var confirmed controllers.ExecutionPreferencesEnvelope
+	if err := json.Unmarshal(body, &confirmed); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if confirmed.Prefs.SHA256 != "confirmed-hash" {
+		t.Fatalf("confirmed prefs = %#v", confirmed.Prefs)
+	}
+}
+
+func TestListExecutionQuestionsExposesBothKinds(t *testing.T) {
+	svc := &fakeExecutionService{questions: []domain.ExecutionInboxQuestion{
+		{
+			ID: "q-agent", SessionID: "project-1", Source: domain.ExecutionQuestionAgentEvent,
+			ExternalID: "event-1", Question: "Rebase or merge?", Recommendation: "rebase",
+			Options: []string{"rebase", "merge"}, CreatedAt: time.Now().UTC(),
+		},
+		{
+			ID: "q-perm", SessionID: "project-1", Source: domain.ExecutionQuestionPaseoPermission,
+			ExternalID: "perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3", Question: "Allow Bash",
+			CreatedAt: time.Now().UTC(),
+		},
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/questions", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var out controllers.ListExecutionQuestionsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Questions) != 2 {
+		t.Fatalf("questions = %d, want 2", len(out.Questions))
+	}
+	// The permission's full request id is served whole: a client that displayed a
+	// prefix and echoed it back would be rejected by the decision endpoint.
+	if out.Questions[1].ExternalID != "perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3" {
+		t.Fatalf("externalId = %q", out.Questions[1].ExternalID)
+	}
+	if out.Questions[1].Options == nil {
+		t.Fatal("options must be an empty array, never null")
+	}
+}
+
+func TestAnswerAndDecideForwardIdentityAndAccept(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/questions/q-agent/answer",
+		`{"answer":"rebase","answeredBy":"operator"}`)
+	// Accepted, not OK: the answer is durable but not yet delivered to the host.
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("answer status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.answered.QuestionID != "q-agent" || svc.answered.Answer != "rebase" || svc.answered.AnsweredBy != "operator" {
+		t.Fatalf("answered = %#v", svc.answered)
+	}
+	var decision controllers.ExecutionDecisionResponse
+	if err := json.Unmarshal(body, &decision); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if decision.CommandType != domain.ExecutionCommandSendMessage || decision.QuestionID != "q-agent" {
+		t.Fatalf("decision = %#v", decision)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/permissions/q-perm/decision",
+		`{"decision":"allow","requestId":"perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3","by":"x"}`)
+	// "by" is not a field: the decision vocabulary is closed, so an unknown key is
+	// a 400 rather than a silently narrower decision.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400 (body %s)", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/permissions/q-perm/decision",
+		`{"decision":"allow","requestId":"perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3","decidedBy":"operator"}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("decision status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.decided.Decision != domain.ExecutionPermissionAllow || svc.decided.QuestionID != "q-perm" {
+		t.Fatalf("decided = %#v", svc.decided)
+	}
+	if svc.decided.RequestID != "perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3" {
+		t.Fatalf("decided requestId = %q, want the full id forwarded verbatim", svc.decided.RequestID)
+	}
+}
+
+// TestPermissionDecisionRefusesAScopeWiderThanTheHostEnforces pins the one wire
+// rule the UI cannot be trusted to keep: there is no durable per-tool grant on
+// the host, so any attempt to express one is refused rather than downgraded to a
+// single-request allow under a wider-sounding name.
+func TestPermissionDecisionRefusesAScopeWiderThanTheHostEnforces(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	for _, body := range []string{
+		`{"decision":"allow","scope":"always"}`,
+		`{"decision":"allow","tool":"Bash","remember":true}`,
+		`{"decision":"allow","all":true}`,
+	} {
+		resp, got := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/permissions/q-perm/decision", body)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400 (body %s)", body, resp.StatusCode, got)
+		}
+		if svc.decided.QuestionID != "" {
+			t.Fatalf("%s reached the service", body)
+		}
+	}
+}
+
+func TestExecutionErrorsUseTheLockedEnvelope(t *testing.T) {
+	svc := &fakeExecutionService{err: apierr.Conflict("QUESTION_NOT_OPEN", "already answered", nil)}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/questions/q-1/answer", `{"answer":"yes"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if envelope.Error != "conflict" || envelope.Code != "QUESTION_NOT_OPEN" {
+		t.Fatalf("envelope = %s", body)
+	}
+}
+
+// TestExecutionSecretsRoundTrip drives the real store through the HTTP surface:
+// create returns the ref, a duplicate is refused without replace, and the list
+// carries names only — the value appears in no response at any point.
+func TestExecutionSecretsRoundTrip(t *testing.T) {
+	srv := executionServer(t, httpd.APIDeps{ExecutionSecrets: secretstore.New(t.TempDir())})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"hunter2"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", resp.StatusCode, body)
+	}
+	var created struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if created.Ref != "worker-pw" {
+		t.Fatalf("ref = %q, want worker-pw", created.Ref)
+	}
+	if strings.Contains(string(body), "hunter2") {
+		t.Fatalf("create response leaked the value: %s", body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"other"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"worker-pw","value":"rotated","replace":true}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("replace status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/secrets", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", resp.StatusCode, body)
+	}
+	var listed struct {
+		Refs []string `json:"refs"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(listed.Refs) != 1 || listed.Refs[0] != "worker-pw" {
+		t.Fatalf("refs = %v, want [worker-pw]", listed.Refs)
+	}
+	if strings.Contains(string(body), "rotated") {
+		t.Fatalf("list response leaked the value: %s", body)
+	}
+}
+
+// TestExecutionSecretsRejectUnknownKeysAndBadNames pins strict decoding and the
+// bare-name rule at the HTTP boundary.
+func TestExecutionSecretsRejectUnknownKeysAndBadNames(t *testing.T) {
+	srv := executionServer(t, httpd.APIDeps{ExecutionSecrets: secretstore.New(t.TempDir())})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"pw","value":"v","endpoint":"sneaky:1"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown key status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/secrets",
+		`{"name":"../escape","value":"v"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("path-shaped name status = %d, body = %s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if envelope.Code != "SECRET_NAME_INVALID" {
+		t.Fatalf("code = %q, want SECRET_NAME_INVALID", envelope.Code)
+	}
+}
+
+// TestProbeExecutionHostReturnsRefreshedEnvelope pins the probe route: the id
+// reaches the service and the refreshed host view comes back in the envelope.
+func TestProbeExecutionHostReturnsRefreshedEnvelope(t *testing.T) {
+	svc := &fakeExecutionService{hosts: []executionsvc.Host{{
+		ExecutionHost: domain.ExecutionHost{
+			ID: "worker-1", Name: "worker", ServerID: "srv_1", PaseoVersion: "0.2.5",
+		},
+		Reachable: true,
+	}}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/hosts/worker-1/probe", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.probed != "worker-1" {
+		t.Fatalf("probed = %q, want worker-1", svc.probed)
+	}
+	var out controllers.ExecutionHostEnvelope
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.Host.ID != "worker-1" || !out.Host.Reachable || out.Host.ServerID != "srv_1" {
+		t.Fatalf("host = %+v", out.Host)
+	}
+}
+
+// TestProbeExecutionHostSelfTargetIsConflict pins the G5 refusal shape end to
+// end: a HOST_IS_SELF error renders as 409 in the locked envelope.
+func TestProbeExecutionHostSelfTargetIsConflict(t *testing.T) {
+	svc := &fakeExecutionService{err: apierr.Conflict("HOST_IS_SELF",
+		"this endpoint resolves to the operator's own Paseo daemon", nil)}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/hosts/worker-1/probe", "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var envelope struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if envelope.Code != "HOST_IS_SELF" {
+		t.Fatalf("code = %q, want HOST_IS_SELF", envelope.Code)
+	}
+}
+
+// TestListExecutionBindings pins the query mapping and the empty-array shape.
+func TestListExecutionBindings(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/bindings?projectId=alpha&hostId=worker-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.bindingFilter.ProjectID != "alpha" || svc.bindingFilter.HostID != "worker-1" {
+		t.Fatalf("filter = %+v", svc.bindingFilter)
+	}
+	if !strings.Contains(string(body), `"bindings":[]`) {
+		t.Fatalf("body = %s, want an empty array", body)
+	}
+
+	svc.bindingsList = []domain.ProjectHostBinding{{
+		ProjectID: "alpha", HostID: "worker-1", HostRepoPath: "/home/u/alpha",
+		BaseBranch: "main", Priority: 100, Enabled: true,
+	}}
+	_, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/bindings", "")
+	var out controllers.ListExecutionBindingsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Bindings) != 1 || out.Bindings[0].HostRepoPath != "/home/u/alpha" || !out.Bindings[0].Enabled {
+		t.Fatalf("bindings = %+v", out.Bindings)
+	}
+}
+
+type fakeBindingReader struct {
+	bindings map[domain.SessionID]domain.SessionExecutionBinding
+}
+
+func (f *fakeBindingReader) ListActiveSessionExecutionBindings(context.Context) ([]domain.SessionExecutionBinding, error) {
+	out := make([]domain.SessionExecutionBinding, 0, len(f.bindings))
+	for _, binding := range f.bindings {
+		out = append(out, binding)
+	}
+	return out, nil
+}
+
+func (f *fakeBindingReader) GetSessionExecutionBinding(_ context.Context, id domain.SessionID) (domain.SessionExecutionBinding, bool, error) {
+	binding, ok := f.bindings[id]
+	return binding, ok, nil
+}
+
+// TestSessionViewsCarryExecutionFactsOnlyForRemoteSessions is the U4 golden
+// pin: a remote session gains executionHostId/executionBackend/workspaceTitle/
+// executionAttempt, and a local session's JSON contains none of those keys.
+func TestSessionViewsCarryExecutionFactsOnlyForRemoteSessions(t *testing.T) {
+	reader := &fakeBindingReader{bindings: map[domain.SessionID]domain.SessionExecutionBinding{
+		"ao-1": {
+			SessionID: "ao-1", HostID: "worker-1", BackendType: domain.ExecutionBackendPaseo,
+			WorkspaceTitle: "ao:ao-1:2", Attempt: 2,
+		},
+	}}
+	srv := executionServer(t, httpd.APIDeps{SessionExecution: reader})
+
+	// The shared fake session service serves session ao-1; bound above, it is
+	// remote. List view:
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{`"executionHostId":"worker-1"`, `"executionBackend":"paseo"`, `"workspaceTitle":"ao:ao-1:2"`, `"executionAttempt":2`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("list body missing %s: %s", want, body)
+		}
+	}
+
+	// Get view:
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"executionHostId":"worker-1"`) {
+		t.Fatalf("get body missing execution facts: %s", body)
+	}
+
+	// A local session (no binding) must not gain any execution key: this is the
+	// byte-compatibility guarantee for every existing consumer.
+	reader.bindings = map[domain.SessionID]domain.SessionExecutionBinding{}
+	_, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1", "")
+	for _, forbidden := range []string{"executionHostId", "executionBackend", "workspaceTitle", "executionAttempt"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("local session leaked %s: %s", forbidden, body)
+		}
+	}
+}
+
+// TestGetExecutionCommand pins the outbox read: state comes back, payload does
+// not exist in the response shape at all.
+func TestGetExecutionCommand(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/commands/cmd-1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	var out controllers.ExecutionCommandResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.CommandID != "cmd-1" || out.CommandState != domain.ExecutionCommandAcknowledged || out.AttemptCount != 1 {
+		t.Fatalf("command = %+v", out)
+	}
+
+	svc.err = apierr.NotFound("COMMAND_NOT_FOUND", "command ghost was not found")
+	resp, _ = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/commands/ghost", "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing command status = %d, want 404", resp.StatusCode)
+	}
+}

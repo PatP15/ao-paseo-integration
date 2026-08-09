@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
+import { RemoteSessionPane } from "./RemoteSessionPane";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
@@ -392,6 +393,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
+					{session?.executionHostId ? (
+						<RemoteSessionPane session={session} topbarActions={<ShellTopbar embedded />} />
+					) : (
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
 						onCloseShellTerminal={closeShellTerminalByHandle}
@@ -406,6 +410,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						theme={theme}
 						topbarActions={<ShellTopbar embedded />}
 					/>
+					)}
 				</ResizablePanel>
 				{hasInspector ? (
 					<>

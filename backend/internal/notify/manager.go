@@ -28,6 +28,7 @@ type Store interface {
 		typ domain.NotificationType,
 		at time.Time,
 	) ([]domain.NotificationRecord, error)
+	ResolveQuestionNotifications(ctx context.Context, questionID string, at time.Time) ([]domain.NotificationRecord, error)
 	ReconcileResolvedNotifications(ctx context.Context, at time.Time) ([]domain.NotificationRecord, error)
 }
 
@@ -117,7 +118,9 @@ func (m *Manager) Resolve(ctx context.Context, res Resolution) error {
 		resolved []domain.NotificationRecord
 		err      error
 	)
-	if res.PRURL != "" {
+	if res.QuestionID != "" {
+		resolved, err = m.store.ResolveQuestionNotifications(ctx, res.QuestionID, at)
+	} else if res.PRURL != "" {
 		resolved, err = m.store.ResolvePRNotifications(ctx, res.PRURL, res.Type, at)
 	} else {
 		if res.SessionID == "" {

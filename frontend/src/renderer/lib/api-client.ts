@@ -60,6 +60,25 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 // would miss (orchestrators/{id}). Keep in sync with schema.ts.
 const ROUTE_TEMPLATES = [
 	"/api/v1/events",
+	"/api/v1/execution/bindings",
+	"/api/v1/execution/bindings/{projectId}/{hostId}/sync",
+	"/api/v1/execution/commands/{commandId}",
+	"/api/v1/execution/dispatch",
+	"/api/v1/execution/hosts",
+	"/api/v1/execution/hosts/{hostId}",
+	"/api/v1/execution/hosts/{hostId}/instructions",
+	"/api/v1/execution/hosts/{hostId}/inventory",
+	"/api/v1/execution/hosts/{hostId}/preferences",
+	"/api/v1/execution/hosts/{hostId}/probe",
+	"/api/v1/execution/hosts/{hostId}/providers",
+	"/api/v1/execution/hosts/{hostId}/schedules",
+	"/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}",
+	"/api/v1/execution/hosts/{hostId}/skills/{name}/sync",
+	"/api/v1/execution/permissions/{questionId}/decision",
+	"/api/v1/execution/projects/{projectId}/hosts/{hostId}",
+	"/api/v1/execution/questions",
+	"/api/v1/execution/questions/{questionId}/answer",
+	"/api/v1/execution/secrets",
 	"/api/v1/import",
 	"/api/v1/notifications",
 	"/api/v1/notifications/{id}",
@@ -70,11 +89,13 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/projects",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",
+	"/api/v1/projects/{id}/instructions",
 	"/api/v1/prs/{id}/merge",
 	"/api/v1/prs/{id}/resolve-comments",
 	"/api/v1/sessions",
 	"/api/v1/sessions/{sessionId}",
 	"/api/v1/sessions/{sessionId}/activity",
+	"/api/v1/sessions/{sessionId}/execution-events",
 	"/api/v1/sessions/{sessionId}/kill",
 	"/api/v1/sessions/{sessionId}/pr",
 	"/api/v1/sessions/{sessionId}/pr/claim",
@@ -93,6 +114,9 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/workspace/file",
 	"/api/v1/sessions/{sessionId}/workspace/files",
 	"/api/v1/sessions/cleanup",
+	"/api/v1/work-items",
+	"/api/v1/work-items/{id}",
+	"/api/v1/work-items/{id}/approval",
 ] as const;
 
 // Resource collections whose next path segment is an identifier. Only used as a
@@ -177,10 +201,16 @@ async function runtimeFetch(input: Request): Promise<Response> {
 	const baseUrl = runtimeApiBaseUrl;
 	if (baseUrl === null) {
 		reportApiError(operation, "daemon_unavailable", 503);
-		return new Response(JSON.stringify({ message: daemonFailureMessage(daemonStatus), code: daemonStatus.code }), {
-			status: 503,
-			headers: { "Content-Type": "application/json" },
-		});
+		return new Response(
+			JSON.stringify({
+				message: daemonFailureMessage(daemonStatus),
+				code: daemonStatus.code,
+			}),
+			{
+				status: 503,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
 	}
 
 	const send = async (): Promise<Response> => {
@@ -254,7 +284,11 @@ export function apiErrorMessage(error: unknown, fallback = "Request failed"): st
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;
 	if (typeof error === "object" && error !== null) {
-		const body = error as { code?: unknown; message?: unknown; error?: unknown };
+		const body = error as {
+			code?: unknown;
+			message?: unknown;
+			error?: unknown;
+		};
 		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
 		if (typeof body.message === "string" && body.message !== "") {
 			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;

@@ -6,9 +6,11 @@ import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	Check,
+	ClipboardList,
 	Copy,
 	GitBranch,
 	LoaderCircle,
+	Monitor,
 	Plus,
 	RotateCcw,
 	RotateCw,
@@ -258,6 +260,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
+			<TopbarButton
+				aria-label={t("workItems.title")}
+				onClick={() =>
+					projectId && void navigate({ to: "/projects/$projectId/work-items", params: { projectId } })
+				}
+			>
+				<ClipboardList className="size-icon-md" aria-hidden="true" />
+				{t("workItems.title")}
+			</TopbarButton>
 			<TopbarButton
 				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}
@@ -861,6 +872,15 @@ function SessionCard({
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
+						</div>
+					)}
+					{session.executionHostId && (
+						<div
+							className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive"
+							title={t("shell.remoteHost", { host: session.executionHostId })}
+						>
+							<Monitor aria-hidden="true" className="size-icon-2xs shrink-0" />
+							<span className="truncate">{session.executionHostId}</span>
 						</div>
 					)}
 				</div>

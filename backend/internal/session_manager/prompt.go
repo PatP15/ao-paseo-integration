@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/publishpolicy"
 )
 
 type sessionPromptRole string
@@ -55,16 +57,19 @@ func buildTaskPrompt(cfg taskPromptConfig) string {
 	if cfg.IssueID == "" {
 		return ""
 	}
+	// The closing "what to do when you are done" sentence is the one place AO
+	// tells a worker to publish, so it is sourced from publishpolicy rather than
+	// compiled in. Default posture is upstream's, verbatim.
 	if cfg.Role == sessionPromptRoleWorker && issueContext != "" {
 		return fmt.Sprintf(`Work on issue %s.
 
-Use the issue context below as task context. It is current, so start implementing without re-fetching the issue. First inspect the relevant code and tests, then implement the smallest appropriate fix. Run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.
+Use the issue context below as task context. It is current, so start implementing without re-fetching the issue. First inspect the relevant code and tests, then implement the smallest appropriate fix. Run focused verification. %s
 
 %s
 
-The issue context above is current. Fetch comments or linked issues only if you need additional context beyond what is provided here.`, cfg.IssueID, issueContextSection(issueContext))
+The issue context above is current. Fetch comments or linked issues only if you need additional context beyond what is provided here.`, cfg.IssueID, publishpolicy.TaskStep(), issueContextSection(issueContext))
 	}
-	return fmt.Sprintf("Work on issue %s.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix and run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.", cfg.IssueID)
+	return fmt.Sprintf("Work on issue %s.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix and run focused verification. %s", cfg.IssueID, publishpolicy.TaskStep())
 }
 
 func buildSystemPromptText(cfg systemPromptConfig) string {
@@ -264,7 +269,9 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 %s
 
-%s`, taskSourceRules, repoRules, projectContextSection(project))
+%s
+
+%s`, taskSourceRules, repoRules, publishpolicy.StandingRules(), projectContextSection(project))
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {

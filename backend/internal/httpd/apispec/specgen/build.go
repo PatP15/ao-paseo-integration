@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	workitemsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/workitem"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -79,6 +80,10 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "execution"}).WithDescription(
+			"Remote execution hosts, work dispatch, and the human inbox of questions and permission decisions"),
+		*(&openapi31.Tag{Name: "workItems"}).WithDescription(
+			"Durable work graph creation, approval, and project-scoped reads"),
 	}
 
 	for _, op := range operations() {
@@ -217,6 +222,26 @@ var schemaNames = map[string]string{
 	"ControllersShellTerminalResponse":      "ShellTerminalResponse",
 	"ControllersListShellTerminalsResponse": "ListShellTerminalsResponse",
 	"ControllersShellTerminalEnvelope":      "ShellTerminalEnvelope",
+	// httpd/controllers — remote-execution wire envelopes. The path-param
+	// containers and the domain id/enum aliases are absent on purpose: swaggest
+	// inlines both rather than emitting a component, so an entry for one would be
+	// a name this map can never be asked for.
+	"ControllersExecutionHostResponse":            "ExecutionHostResponse",
+	"ControllersListExecutionHostsResponse":       "ListExecutionHostsResponse",
+	"ControllersExecutionHostEnvelope":            "ExecutionHostEnvelope",
+	"ControllersRegisterExecutionHostRequest":     "RegisterExecutionHostRequest",
+	"ControllersDispatchExecutionRequest":         "DispatchExecutionRequest",
+	"ControllersDispatchExecutionResponse":        "DispatchExecutionResponse",
+	"ControllersExecutionQuestionResponse":        "ExecutionQuestionResponse",
+	"ControllersListExecutionQuestionsResponse":   "ListExecutionQuestionsResponse",
+	"ControllersAnswerExecutionQuestionRequest":   "AnswerExecutionQuestionRequest",
+	"ControllersDecideExecutionPermissionRequest": "DecideExecutionPermissionRequest",
+	"ControllersExecutionDecisionResponse":        "ExecutionDecisionResponse",
+	// httpd/controllers — work-item wire envelopes
+	"ControllersApproveWorkItemRequest": "ApproveWorkItemRequest",
+	"ControllersWorkItemResponse":       "WorkItemResponse",
+	"ControllersWorkItemEnvelope":       "WorkItemEnvelope",
+	"ControllersListWorkItemsResponse":  "ListWorkItemsResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -260,6 +285,7 @@ var schemaNames = map[string]string{
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
+	"WorkitemCreateInput":               "CreateWorkItemInput",
 	"SessionWorkspaceFileStatus":        "WorkspaceFileStatus",
 }
 
@@ -347,7 +373,381 @@ func operations() []operation {
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, executionOperations()...)
+	ops = append(ops, workItemOperations()...)
 	return ops
+}
+
+// executionOperations declares the remote-execution control plane. Must stay 1:1
+// with the routes ExecutionController.Register mounts (enforced by the parity
+// test).
+//
+// Answering a question and deciding a permission are separate operations over one
+// storage table, because the two are answerable in different ways and the split
+// is what stops a client replying to a host permission request with prose.
+func executionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts", id: "listExecutionHosts", tag: "execution",
+			summary: "List registered remote execution hosts with capabilities and load",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionHostsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/execution/hosts/{hostId}", id: "registerExecutionHost", tag: "execution",
+			summary:    "Register or replace one remote execution host",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			reqBody:    controllers.RegisterExecutionHostRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/hosts/{hostId}/probe",
+			id: "probeExecutionHost", tag: "execution",
+			summary:    "Probe one host now and return the refreshed registry entry",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict is the G5 refusal: the endpoint answered with the
+				// operator's own daemon identity.
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts/{hostId}/providers",
+			id: "listExecutionHostProviders", tag: "execution",
+			summary:    "List what one host can launch: providers, models, and thinking options",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionProvidersResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict is an unusable or unreachable host: a fact about the
+				// host, distinct from AO failing.
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts/{hostId}/schedules",
+			id: "listExecutionHostSchedules", tag: "execution",
+			summary:    "List one host's recurring schedules live; heartbeats have no listing and are not covered",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionSchedulesResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}",
+			id: "deleteExecutionHostSchedule", tag: "execution",
+			summary:    "Delete one schedule on one host",
+			pathParams: []any{controllers.ExecutionScheduleIDParams{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts/{hostId}/inventory",
+			id: "getExecutionHostInventory", tag: "execution",
+			summary:    "Read one host's maintenance view: installed skills and confirmed preferences, cached with asOf; refresh=true runs the channel live",
+			pathParams: []any{controllers.ExecutionInventoryQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostInventoryResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/execution/hosts/{hostId}/preferences",
+			id: "putExecutionHostPreferences", tag: "execution",
+			summary:    "Replace the host's orchestration preferences: write, worker confirm-read, persist; drift and unreachable hosts are refused whole",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			reqBody:    controllers.PutExecutionPreferencesRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionPreferencesEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts/{hostId}/instructions",
+			id: "getExecutionHostInstructions", tag: "execution",
+			summary:    "Read the host's machine-scope CLAUDE.md, cached with confirmedAt; refresh=true reads live",
+			pathParams: []any{controllers.ExecutionInstructionsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionInstructionsEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/execution/hosts/{hostId}/instructions",
+			id: "putExecutionHostInstructions", tag: "execution",
+			summary:    "Replace the host's machine-scope CLAUDE.md: write, worker confirm-read, persist; drift refused whole",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			reqBody:    controllers.PutExecutionInstructionsRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionInstructionsEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/instructions",
+			id: "getProjectInstructions", tag: "execution",
+			summary:    "The project's committed instruction files plus live per-binding drift against them",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectInstructionsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/bindings/{projectId}/{hostId}/sync",
+			id: "syncExecutionBinding", tag: "execution",
+			summary:    "Fast-forward one binding's checkout and return its refreshed drift; non-ff is refused with git's own words",
+			pathParams: []any{controllers.BindingSyncParams{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BindingDriftEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/hosts/{hostId}/skills/{name}/sync",
+			id: "syncExecutionHostSkill", tag: "execution",
+			summary:    "Push one skill onto the host from 'local' or another host, confirmed by the host's own re-inventory",
+			pathParams: []any{controllers.SkillSyncParams{}},
+			reqBody:    controllers.SyncSkillRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionHostInventoryResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/execution-events",
+			id: "listSessionExecutionEvents", tag: "execution",
+			summary:    "Page one session's ingested execution events, oldest first",
+			pathParams: []any{controllers.ExecutionEventsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionEventsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/execution/projects/{projectId}/hosts/{hostId}",
+			id: "bindProjectHost", tag: "execution",
+			summary:    "Bind a project to a host by its checkout path there",
+			pathParams: []any{controllers.BindProjectPathParams{}},
+			reqBody:    controllers.BindProjectRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.BindProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/bindings", id: "listExecutionBindings", tag: "execution",
+			summary:    "List project-to-host bindings, optionally filtered by project or host",
+			pathParams: []any{controllers.ListBindingsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionBindingsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/dispatch", id: "dispatchExecution", tag: "execution",
+			summary: "Dispatch one approved work-item attempt to a routed host",
+			reqBody: controllers.DispatchExecutionRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.DispatchExecutionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/questions", id: "listExecutionQuestions", tag: "execution",
+			summary: "List open agent questions and pending host permission requests",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionQuestionsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/questions/{questionId}/answer",
+			id: "answerExecutionQuestion", tag: "execution",
+			summary:    "Answer an agent-authored question with text",
+			pathParams: []any{controllers.ExecutionQuestionIDParam{}},
+			reqBody:    controllers.AnswerExecutionQuestionRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.ExecutionDecisionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict covers both "already answered" and "this item is a host
+				// permission request, which text cannot discharge".
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/permissions/{questionId}/decision",
+			id: "decideExecutionPermission", tag: "execution",
+			summary:    "Allow or deny a pending host permission request",
+			pathParams: []any{controllers.ExecutionQuestionIDParam{}},
+			reqBody:    controllers.DecideExecutionPermissionRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.ExecutionDecisionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/commands/{commandId}",
+			id: "getExecutionCommand", tag: "execution",
+			summary:    "Read one outbox command's delivery state",
+			pathParams: []any{controllers.ExecutionCommandIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ExecutionCommandResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/execution/secrets", id: "createExecutionSecret", tag: "execution",
+			summary: "Store a host credential behind a secret ref",
+			reqBody: controllers.CreateExecutionSecretRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ExecutionSecretEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/execution/secrets", id: "listExecutionSecrets", tag: "execution",
+			summary: "List stored secret refs by name; values are never readable",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionSecretsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+func workItemOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodPost, path: "/api/v1/work-items", id: "createWorkItem", tag: "workItems",
+			summary: "Create a draft work item in a project's durable work graph",
+			reqBody: workitemsvc.CreateInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/work-items/{id}/approval", id: "approveWorkItem", tag: "workItems",
+			summary:    "Record the approval decision (approve or reject) for a draft or proposed work item",
+			pathParams: []any{controllers.WorkItemIDParam{}},
+			reqBody:    controllers.ApproveWorkItemRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/work-items/{id}", id: "getWorkItem", tag: "workItems",
+			summary:    "Read one work item by ID",
+			pathParams: []any{controllers.WorkItemIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.WorkItemEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/work-items", id: "listWorkItems", tag: "workItems",
+			summary:    "List work items belonging to one project",
+			pathParams: []any{controllers.ListWorkItemsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListWorkItemsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {

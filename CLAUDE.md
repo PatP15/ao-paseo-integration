@@ -11,6 +11,19 @@ Never write to or read from `~/Library/Application Support` or any other OS-defa
 app-data location. `frontend/src/main.ts` pins Electron's `userData` to
 `~/.ao/electron`; do not remove that override. See the hard rule in `AGENTS.md`.
 
+## Paseo loops must set thinking effort explicitly
+
+`paseo loop run` cannot carry thinking effort — a protocol limitation (the loop
+RPC schema has no thinking field), so loop-managed agents silently run at each
+model's default, which is **low** for claude-opus-5 and medium for gpt-5.6-sol.
+Never accept that for orchestration: rebuild the loop on `paseo run --thinking`
+instead, per [`scripts/effort-loop.sh`](scripts/effort-loop.sh). Efforts come
+from `~/.paseo/orchestration-preferences.json` (Opus verifiers at `xhigh`,
+codex workers at `high`). Preflight-validate model + thinking IDs via
+`paseo provider models <provider> --json` before launching, and guard against
+usage-limit launch failures (two consecutive failures → stop or fall back;
+`paseo loop` burns its entire iteration budget in minutes against that error).
+
 ## Design System
 
 Always read [`DESIGN.md`](DESIGN.md) before making any visual or UI decision —

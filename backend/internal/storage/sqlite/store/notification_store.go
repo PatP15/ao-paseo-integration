@@ -30,15 +30,17 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		return existing, false, nil
 	}
 	row, err := s.qw.CreateNotification(ctx, gen.CreateNotificationParams{
-		ID:        rec.ID,
-		SessionID: rec.SessionID,
-		ProjectID: rec.ProjectID,
-		PRURL:     rec.PRURL,
-		Type:      rec.Type,
-		Title:     rec.Title,
-		Body:      rec.Body,
-		Status:    rec.Status,
-		CreatedAt: rec.CreatedAt,
+		ID:         rec.ID,
+		SessionID:  rec.SessionID,
+		ProjectID:  rec.ProjectID,
+		PRURL:      rec.PRURL,
+		Type:       rec.Type,
+		Title:      rec.Title,
+		Body:       rec.Body,
+		Status:     rec.Status,
+		CreatedAt:  rec.CreatedAt,
+		WorkItemID: rec.WorkItemID,
+		QuestionID: rec.QuestionID,
 	})
 	if err != nil {
 		if isSQLiteUnique(err) {
@@ -265,11 +267,33 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// ResolveQuestionNotifications closes the notification announcing one inbox
+// question. Question-scoped on purpose: answering one question must not clear
+// the session's other open questions from the dashboard.
+func (s *Store) ResolveQuestionNotifications(
+	ctx context.Context, questionID string, at time.Time,
+) ([]domain.NotificationRecord, error) {
+	if questionID == "" {
+		return nil, fmt.Errorf("resolve question notifications: question id is required")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ResolveQuestionNotifications(ctx, gen.ResolveQuestionNotificationsParams{
+		ResolvedAt: sql.NullTime{Time: at, Valid: true},
+		QuestionID: questionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve notifications for question %s: %w", questionID, err)
+	}
+	return notificationsFromGen(rows), nil
+}
+
 func (s *Store) getOpenNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetOpenNotificationByDedupe(ctx, gen.GetOpenNotificationByDedupeParams{
-		SessionID: rec.SessionID,
-		Type:      rec.Type,
-		PRURL:     rec.PRURL,
+		SessionID:  rec.SessionID,
+		Type:       rec.Type,
+		PRURL:      rec.PRURL,
+		QuestionID: rec.QuestionID,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -297,6 +321,8 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		Status:     row.Status,
 		CreatedAt:  row.CreatedAt,
 		ResolvedAt: timeFromNull(row.ResolvedAt),
+		WorkItemID: row.WorkItemID,
+		QuestionID: row.QuestionID,
 	}
 }
 

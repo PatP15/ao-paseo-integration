@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/execpolicy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -179,6 +180,19 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 	if worker.IsTerminated {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q is terminated", ErrInvalid, workerID)
+	}
+	// Refuse a remotely executed worker explicitly, ahead of the workspace check
+	// below. This engine spawns a reviewer process over the worker's worktree on
+	// this machine; a remote worker's worktree lives on the host and its
+	// WorkspacePath is permanently "" by design. Without this branch the caller
+	// gets "has no workspace to review", which reads as a transient provisioning
+	// gap and invites a retry that can never succeed.
+	remote, err := execpolicy.Remote(ctx, e.sessions, workerID, worker.Metadata)
+	if err != nil {
+		return TriggerResult{}, err
+	}
+	if remote {
+		return TriggerResult{}, fmt.Errorf("%w: %w", ErrInvalid, execpolicy.Refuse("code review", workerID))
 	}
 	if worker.Metadata.WorkspacePath == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q has no workspace to review", ErrInvalid, workerID)

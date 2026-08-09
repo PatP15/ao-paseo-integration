@@ -13,9 +13,22 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
+	"github.com/aoagents/agent-orchestrator/backend/internal/untrusted"
 )
 
 const reviewMaxNudge = 3
+
+// Budgets for forge- and tracker-authored text pasted into a worker's live
+// pane. Nudges do not travel through the HTTP send endpoint, so they never meet
+// its maxMessageLen check — without these, one 200 KB review comment is one
+// 200 KB paste. The counts bound the other axis: a bot looping on a PR can
+// produce hundreds of unresolved comments in a single poll interval.
+const (
+	maxNudgeCommentBytes = 2048
+	maxNudgeComments     = 20
+	maxNudgeBotBodyBytes = 2048
+	maxNudgeBotComments  = 10
+)
 
 // ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
 // AO-internal review pass.
@@ -560,7 +573,11 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 		if len(ids) > 0 {
 			msg := "A bot left a new comment on your tracker issue. Address it and update the session."
 			if joined := strings.Join(bodies, "\n\n"); strings.TrimSpace(joined) != "" {
-				msg += "\n\n" + joined
+				// This was the one nudge path that pasted fetched text into the
+				// pane raw — no sanitize, no fence, no cap. "Bot" is not a trust
+				// signal: a bot comment is whatever the bot was told to write,
+				// and on a public tracker anyone can trigger one.
+				msg += "\n\n" + untrusted.Block("tracker bot comment", joined, maxNudgeBotBodyBytes)
 			}
 			// Empty prURL routes sendOnce through its in-memory-only branch:
 			// the PR-row signature load/persist is skipped, so the dedup
@@ -599,7 +616,12 @@ func newBotCommentContent(comments []ports.TrackerCommentObservation) ([]string,
 		if c.ID == "" || strings.TrimSpace(c.Body) == "" {
 			continue
 		}
-		bodies = append(bodies, c.Body)
+		// Bound the count here rather than at the join, so the dedup signature
+		// still covers every comment observed. Truncating the ids instead would
+		// let the dropped comments re-fire the nudge on the next poll forever.
+		if len(bodies) < maxNudgeBotComments {
+			bodies = append(bodies, c.Body)
+		}
 		ids = append(ids, c.ID)
 	}
 	return bodies, ids
@@ -723,9 +745,15 @@ func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
 	if len(comments) == 0 {
 		return "A reviewer left feedback on your PR. Address it and push. Fetch the review details only if you need additional context beyond what AO has provided here."
 	}
+	shown := comments
+	omitted := 0
+	if len(shown) > maxNudgeComments {
+		omitted = len(shown) - maxNudgeComments
+		shown = shown[:maxNudgeComments]
+	}
 	var msg strings.Builder
 	fmt.Fprintf(&msg, "The following %d unresolved review comment(s) are on your PR as of just now. You should not need to re-fetch this data unless you need additional context.\n", len(comments))
-	for i, c := range comments {
+	for i, c := range shown {
 		location := "(general)"
 		if c.File != "" {
 			location = domain.SanitizeControlChars(c.File)
@@ -737,11 +765,13 @@ func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
 		if strings.TrimSpace(author) == "" {
 			author = "unknown reviewer"
 		}
-		// Comment bodies are attacker-influenced (anyone who can comment on the
-		// PR) and get pasted into the agent's live pane; strip control/escape
-		// chars before formatting them.
-		body := domain.SanitizeControlChars(c.Body)
-		fmt.Fprintf(&msg, "\n%d. %s (@%s):\n%s", i+1, location, author, body)
+		// Anyone who can comment on the PR writes this body, and it lands in an
+		// imperative envelope ("address each comment and push fixes") that reads,
+		// to the model, as AO speaking. Fence it so the boundary between AO's
+		// instruction and the reviewer's text is explicit, and cap it so a single
+		// comment cannot paste an unbounded wall into the pane.
+		fmt.Fprintf(&msg, "\n%d. %s (@%s):\n%s", i+1, location, author,
+			untrusted.Block("PR review comment", c.Body, maxNudgeCommentBytes))
 		if c.URL != "" {
 			fmt.Fprintf(&msg, "\n   %s", domain.SanitizeControlChars(c.URL))
 		}
@@ -749,6 +779,9 @@ func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
 			fmt.Fprintf(&msg, "\n   Thread ID: %s", domain.SanitizeControlChars(c.ThreadID))
 		}
 		msg.WriteString("\n")
+	}
+	if omitted > 0 {
+		fmt.Fprintf(&msg, "\n[%d further comment(s) omitted by AO. Fetch the PR's review threads for the rest.]\n", omitted)
 	}
 	msg.WriteString("\nAddress each comment and push fixes. Use the thread ID to resolve each thread directly after pushing when available. You should not need to re-fetch review data unless you need additional context beyond what is provided here.")
 	return msg.String()

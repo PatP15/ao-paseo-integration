@@ -1,0 +1,50 @@
+[
+  {
+    "provider": "claude",
+    "label": "Claude",
+    "status": "loading",
+    "enabled": "Enabled",
+    "defaultMode": "auto",
+    "modes": ""
+  },
+  {
+    "provider": "codex",
+    "label": "Codex",
+    "status": "loading",
+    "enabled": "Enabled",
+    "defaultMode": "auto-review",
+    "modes": ""
+  },
+  {
+    "provider": "copilot",
+    "label": "Copilot",
+    "status": "loading",
+    "enabled": "Enabled",
+    "defaultMode": "https://agentclientprotocol.com/protocol/session-modes#agent",
+    "modes": ""
+  },
+  {
+    "provider": "opencode",
+    "label": "OpenCode",
+    "status": "loading",
+    "enabled": "Enabled",
+    "defaultMode": "default",
+    "modes": ""
+  },
+  {
+    "provider": "pi",
+    "label": "Pi",
+    "status": "loading",
+    "enabled": "Enabled",
+    "defaultMode": "default",
+    "modes": ""
+  },
+  {
+    "provider": "omp",
+    "label": "Oh My Pi",
+    "status": "loading",
+    "enabled": "Disabled",
+    "defaultMode": "full",
+    "modes": ""
+  }
+]

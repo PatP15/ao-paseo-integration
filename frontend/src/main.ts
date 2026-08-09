@@ -55,7 +55,7 @@ import {
 } from "./shared/daemon-attach";
 import { shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
-import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
+import { DEFAULT_POSTHOG_HOST } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
@@ -401,18 +401,24 @@ let cachedShellEnv: Record<string, string> | null = null;
 // Memoize the in-flight resolution so concurrent/repeat awaits are cheap.
 let shellEnvPromise: Promise<void> | null = null;
 
-// Telemetry defaults stamped on the daemon env on every platform; explicit env
-// always wins.
+// Telemetry defaults stamped on the daemon env on every platform.
 //
-// Unpackaged builds keep local event recording but never export to PostHog: a
-// dev loop or a CI job driving the real app would otherwise bill production
-// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
-// exercise the export path from a dev build.
+// Remote export is compiled off in this fork, and deliberately does NOT read
+// process.env: this object is merged last over the resolved shell env (see the
+// spread order in buildDaemonEnv's callers), so whatever it sets wins. That is
+// also why upstream's documented env opt-out does not work for a packaged app
+// launched from the Dock — the Dock process never sourced the user's profile, so
+// the opt-out the user exported in their shell was not in process.env to be read
+// in the first place, while this override applied regardless. A build-time
+// constant is the only form of "off" that survives every launch path.
+//
+// Local event recording stays on: it never leaves the machine, and the app's own
+// surfaces read it.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
-		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
+		AO_TELEMETRY_REMOTE: "off",
+		AO_TELEMETRY_POSTHOG_KEY: "",
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
 		// The daemon binary has no version of its own that release tooling sets,
 		// so without this every daemon event lands unattributable to a release.

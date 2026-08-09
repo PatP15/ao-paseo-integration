@@ -301,6 +301,1041 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/execution/bindings:
+    get:
+      operationId: listExecutionBindings
+      parameters:
+      - description: Only bindings for this project.
+        in: query
+        name: projectId
+        schema:
+          description: Only bindings for this project.
+          type: string
+      - description: Only bindings on this host.
+        in: query
+        name: hostId
+        schema:
+          description: Only bindings on this host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionBindingsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List project-to-host bindings, optionally filtered by project or host
+      tags:
+      - execution
+  /api/v1/execution/bindings/{projectId}/{hostId}/sync:
+    post:
+      operationId: syncExecutionBinding
+      parameters:
+      - description: Bound project.
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: Bound project.
+          type: string
+      - description: Bound execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Bound execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersBindingDriftEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fast-forward one binding's checkout and return its refreshed drift;
+        non-ff is refused with git's own words
+      tags:
+      - execution
+  /api/v1/execution/commands/{commandId}:
+    get:
+      operationId: getExecutionCommand
+      parameters:
+      - description: Outbox command identifier, as returned by dispatch and decision
+          responses.
+        in: path
+        name: commandId
+        required: true
+        schema:
+          description: Outbox command identifier, as returned by dispatch and decision
+            responses.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionCommandResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one outbox command's delivery state
+      tags:
+      - execution
+  /api/v1/execution/dispatch:
+    post:
+      operationId: dispatchExecution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DispatchExecutionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchExecutionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Dispatch one approved work-item attempt to a routed host
+      tags:
+      - execution
+  /api/v1/execution/hosts:
+    get:
+      operationId: listExecutionHosts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExecutionHostsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List registered remote execution hosts with capabilities and load
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}:
+    put:
+      operationId: registerExecutionHost
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterExecutionHostRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionHostEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Register or replace one remote execution host
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/instructions:
+    get:
+      operationId: getExecutionHostInstructions
+      parameters:
+      - description: Read the file live through the maintenance channel and persist
+          before answering.
+        in: query
+        name: refresh
+        schema:
+          description: Read the file live through the maintenance channel and persist
+            before answering.
+          type: boolean
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionInstructionsEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the host's machine-scope CLAUDE.md, cached with confirmedAt; refresh=true
+        reads live
+      tags:
+      - execution
+    put:
+      operationId: putExecutionHostInstructions
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPutExecutionInstructionsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionInstructionsEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Replace the host''s machine-scope CLAUDE.md: write, worker confirm-read,
+        persist; drift refused whole'
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/inventory:
+    get:
+      operationId: getExecutionHostInventory
+      parameters:
+      - description: Run the maintenance channel live and persist before answering;
+          without it the cached rows answer with their asOf timestamps.
+        in: query
+        name: refresh
+        schema:
+          description: Run the maintenance channel live and persist before answering;
+            without it the cached rows answer with their asOf timestamps.
+          type: boolean
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionHostInventoryResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Read one host''s maintenance view: installed skills and confirmed
+        preferences, cached with asOf; refresh=true runs the channel live'
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/preferences:
+    put:
+      operationId: putExecutionHostPreferences
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPutExecutionPreferencesRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionPreferencesEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Replace the host''s orchestration preferences: write, worker confirm-read,
+        persist; drift and unreachable hosts are refused whole'
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/probe:
+    post:
+      operationId: probeExecutionHost
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionHostEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Probe one host now and return the refreshed registry entry
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/providers:
+    get:
+      operationId: listExecutionHostProviders
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionProvidersResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'List what one host can launch: providers, models, and thinking options'
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/schedules:
+    get:
+      operationId: listExecutionHostSchedules
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionSchedulesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List one host's recurring schedules live; heartbeats have no listing
+        and are not covered
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/schedules/{scheduleId}:
+    delete:
+      operationId: deleteExecutionHostSchedule
+      parameters:
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      - description: Schedule identifier as the host's daemon reports it.
+        in: path
+        name: scheduleId
+        required: true
+        schema:
+          description: Schedule identifier as the host's daemon reports it.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Delete one schedule on one host
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/skills/{name}/sync:
+    post:
+      operationId: syncExecutionHostSkill
+      parameters:
+      - description: Target execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Target execution host.
+          type: string
+      - description: Bare skill directory name.
+        in: path
+        name: name
+        required: true
+        schema:
+          description: Bare skill directory name.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSyncSkillRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionHostInventoryResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Push one skill onto the host from 'local' or another host, confirmed
+        by the host's own re-inventory
+      tags:
+      - execution
+  /api/v1/execution/permissions/{questionId}/decision:
+    post:
+      operationId: decideExecutionPermission
+      parameters:
+      - description: Human-inbox question identifier.
+        in: path
+        name: questionId
+        required: true
+        schema:
+          description: Human-inbox question identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideExecutionPermissionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionDecisionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Allow or deny a pending host permission request
+      tags:
+      - execution
+  /api/v1/execution/projects/{projectId}/hosts/{hostId}:
+    put:
+      operationId: bindProjectHost
+      parameters:
+      - description: AO project id
+        in: path
+        name: projectId
+        required: true
+        schema:
+          description: AO project id
+          type: string
+      - description: Registered execution host id
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersBindProjectRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersBindProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Bind a project to a host by its checkout path there
+      tags:
+      - execution
+  /api/v1/execution/questions:
+    get:
+      operationId: listExecutionQuestions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExecutionQuestionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List open agent questions and pending host permission requests
+      tags:
+      - execution
+  /api/v1/execution/questions/{questionId}/answer:
+    post:
+      operationId: answerExecutionQuestion
+      parameters:
+      - description: Human-inbox question identifier.
+        in: path
+        name: questionId
+        required: true
+        schema:
+          description: Human-inbox question identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerExecutionQuestionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionDecisionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer an agent-authored question with text
+      tags:
+      - execution
+  /api/v1/execution/secrets:
+    get:
+      operationId: listExecutionSecrets
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionSecretsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List stored secret refs by name; values are never readable
+      tags:
+      - execution
+    post:
+      operationId: createExecutionSecret
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersCreateExecutionSecretRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionSecretEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Store a host credential behind a secret ref
+      tags:
+      - execution
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -945,6 +1980,58 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/instructions:
+    get:
+      operationId: getProjectInstructions
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersProjectInstructionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: The project's committed instruction files plus live per-binding drift
+        against them
+      tags:
+      - execution
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -1364,6 +2451,65 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/execution-events:
+    get:
+      operationId: listSessionExecutionEvents
+      parameters:
+      - description: Last event id already held; response resumes after it. Empty
+          starts from the beginning.
+        in: query
+        name: after
+        schema:
+          description: Last event id already held; response resumes after it. Empty
+            starts from the beginning.
+          type: string
+      - description: Maximum events to return (default 200, capped at 1000).
+        in: query
+        name: limit
+        schema:
+          description: Maximum events to return (default 200, capped at 1000).
+          type: integer
+      - description: AO session whose ingested execution events should be returned.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: AO session whose ingested execution events should be returned.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionEventsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Page one session's ingested execution events, oldest first
+      tags:
+      - execution
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -2586,6 +3732,183 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/work-items:
+    get:
+      operationId: listWorkItems
+      parameters:
+      - description: Project whose work items should be returned.
+        in: query
+        name: projectId
+        schema:
+          description: Project whose work items should be returned.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkItemsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List work items belonging to one project
+      tags:
+      - workItems
+    post:
+      operationId: createWorkItem
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkItemInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Create a draft work item in a project's durable work graph
+      tags:
+      - workItems
+  /api/v1/work-items/{id}:
+    get:
+      operationId: getWorkItem
+      parameters:
+      - description: Work-item identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Work-item identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one work item by ID
+      tags:
+      - workItems
+  /api/v1/work-items/{id}/approval:
+    post:
+      operationId: approveWorkItem
+      parameters:
+      - description: Work-item identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Work-item identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveWorkItemRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Record the approval decision (approve or reject) for a draft or proposed
+        work item
+      tags:
+      - workItems
 components:
   schemas:
     APIError:
@@ -2649,6 +3972,29 @@ components:
       required:
       - id
       - label
+      type: object
+    AnswerExecutionQuestionRequest:
+      properties:
+        answer:
+          type: string
+        answeredBy:
+          description: Recorded in the audit log. Defaults to "human".
+          type: string
+      required:
+      - answer
+      type: object
+    ApproveWorkItemRequest:
+      properties:
+        approver:
+          description: Identity recorded on the decision. Defaults to the OS user
+            running the daemon.
+          type: string
+        decision:
+          description: Approval decision; defaults to approved when omitted.
+          enum:
+          - approved
+          - rejected
+          type: string
       type: object
     BrowserCommandRequest:
       properties:
@@ -2773,6 +4119,509 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersBindProjectRequest:
+      properties:
+        baseBranch:
+          type: string
+        disabled:
+          type: boolean
+        hostRepoPath:
+          type: string
+        priority:
+          type: integer
+        setupProfile:
+          type: string
+      required:
+      - hostRepoPath
+      type: object
+    ControllersBindProjectResponse:
+      properties:
+        baseBranch:
+          type: string
+        enabled:
+          type: boolean
+        hostId:
+          type: string
+        hostRepoPath:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+      required:
+      - projectId
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - priority
+      - enabled
+      type: object
+    ControllersBindingDriftEnvelope:
+      properties:
+        binding:
+          $ref: '#/components/schemas/ControllersBindingDriftResponse'
+      required:
+      - binding
+      type: object
+    ControllersBindingDriftResponse:
+      properties:
+        baseBranch:
+          type: string
+        driftedPaths:
+          items:
+            type: string
+          type: array
+        error:
+          description: Per-binding read failure; one unreachable host does not blank
+            the view.
+          type: string
+        head:
+          type: string
+        hostId:
+          type: string
+        hostRepoPath:
+          type: string
+        inSync:
+          type: boolean
+      required:
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - inSync
+      - driftedPaths
+      type: object
+    ControllersCanonicalInstructionFileResponse:
+      properties:
+        content:
+          type: string
+        path:
+          type: string
+        sha256:
+          type: string
+      required:
+      - path
+      - sha256
+      - content
+      type: object
+    ControllersCreateExecutionSecretRequest:
+      properties:
+        name:
+          description: 'Bare file name the ref will use: no path separators, whitespace,
+            or leading dot.'
+          type: string
+        replace:
+          description: Must be true to rotate an existing ref; otherwise an existing
+            name is refused.
+          type: boolean
+        value:
+          description: The credential. Stored 0600 under the daemon's data dir; never
+            returned, logged, or persisted anywhere else.
+          type: string
+      required:
+      - name
+      - value
+      type: object
+    ControllersDispatchSettings:
+      properties:
+        features:
+          additionalProperties:
+            type: boolean
+          description: Provider feature toggles. Not supported by the pinned Paseo
+            CLI; any entry is refused.
+          type: object
+        skillPolicyOverrides:
+          description: Policy-gated skills explicitly enabled for this task; each
+            is recorded in the audit log with the dispatch.
+          items:
+            type: string
+          type: array
+        thinkingOptionId:
+          description: Thinking option id from the host's provider discovery; requires
+            model to be set.
+          type: string
+      type: object
+    ControllersExecutionBindingResponse:
+      properties:
+        baseBranch:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        hostId:
+          type: string
+        hostRepoPath:
+          description: Checkout path on the host, which AO cannot infer.
+          type: string
+        priority:
+          description: Lower sorts first when several hosts qualify.
+          type: integer
+        projectId:
+          type: string
+        setupProfile:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - projectId
+      - hostId
+      - hostRepoPath
+      - baseBranch
+      - priority
+      - enabled
+      - createdAt
+      - updatedAt
+      type: object
+    ControllersExecutionCommandResponse:
+      properties:
+        acknowledgedAt:
+          format: date-time
+          type: string
+        attemptCount:
+          description: Delivery attempts so far, including escalations.
+          type: integer
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        commandType:
+          enum:
+          - start_agent
+          - send_message
+          - answer_permission
+          - deny_permission
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        hostId:
+          type: string
+        lastError:
+          description: Most recent delivery failure, cleared by success.
+          type: string
+        nextAttemptAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+      required:
+      - commandId
+      - sessionId
+      - hostId
+      - commandType
+      - commandState
+      - attemptCount
+      - createdAt
+      - nextAttemptAt
+      - acknowledgedAt
+      type: object
+    ControllersExecutionEventResponse:
+      properties:
+        applied:
+          description: Whether AO has applied this event to its own state.
+          type: boolean
+        hostId:
+          type: string
+        id:
+          type: string
+        ingestedAt:
+          format: date-time
+          type: string
+        kind:
+          description: Event type as ingested, e.g. checkpoint, status_transition.
+          type: string
+        launchId:
+          type: string
+        observedAt:
+          format: date-time
+          type: string
+        payloadJson:
+          type: string
+        sessionId:
+          type: string
+        transport:
+          enum:
+          - terminal
+          - sentinel
+          - inspect
+          - output_schema
+          type: string
+      required:
+      - id
+      - sessionId
+      - hostId
+      - kind
+      - transport
+      - payloadJson
+      - observedAt
+      - ingestedAt
+      - applied
+      type: object
+    ControllersExecutionHostInventoryResponse:
+      properties:
+        prefs:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+        refreshed:
+          description: True when this response came from a live channel run rather
+            than cache alone.
+          type: boolean
+        skills:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionHostSkillResponse'
+          type: array
+        skillsAsOf:
+          format: date-time
+          type: string
+      required:
+      - skills
+      - skillsAsOf
+      - refreshed
+      type: object
+    ControllersExecutionHostPrefsResponse:
+      properties:
+        confirmedAt:
+          format: date-time
+          type: string
+        content:
+          type: string
+        exists:
+          description: False when the file is absent on the host; content is then
+            empty and sha256 is the empty-string hash.
+          type: boolean
+        sha256:
+          type: string
+      required:
+      - content
+      - sha256
+      - exists
+      - confirmedAt
+      type: object
+    ControllersExecutionHostSkillResponse:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        policyGated:
+          type: boolean
+      required:
+      - name
+      - policyGated
+      type: object
+    ControllersExecutionInstructionsEnvelope:
+      properties:
+        instructions:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+          description: Absent when the host has never been read.
+      required:
+      - instructions
+      type: object
+    ControllersExecutionPreferencesEnvelope:
+      properties:
+        prefs:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+      required:
+      - prefs
+      type: object
+    ControllersExecutionProviderModeResponse:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      type: object
+    ControllersExecutionProviderModelResponse:
+      properties:
+        defaultThinkingOptionId:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        thinkingOptionIds:
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      - label
+      - thinkingOptionIds
+      type: object
+    ControllersExecutionProviderResponse:
+      properties:
+        defaultMode:
+          type: string
+        enabled:
+          type: boolean
+        label:
+          type: string
+        modeLabels:
+          items:
+            type: string
+          type: array
+        models:
+          description: Populated for available providers only.
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderModelResponse'
+          type: array
+        modes:
+          description: Mode ids with labels, learned from a live agent of this provider
+            on the host. Empty when the host has none yet.
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderModeResponse'
+          type: array
+        provider:
+          type: string
+        status:
+          description: Provider availability as the host daemon reports it, e.g. available
+            or unavailable.
+          type: string
+      required:
+      - provider
+      - label
+      - status
+      - enabled
+      - modeLabels
+      - modes
+      - models
+      type: object
+    ControllersExecutionScheduleResponse:
+      properties:
+        cadence:
+          type: string
+        id:
+          type: string
+        lastRunAt:
+          format: date-time
+          type: string
+        name:
+          type: string
+        nextRunAt:
+          format: date-time
+          type: string
+        policyViolation:
+          type: boolean
+        status:
+          type: string
+        target:
+          type: string
+      required:
+      - id
+      - cadence
+      - status
+      - nextRunAt
+      - lastRunAt
+      - policyViolation
+      type: object
+    ControllersExecutionSecretEnvelope:
+      properties:
+        ref:
+          description: The stored ref, as passed to endpointSecretRef at host registration.
+          type: string
+      required:
+      - ref
+      type: object
+    ControllersListExecutionBindingsResponse:
+      properties:
+        bindings:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionBindingResponse'
+          type: array
+      required:
+      - bindings
+      type: object
+    ControllersListExecutionEventsResponse:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionEventResponse'
+          type: array
+        nextAfter:
+          type: string
+      required:
+      - events
+      type: object
+    ControllersListExecutionProvidersResponse:
+      properties:
+        providers:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderResponse'
+          type: array
+      required:
+      - providers
+      type: object
+    ControllersListExecutionSchedulesResponse:
+      properties:
+        schedules:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionScheduleResponse'
+          type: array
+      required:
+      - schedules
+      type: object
+    ControllersListExecutionSecretsResponse:
+      properties:
+        refs:
+          items:
+            type: string
+          type: array
+      required:
+      - refs
+      type: object
+    ControllersProjectInstructionsResponse:
+      properties:
+        bindings:
+          items:
+            $ref: '#/components/schemas/ControllersBindingDriftResponse'
+          type: array
+        branch:
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/ControllersCanonicalInstructionFileResponse'
+          type: array
+      required:
+      - branch
+      - files
+      - bindings
+      type: object
+    ControllersPutExecutionInstructionsRequest:
+      properties:
+        baseSha256:
+          description: Hex sha256 of the content currently on the host. A mismatch
+            is refused as drift.
+          type: string
+        content:
+          description: Complete new file content.
+          type: string
+      required:
+      - content
+      - baseSha256
+      type: object
+    ControllersPutExecutionPreferencesRequest:
+      properties:
+        baseSha256:
+          description: Hex sha256 of the content currently on the host, from the inventory
+            read. A mismatch on the host is refused as drift.
+          type: string
+        content:
+          description: Complete new file content; must be valid JSON.
+          type: string
+      required:
+      - content
+      - baseSha256
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -2783,6 +4632,17 @@ components:
           format: date-time
           type: string
         displayName:
+          type: string
+        executionAttempt:
+          description: Provision attempt this session is bound to; bumps on ambiguous-create
+            escalation.
+          type: integer
+        executionBackend:
+          description: Execution substrate that owns the session's process, e.g. paseo.
+            Absent for local sessions.
+          type: string
+        executionHostId:
+          description: Registered host this session runs on. Absent for local sessions.
           type: string
         harness:
           type: string
@@ -2840,6 +4700,9 @@ components:
         updatedAt:
           format: date-time
           type: string
+        workspaceTitle:
+          description: AO-owned remote workspace title, e.g. ao:<session>:<attempt>.
+          type: string
       required:
       - id
       - projectId
@@ -2860,6 +4723,68 @@ components:
           type: string
       required:
       - data
+      type: object
+    ControllersSyncSkillRequest:
+      properties:
+        source:
+          description: '''local'' for the AO machine''s own ~/.claude/skills, or a
+            registered host id.'
+          type: string
+      required:
+      - source
+      type: object
+    CreateWorkItemInput:
+      properties:
+        acceptanceCriteria:
+          items:
+            type: string
+          type: array
+        allowedScope:
+          items:
+            type: string
+          type: array
+        body:
+          type: string
+        createdBy:
+          type: string
+        excludedScope:
+          items:
+            type: string
+          type: array
+        parentWorkItemId:
+          type: string
+        policyProfileId:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+        riskLevel:
+          type: string
+        title:
+          type: string
+      required:
+      - projectId
+      - title
+      type: object
+    DecideExecutionPermissionRequest:
+      properties:
+        decidedBy:
+          description: Recorded in the audit log. Defaults to "human".
+          type: string
+        decision:
+          enum:
+          - allow
+          - deny
+          type: string
+        note:
+          type: string
+        requestId:
+          description: Optional confirmation. Must equal the full host request id
+            AO observed; a truncated id is rejected.
+          type: string
+      required:
+      - decision
       type: object
     DegradedProject:
       properties:
@@ -2945,6 +4870,84 @@ components:
       required:
       - report
       type: object
+    DispatchExecutionRequest:
+      properties:
+        branch:
+          type: string
+        displayName:
+          type: string
+        harness:
+          description: AO harness recorded for the session. Must be one AO already
+            supports.
+          type: string
+        issueId:
+          type: string
+        mode:
+          type: string
+        model:
+          type: string
+        projectId:
+          type: string
+        prompt:
+          type: string
+        provider:
+          description: Remote provider to launch, e.g. claude or codex.
+          type: string
+        requiredCapabilities:
+          items:
+            type: string
+          type: array
+        settings:
+          $ref: '#/components/schemas/ControllersDispatchSettings'
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+        workItemId:
+          type: string
+      required:
+      - workItemId
+      - projectId
+      - trustZone
+      - harness
+      - branch
+      - provider
+      - prompt
+      type: object
+    DispatchExecutionResponse:
+      properties:
+        attempt:
+          type: integer
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        hostId:
+          type: string
+        intentId:
+          description: Correlates the launch with later reconciliation if AO dies
+            mid-create.
+          type: string
+        sessionId:
+          type: string
+        workspaceTitle:
+          type: string
+      required:
+      - sessionId
+      - hostId
+      - workspaceTitle
+      - intentId
+      - attempt
+      - commandId
+      - commandState
+      type: object
     DomainActivity:
       properties:
         lastActivityAt:
@@ -2962,6 +4965,164 @@ components:
           type: string
       required:
       - harness
+      type: object
+    ExecutionDecisionResponse:
+      properties:
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        commandType:
+          enum:
+          - send_message
+          - answer_permission
+          - deny_permission
+          type: string
+        questionId:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - questionId
+      - sessionId
+      - commandId
+      - commandType
+      - commandState
+      type: object
+    ExecutionHostEnvelope:
+      properties:
+        host:
+          $ref: '#/components/schemas/ExecutionHostResponse'
+      required:
+      - host
+      type: object
+    ExecutionHostResponse:
+      properties:
+        activeSessions:
+          description: Live bindings on this host, counted at read time.
+          type: integer
+        backendType:
+          description: Execution substrate that owns sessions on this host.
+          type: string
+        capabilities:
+          items:
+            type: string
+          type: array
+        enabled:
+          type: boolean
+        endpoint:
+          description: Host string used to reach the remote daemon. Always contains
+            a colon.
+          type: string
+        endpointSecretRef:
+          description: Reference to the stored credential. Never the credential itself.
+          type: string
+        id:
+          type: string
+        lastFailedProbeAt:
+          format: date-time
+          type: string
+        lastProbeError:
+          type: string
+        lastSuccessfulProbeAt:
+          format: date-time
+          type: string
+        maxConcurrentSessions:
+          type: integer
+        name:
+          type: string
+        paseoVersion:
+          type: string
+        reachable:
+          description: Derived from the most recent probe. Unreachable is a fact about
+            the host only; it never implies its sessions are dead.
+          type: boolean
+        requiresNoMcp:
+          description: 'Always true: AO only drives hosts whose daemon disables agent-control
+            tool injection.'
+          type: boolean
+        requiresNoRelay:
+          type: boolean
+        serverId:
+          description: Server identity observed by a probe. A change invalidates every
+            agent id AO holds for this host.
+          type: string
+        transport:
+          enum:
+          - local
+          - tailscale
+          - lan
+          - paseo_relay
+          type: string
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+      required:
+      - id
+      - name
+      - backendType
+      - transport
+      - endpoint
+      - endpointSecretRef
+      - trustZone
+      - enabled
+      - maxConcurrentSessions
+      - activeSessions
+      - capabilities
+      - reachable
+      - serverId
+      - paseoVersion
+      - requiresNoMcp
+      - requiresNoRelay
+      - lastSuccessfulProbeAt
+      - lastFailedProbeAt
+      type: object
+    ExecutionQuestionResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        externalId:
+          description: 'Source identifier: the report event id, or the host''s full
+            permission request id.'
+          type: string
+        id:
+          type: string
+        options:
+          items:
+            type: string
+          type: array
+        question:
+          type: string
+        recommendation:
+          type: string
+        sessionId:
+          type: string
+        source:
+          description: agent_event is answerable with text; paseo_permission requires
+            an allow/deny decision.
+          enum:
+          - agent_event
+          - paseo_permission
+          type: string
+        workItemId:
+          type: string
+      required:
+      - id
+      - sessionId
+      - source
+      - externalId
+      - question
+      - options
+      - createdAt
       type: object
     ImportReport:
       properties:
@@ -3048,6 +5209,24 @@ components:
       - installed
       - authorized
       type: object
+    ListExecutionHostsResponse:
+      properties:
+        hosts:
+          items:
+            $ref: '#/components/schemas/ExecutionHostResponse'
+          type: array
+      required:
+      - hosts
+      type: object
+    ListExecutionQuestionsResponse:
+      properties:
+        questions:
+          items:
+            $ref: '#/components/schemas/ExecutionQuestionResponse'
+          type: array
+      required:
+      - questions
+      type: object
     ListNotificationsResponse:
       properties:
         nextCursor:
@@ -3115,6 +5294,15 @@ components:
           type: array
       required:
       - shellTerminals
+      type: object
+    ListWorkItemsResponse:
+      properties:
+        workItems:
+          items:
+            $ref: '#/components/schemas/WorkItemResponse'
+          type: array
+      required:
+      - workItems
       type: object
     ListWorkspaceFilesResponse:
       properties:
@@ -3271,10 +5459,15 @@ components:
           enum:
           - session
           - pr
+          - execution_question
           type: string
         prUrl:
           type: string
+        questionId:
+          type: string
         sessionId:
+          type: string
+        workItemId:
           type: string
       required:
       - kind
@@ -3532,6 +5725,57 @@ components:
       - token
       - createdAt
       - lastSeenAt
+      type: object
+    RegisterExecutionHostRequest:
+      properties:
+        capabilities:
+          description: Routable capabilities, matched exactly during host selection.
+          items:
+            type: string
+          type: array
+        enabled:
+          type: boolean
+        endpoint:
+          description: Host string for the remote daemon. Must contain a colon and
+            must not embed a credential.
+          type: string
+        endpointSecretRef:
+          description: Reference to a stored credential. Pass a reference, never a
+            password or offer URL.
+          type: string
+        maxConcurrentSessions:
+          maximum: 64
+          minimum: 1
+          type: integer
+        name:
+          type: string
+        requiresNoMcp:
+          description: Must be true. AO refuses hosts whose daemon injects agent-control
+            tools.
+          type: boolean
+        requiresNoRelay:
+          type: boolean
+        transport:
+          enum:
+          - local
+          - tailscale
+          - lan
+          - paseo_relay
+          type: string
+        trustZone:
+          enum:
+          - hobby
+          - work
+          - mixed
+          type: string
+      required:
+      - name
+      - transport
+      - endpoint
+      - trustZone
+      - enabled
+      - maxConcurrentSessions
+      - requiresNoMcp
       type: object
     RegisterPushDeviceRequest:
       properties:
@@ -4325,6 +6569,90 @@ components:
       required:
       - title
       type: object
+    WorkItemEnvelope:
+      properties:
+        workItem:
+          $ref: '#/components/schemas/WorkItemResponse'
+      required:
+      - workItem
+      type: object
+    WorkItemResponse:
+      properties:
+        acceptanceCriteria:
+          items:
+            type: string
+          type: array
+        allowedScope:
+          items:
+            type: string
+          type: array
+        approvalState:
+          enum:
+          - draft
+          - proposed
+          - approved
+          - rejected
+          type: string
+        approvedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        approvedBy:
+          type: string
+        body:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        createdById:
+          type: string
+        createdByType:
+          type: string
+        excludedScope:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        lifecycleFact:
+          enum:
+          - open
+          - in_progress
+          - done
+          - cancelled
+          type: string
+        parentWorkItemId:
+          type: string
+        policyProfileId:
+          type: string
+        priority:
+          type: integer
+        projectId:
+          type: string
+        riskLevel:
+          type: string
+        title:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - title
+      - body
+      - acceptanceCriteria
+      - allowedScope
+      - excludedScope
+      - riskLevel
+      - approvalState
+      - lifecycleFact
+      - priority
+      - createdByType
+      - createdAt
+      - updatedAt
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -4452,3 +6780,8 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Remote execution hosts, work dispatch, and the human inbox of questions
+    and permission decisions
+  name: execution
+- description: Durable work graph creation, approval, and project-scoped reads
+  name: workItems

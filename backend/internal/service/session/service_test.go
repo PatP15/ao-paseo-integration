@@ -610,7 +610,10 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if err := os.MkdirAll(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, child, "init")
+	// Pin the initial branch away from any default-branch candidate (git may
+	// default init to "main"): this test needs the child compare to fall back
+	// to the worktree row's SHA, not resolve a branch.
+	runGit(t, child, "init", "-b", "child-base")
 	runGit(t, child, "config", "user.email", "ao@example.com")
 	runGit(t, child, "config", "user.name", "AO Tests")
 	writeWorkspaceFile(t, child, "service.go", "package api\n")

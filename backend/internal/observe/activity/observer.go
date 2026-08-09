@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/execpolicy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -104,6 +105,18 @@ func (o *Observer) reconcile(ctx context.Context, session domain.SessionRecord, 
 	if session.IsTerminated || session.Activity.State != domain.ActivityActive ||
 		session.Activity.LastActivityAt.IsZero() || now.Sub(session.Activity.LastActivityAt) < o.staleAfter ||
 		session.Metadata.RuntimeHandleID == "" || o.agents == nil {
+		return
+	}
+	// This observer reads a local terminal pane. Its capability lookup is keyed
+	// on the harness, and a remotely executed session deliberately reuses an
+	// existing harness value rather than widening the sessions.harness CHECK —
+	// so the resolved adapter's TerminalActivityDetector would happily run its
+	// tmux-pane regex over a remote agent's transcript and write an ActivityIdle
+	// derived from whatever it matched. The remote observer owns activity facts
+	// for these sessions; skipping here is the refusal, not a fallback.
+	if execpolicy.IsRemoteHandle(session.Metadata.RuntimeHandleID) {
+		o.logger.Debug("activity observer: skipping remotely executed session; its observer owns activity",
+			"session", session.ID, "handle", session.Metadata.RuntimeHandleID)
 		return
 	}
 	agent, ok := o.agents.Agent(session.Harness)

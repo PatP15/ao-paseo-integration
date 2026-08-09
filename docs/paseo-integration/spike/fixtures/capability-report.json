@@ -1,0 +1,76 @@
+{
+  "counts": {
+    "fail": 0,
+    "pass": 12,
+    "skip": 1
+  },
+  "paseoVersion": "unknown",
+  "schema": "ao.paseo-capability-report.v1",
+  "verdicts": [
+    {
+      "note": "preflight",
+      "step": "S0",
+      "verdict": "pass"
+    },
+    {
+      "note": "throwaway daemon up on 127.0.0.1:6799",
+      "step": "S6a",
+      "verdict": "pass"
+    },
+    {
+      "note": "unauthenticated request rejected with an auth error",
+      "step": "S7a",
+      "verdict": "pass"
+    },
+    {
+      "note": "host:port + PASEO_PASSWORD works",
+      "step": "S7b",
+      "verdict": "pass"
+    },
+    {
+      "note": "tcp://host:port?password= works",
+      "step": "S7c",
+      "verdict": "pass"
+    },
+    {
+      "note": "documented, not exercised (would target the operator daemon)",
+      "step": "S7d",
+      "verdict": "skip"
+    },
+    {
+      "note": "workspace --title round-trips as ls .name",
+      "step": "S3",
+      "verdict": "pass"
+    },
+    {
+      "note": "terminal capture recovered deterministic NDJSON with line cursors",
+      "step": "S1f",
+      "verdict": "pass"
+    },
+    {
+      "note": "sentinel survived intact on its own line",
+      "step": "S1a",
+      "verdict": "pass"
+    },
+    {
+      "note": "ls -ag --label found exactly the intended agent",
+      "step": "S2a",
+      "verdict": "pass"
+    },
+    {
+      "note": "CONFIRMED fail-open: malformed label returned unfiltered results",
+      "step": "S2b",
+      "verdict": "pass"
+    },
+    {
+      "note": "inspect .Worktree echoes paseo.worktree \u2014 label read-back works",
+      "step": "S2c",
+      "verdict": "pass"
+    },
+    {
+      "note": "latency measured",
+      "step": "S10",
+      "verdict": "pass"
+    }
+  ]
+}

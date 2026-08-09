@@ -194,6 +194,9 @@ type Manager struct {
 	agents    ports.AgentResolver
 	workspace ports.Workspace
 	store     Store
+	// external routes a spawn to an execution host instead of a local worktree
+	// and runtime (see spawn_external.go). Nil means every session is local.
+	external externalSpawner
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -329,6 +332,9 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// ExternalSpawner routes spawns to a remote execution backend
+	// (spawn_external.go). Nil — every local deployment — keeps Spawn local.
+	ExternalSpawner externalSpawner
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -339,6 +345,7 @@ func New(d Deps) *Manager {
 		agents:              d.Agents,
 		workspace:           d.Workspace,
 		store:               d.Store,
+		external:            d.ExternalSpawner,
 		lcm:                 d.Lifecycle,
 		preview:             d.Preview,
 		browser:             d.Browser,
@@ -398,6 +405,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
 	if cfg.Harness == "" {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	}
+
+	// Branch to an execution backend after the harness is resolved and before
+	// the first local assumption: everything below needs an argv, a binary on
+	// PATH, a git worktree, and a local PTY. See spawn_external.go.
+	if m.external != nil {
+		placement, remote, err := m.external.PlaceSpawn(ctx, cfg)
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: placement: %w", err)
+		}
+		if remote {
+			return m.spawnExternal(ctx, cfg, project, placement)
+		}
 	}
 
 	// Reject an unknown harness before any durable state is created. Doing this
@@ -910,7 +930,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
+		// stopSessionRuntime tolerates an unreachable execution host; a local
+		// runtime that may still be alive still stops Kill here.
+		if err := m.stopSessionRuntime(ctx, rec, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
@@ -1152,7 +1174,9 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	// nothing meaningful to restore from. Surface this as a typed 409 instead of
 	// letting workspace.Restore fail with an opaque wrapped error.
 	if meta.WorkspacePath == "" || (meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
-		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
+		// A remote session lands here permanently and is refused as unsupported
+		// rather than as incomplete; see incompleteHandleOrRemote.
+		return RestoreResult{}, m.incompleteHandleOrRemote(ctx, rec, "restore")
 	}
 	// Resumability is decided inside restoreArgv, not here. A promptless session
 	// can still be fully resumable when the harness pins a deterministic session id
@@ -1196,7 +1220,7 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	meta := rec.Metadata
 	if meta.WorkspacePath == "" || meta.Branch == "" || meta.RuntimeHandleID == "" {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
+		return RestoreResult{}, m.incompleteHandleOrRemote(ctx, rec, "resume agent")
 	}
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
@@ -1376,6 +1400,10 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 		if rec.IsTerminated {
 			continue
 		}
+		// Decision: shutdown does NOT stop remote agents. See skipRemoteTeardown.
+		if m.skipRemoteTeardown(ctx, rec) {
+			continue
+		}
 		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 			continue
 		}
@@ -1473,6 +1501,11 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		return err
 	}
 	projectKind := project.Kind.WithDefault()
+	// Adopt a remote session unconditionally, above the local early return
+	// rather than incidentally through it; see adoptRemoteOnBoot.
+	if m.adoptRemoteOnBoot(rec) {
+		return nil
+	}
 	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
 		return nil
 	}
@@ -2218,6 +2251,16 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		}
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {
+			// A remote session has no local workspace but still holds an agent
+			// slot on its host; cleanupExternal reclaims and reports it. A local
+			// pathless session falls through unchanged.
+			handled, err := m.cleanupExternal(ctx, rec, &result)
+			if err != nil {
+				return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
+			}
+			if handled {
+				continue
+			}
 			m.cleanupSystemPromptDir(rec.ID)
 			continue
 		}

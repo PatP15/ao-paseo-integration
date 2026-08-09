@@ -38,6 +38,11 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	SessionExecution    controllers.SessionExecutionBindingReader
+	Execution           controllers.ExecutionService
+	ExecutionDispatch   controllers.ExecutionDispatcher
+	ExecutionSecrets    controllers.ExecutionSecretStore
+	WorkItems           controllers.WorkItemService
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -55,6 +60,8 @@ type API struct {
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
+	execution     *controllers.ExecutionController
+	workItems     *controllers.WorkItemsController
 	events        *EventsController
 }
 
@@ -71,10 +78,11 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:           deps.Sessions,
-			Activity:      deps.Activity,
-			PreviewServer: deps.PreviewServer,
-			Capabilities:  deps.SessionCapabilities,
+			Svc:               deps.Sessions,
+			Activity:          deps.Activity,
+			PreviewServer:     deps.PreviewServer,
+			Capabilities:      deps.SessionCapabilities,
+			ExecutionBindings: deps.SessionExecution,
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
@@ -84,6 +92,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
+		execution:     &controllers.ExecutionController{Svc: deps.Execution, Dispatch: deps.ExecutionDispatch, Secrets: deps.ExecutionSecrets},
+		workItems:     &controllers.WorkItemsController{Svc: deps.WorkItems},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -113,6 +123,8 @@ func (a *API) Register(root chi.Router) {
 			a.shellTerms.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
+			a.execution.Register(r)
+			a.workItems.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

@@ -70,6 +70,12 @@ func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimePro
 		clock:    cfg.Clock,
 		logger:   cfg.Logger,
 	}
+	// Optional capability, probed by type assertion on the concrete value. A
+	// runtime that does not implement it leaves r.workload nil, which silently
+	// disables Runtime=ProbeAlive/Workload=ProbeDead facts — so a session whose
+	// agent process exits inside a still-live pane never leaves "working".
+	// runtimeselect.Runtime keeps this method in its union interface, and
+	// runtimeselect's tests assert it, so a decorator cannot drop it unnoticed.
 	if workload, ok := runtime.(ports.SupervisedProcessInspector); ok {
 		r.workload = workload
 	}
@@ -162,6 +168,8 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		facts.Runtime = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
+	case !alive && r.externalDeadProbeIsAmbiguous(ctx, sess.ID):
+		facts.Runtime = ports.ProbeFailed
 	case !alive:
 		facts.Runtime = ports.ProbeDead
 	default:

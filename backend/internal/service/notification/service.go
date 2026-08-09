@@ -156,6 +156,12 @@ func notificationFromRecord(rec domain.NotificationRecord) Notification {
 }
 
 func targetForRecord(rec domain.NotificationRecord) Target {
+	if rec.QuestionID != "" {
+		return Target{
+			Kind: TargetExecutionQuestion, SessionID: rec.SessionID,
+			QuestionID: rec.QuestionID, WorkItemID: rec.WorkItemID,
+		}
+	}
 	if rec.PRURL != "" {
 		return Target{Kind: TargetPR, SessionID: rec.SessionID, PRURL: rec.PRURL}
 	}

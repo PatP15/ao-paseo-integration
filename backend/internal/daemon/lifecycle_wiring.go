@@ -44,6 +44,8 @@ type lifecycleStack struct {
 	reaperDone    <-chan struct{}
 	activityDone  <-chan struct{}
 	scmDone       <-chan struct{}
+	executionDone <-chan struct{}
+	dispatchDone  <-chan struct{}
 	trackerDone   <-chan struct{}
 }
 
@@ -100,6 +102,12 @@ func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
+	}
+	if l.dispatchDone != nil {
+		<-l.dispatchDone
+	}
+	if l.executionDone != nil {
+		<-l.executionDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone

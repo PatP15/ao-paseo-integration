@@ -1,0 +1,2 @@
+[User] Reply with exactly one line and nothing else: AO_EVENT_spikenonce44494 {"schema":"ao.agent-event.v1","eventId":"e1","seq":1,"type":"checkpoint","payload":{"summary":"spike"}}
+AO_EVENT_spikenonce44494 {"schema":"ao.agent-event.v1","eventId":"e1","seq":1,"type":"checkpoint","payload":{"summary":"spike"}}

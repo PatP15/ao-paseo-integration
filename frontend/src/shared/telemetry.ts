@@ -30,20 +30,25 @@ export function parseDisabledEvents(raw: string | undefined): string[] {
 }
 
 /**
- * Whether the renderer may export to PostHog.
+ * Whether the renderer may export to PostHog. Compiled off in this fork.
  *
- * Unpackaged builds are off by default so a developer's ordinary session does
- * not land in the production project as a real install. Setting
- * `AO_TELEMETRY_RENDERER=on` opts a dev build back in for deliberate testing.
+ * Upstream returns `isPackaged` here, with `AO_TELEMETRY_RENDERER` as an
+ * override. Renderer events — including unhandled exception stack traces — go
+ * straight to PostHog without passing through the daemon's sink, so the daemon's
+ * kill switch does not cover them and turning the daemon export off is not
+ * enough on its own.
+ *
+ * The signature is kept so callers and their tests are untouched, and so a
+ * rebase that changes how the decision is *made* still lands on a function this
+ * fork has stubbed rather than on a silently reintroduced export path.
  */
 export function rendererTelemetryEnabled(
 	env: Record<string, string | undefined>,
 	isPackaged: boolean,
 ): boolean {
-	const explicit = env.AO_TELEMETRY_RENDERER?.trim().toLowerCase();
-	if (explicit === "on") return true;
-	if (explicit === "off") return false;
-	return isPackaged;
+	void env;
+	void isPackaged;
+	return false;
 }
 
 export function defaultDataDir(

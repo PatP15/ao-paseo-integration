@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimerouter"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -32,9 +33,13 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
+	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
+	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/secretstore"
+	workitemsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/workitem"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -129,7 +134,8 @@ func Run() error {
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
-	runtimeAdapter := runtimeselect.New(log)
+	localRuntime := runtimeselect.New(log)
+	runtimeAdapter := runtimerouter.New(localRuntime, nil)
 	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
@@ -185,6 +191,11 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	// One backends cache shared by the observer, the dispatch drain, and
+	// provider discovery: all three talk to the same hosts and a second cache
+	// would double the client count and version handshakes.
+	executionClients := newExecutionBackends(store, cfg.DataDir, log)
+	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, notificationWriter, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -251,6 +262,31 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// G5: refuse at registration a host whose daemon identity matches the
+	// operator's own local Paseo daemon — the one moment AO can see both
+	// identities. Additive to the runtime server_id-drift guard, and fail-open
+	// if either daemon cannot be probed (the drift guard still covers runtime).
+	execSvc := executionsvc.New(store)
+	selfTargetGuard := newSelfTargetGuard(cfg.DataDir, log)
+	execSvc.SetSelfTargetGuard(selfTargetGuard)
+	execSvc.SetHostProber(newHostProber(store, cfg.DataDir, log, selfTargetGuard))
+	execSvc.SetProviderDiscovery(newProviderDiscovery(executionClients))
+	execSvc.SetQuestionResolvedHook(newQuestionResolvedHook(notificationWriter, log))
+	execSvc.SetScheduleChannel(newScheduleChannel(executionClients))
+	execSvc.SetMaintenanceChannel(maintenanceChannel{backends: executionClients})
+	execSvc.SetInstructionsChannel(maintenanceChannel{backends: executionClients})
+	// Decisions made from the dashboard carry the identity of whoever runs the
+	// daemon; explicit identities (the CLI's --by) always win over this default.
+	execSvc.SetDefaultActor(operatorIdentity)
+	workItemSvc := workitemsvc.New(store)
+	workItemSvc.SetDefaultApprover(operatorIdentity)
+	// Dispatch settings are validated against the same discovery (and its
+	// cache) the providers endpoint serves, so what the UI offered and what
+	// dispatch accepts can never be two different vocabularies.
+	dispatchSvc := dispatchsvc.New(store)
+	dispatchSvc.SetSettingsValidator(execSvc.ValidateDispatchSettings)
+	dispatchSvc.SetDefaultActor(operatorIdentity)
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
@@ -276,6 +312,15 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		// Remote execution is served read/write from the store alone: the host
+		// registry and the human inbox are durable facts, and a dispatch commits
+		// facts plus an outbox command. Neither path contacts a host, so both work
+		// with no execution backend registered yet.
+		SessionExecution:  store,
+		Execution:         execSvc,
+		ExecutionDispatch: dispatchSvc,
+		ExecutionSecrets:  secretstore.New(cfg.DataDir),
+		WorkItems:         workItemSvc,
 	})
 	if err != nil {
 		stop()

@@ -41,12 +41,26 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 // needs (git diff/log/show to inspect the PR, printf to pipe review JSON into
 // the downstream commands without writing a worktree file, gh to post the
 // review, and `ao review submit` to record the verdict) without stalling.
+//
+// The gh entries are deliberately narrow. A blanket Bash(gh:*) auto-approves
+// the whole forge CLI — `gh auth token`, `gh secret set`, `gh repo delete`,
+// `gh api --method DELETE` — under a token that reaches every repository the
+// operator can see, while the reviewer's entire input is a diff and a PR
+// context that anyone who can comment on the PR helped write. Because nothing
+// outside this list can be approved (there is no human in the loop), narrowing
+// it is a hard stop rather than a hint.
+//
+// The two entries are exactly what internal/review/prompt.go instructs. Note it
+// is `gh api --method POST`, not `gh pr review`, that posts the review: the
+// prompt uses the API deliberately, because it is the only form that attaches
+// inline comments and returns the created review's id for AO to record.
 var reviewerAllowedTools = []string{
 	"Read",
 	"Grep",
 	"Glob",
 	"Bash(printf:*)",
-	"Bash(gh:*)",
+	"Bash(gh api --method GET:*)",
+	"Bash(gh api --method POST repos/:*)",
 	"Bash(git diff:*)",
 	"Bash(git log:*)",
 	"Bash(git show:*)",
@@ -57,12 +71,26 @@ var reviewerAllowedTools = []string{
 // reviewerDisallowedTools hard-denies the write paths as defense in depth, so a
 // misbehaving model cannot edit files or move the branch even if a future
 // allowlist entry would otherwise admit it.
+//
+// The gh denials cover the subcommands that would do real damage with a forge
+// token if a later allowlist entry re-widened the CLI, and the credential read
+// that would put the token itself into a transcript.
 var reviewerDisallowedTools = []string{
 	"Edit",
 	"Write",
 	"NotebookEdit",
 	"Bash(git push:*)",
 	"Bash(git commit:*)",
+	"Bash(gh auth:*)",
+	"Bash(gh secret:*)",
+	"Bash(gh repo:*)",
+	"Bash(gh release:*)",
+	"Bash(gh workflow:*)",
+	"Bash(gh pr merge:*)",
+	"Bash(gh pr close:*)",
+	"Bash(gh api --method DELETE:*)",
+	"Bash(gh api --method PATCH:*)",
+	"Bash(gh api --method PUT:*)",
 }
 
 // ReviewCommand builds a claude-code invocation that reviews the worker's

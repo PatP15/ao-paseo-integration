@@ -297,6 +297,65 @@ func TestMaintainSkillPushRefusesSymlinkedStage(t *testing.T) {
 	}
 }
 
+func TestMaintainSkillPushRefusesPathsThatLeaveTheSkillDirectory(t *testing.T) {
+	for _, escaping := range []string{"../escaped.txt", "nested/../../escaped.txt", "/etc/escaped.txt"} {
+		skillsDir := t.TempDir()
+		lines, seq, err := paseoevent.EncodeFileChunkEvents(testNonce,
+			paseoevent.MaintenancePushFile, escaping, []byte("must-stay-contained"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		end, err := paseoevent.EncodeMaintenanceEvent(testNonce, seq,
+			paseoevent.MaintenancePushEnd, paseoevent.MaintenancePushEndPayload{Files: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream := strings.NewReader(strings.Join(append(lines, end...), "\n") + "\n")
+
+		var out bytes.Buffer
+		if err := MaintainSkillPush(skillsDir, "advisor", testNonce, stream, &out); err != nil {
+			t.Fatal(err)
+		}
+		result := parseRun(t, &out)
+		if result.Err == nil || !strings.Contains(result.Err.Message, "escapes the skill directory") {
+			t.Fatalf("push of %q = %+v", escaping, result)
+		}
+		// The refusal happens before any byte lands, and the staging directory
+		// is removed, so the skills directory is exactly as it was.
+		entries, err := os.ReadDir(skillsDir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("push of %q left %v (err=%v)", escaping, entries, err)
+		}
+	}
+}
+
+func TestSkillVerbsRequireABareSkillName(t *testing.T) {
+	for _, name := range []string{"", "..", "../escaped", "nested/skill", `back\slash`, ".hidden", "two words"} {
+		skillsDir := t.TempDir()
+
+		var read bytes.Buffer
+		if err := MaintainSkillRead(skillsDir, name, testNonce, &read); err != nil {
+			t.Fatal(err)
+		}
+		if result := parseRun(t, &read); result.Err == nil ||
+			!strings.Contains(result.Err.Message, "must be a bare directory name") {
+			t.Fatalf("skill read %q = %+v", name, result)
+		}
+
+		var push bytes.Buffer
+		if err := MaintainSkillPush(skillsDir, name, testNonce, strings.NewReader(""), &push); err != nil {
+			t.Fatal(err)
+		}
+		if result := parseRun(t, &push); result.Err == nil ||
+			!strings.Contains(result.Err.Message, "must be a bare directory name") {
+			t.Fatalf("skill push %q = %+v", name, result)
+		}
+		if entries, err := os.ReadDir(skillsDir); err != nil || len(entries) != 0 {
+			t.Fatalf("skill push %q left %v (err=%v)", name, entries, err)
+		}
+	}
+}
+
 func TestFileVerbsHonorTheAllowlist(t *testing.T) {
 	var out bytes.Buffer
 	if err := MaintainFileRead("etc-passwd", testNonce, &out); err != nil {

@@ -166,7 +166,7 @@ func (b *Backend) HostRepoStatus(
 	if err := validateHostPathArg(repoPath); err != nil {
 		return domain.ExecutionRepoStatus{}, err
 	}
-	if err := validateHostNameArg(baseBranch); err != nil {
+	if err := validateHostRefArg(baseBranch); err != nil {
 		return domain.ExecutionRepoStatus{}, err
 	}
 	result, err := b.runMaintenance(ctx, hostID, "repo-status",
@@ -276,6 +276,45 @@ func validateHostPathArg(path string) error {
 func validateHostNameArg(name string) error {
 	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, " \t\r\n/\\") {
 		return fmt.Errorf("%q is not a valid bare name", name)
+	}
+	return nil
+}
+
+// validateHostRefArg guards a Git ref positional argument. A branch is not a
+// bare name: `release/2026-08` is ordinary and must reach the worker, so this
+// permits `/` while still refusing everything that would either look like a
+// flag to the worker's argument parser or fail Git's own ref rules.
+func validateHostRefArg(ref string) error {
+	invalid := func(reason string) error {
+		return fmt.Errorf("%q is not a valid branch name: %s", ref, reason)
+	}
+	if ref == "" {
+		return invalid("it is empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return invalid("it would be read as a flag")
+	}
+	for _, r := range ref {
+		if r <= ' ' || r == 0x7f {
+			return invalid("it contains whitespace or a control character")
+		}
+		if strings.ContainsRune(`~^:?*[\`, r) {
+			return invalid("it contains a character Git forbids in a ref")
+		}
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "@{") {
+		return invalid("it contains a revision-range or reflog sequence")
+	}
+	if strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") || strings.Contains(ref, "//") {
+		return invalid("its path components are empty")
+	}
+	if strings.HasSuffix(ref, ".") || strings.HasSuffix(ref, ".lock") {
+		return invalid("Git forbids that ending")
+	}
+	for _, component := range strings.Split(ref, "/") {
+		if strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return invalid("a path component starts with a dot or ends with .lock")
+		}
 	}
 	return nil
 }

@@ -227,6 +227,57 @@ func TestMaintenanceRefusalSurfacesTheWorkerMessage(t *testing.T) {
 	}
 }
 
+func TestHostRepoStatusAcceptsABaseBranchWithASlash(t *testing.T) {
+	withFixedNonce(t)
+	client := &fakeMaintenanceClient{
+		fakeExecutionClient: newFakeExecutionClient(nil),
+		workspaceID:         "wks-maint",
+		captureLines: framedLines(t, func(out *bytes.Buffer) error {
+			if err := paseoevent.WriteMaintenanceEvent(out, maintenanceTestNonce, 1, paseoevent.MaintenanceRepoFile,
+				paseoevent.MaintenanceRepoFilePayload{Path: "CLAUDE.md", SHA256: sha256HexOf([]byte("x"))}); err != nil {
+				return err
+			}
+			return paseoevent.WriteMaintenanceEvent(out, maintenanceTestNonce, 2, paseoevent.MaintenanceDone,
+				paseoevent.MaintenanceDonePayload{Count: 1, Head: "abc123"})
+		}),
+	}
+	backend := newBackend(client, newMemoryExecutionStore(nil), func() time.Time { return backendTestNow })
+
+	// A binding may name any branch, and `release/2026-08` is the ordinary
+	// shape. Refusing the slash here would make instruction drift and sync
+	// permanently unavailable for every project not based on a bare name.
+	status, err := backend.HostRepoStatus(context.Background(), "host-1", "/srv/repo", "release/2026-08")
+	if err != nil {
+		t.Fatalf("HostRepoStatus = %v", err)
+	}
+	if status.Head != "abc123" || len(status.Files) != 1 || status.Files[0].Path != "CLAUDE.md" {
+		t.Fatalf("status = %+v", status)
+	}
+	if len(client.sentCommands) != 1 || !strings.Contains(client.sentCommands[0], "'release/2026-08'") {
+		t.Fatalf("sent command = %v", client.sentCommands)
+	}
+}
+
+func TestHostRepoStatusRefusesUnsafeBaseBranches(t *testing.T) {
+	withFixedNonce(t)
+	for _, ref := range []string{
+		"", "--repo", "-x", "main other", "main\nrm", "main..other", "main@{1}", "ma*in",
+		"/main", "main/", "main//x", "main.lock", "main.", ".hidden", "feature/.hidden",
+	} {
+		client := &fakeMaintenanceClient{
+			fakeExecutionClient: newFakeExecutionClient(nil),
+			workspaceID:         "wks-maint",
+		}
+		backend := newBackend(client, newMemoryExecutionStore(nil), func() time.Time { return backendTestNow })
+		if _, err := backend.HostRepoStatus(context.Background(), "host-1", "/srv/repo", ref); err == nil {
+			t.Fatalf("HostRepoStatus(%q) was accepted", ref)
+		}
+		if len(client.sentCommands) != 0 || len(client.created) != 0 {
+			t.Fatalf("HostRepoStatus(%q) reached the host: %v %v", ref, client.created, client.sentCommands)
+		}
+	}
+}
+
 // emitTestPrefs mirrors the worker's prefs emission using the shared codec.
 func emitTestPrefs(out *bytes.Buffer, nonce string, content []byte) error {
 	seq := 0

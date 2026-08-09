@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { Monitor, Plus } from "lucide-react";
 import { useState } from "react";
@@ -83,6 +84,7 @@ export function ComputersSection({
 	onEdit: (host: ExecutionHost) => void;
 }) {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const hostsQuery = useQuery(executionHostsQueryOptions);
 	const [rowError, setRowError] = useState<string | null>(null);
@@ -150,7 +152,15 @@ export function ComputersSection({
 									<div className="min-w-0">
 										<div className="flex items-center gap-2">
 											<Monitor className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
-											<span className="truncate text-sm font-medium text-settings-label">{host.name}</span>
+											<button
+												type="button"
+												className="truncate text-sm font-medium text-settings-label underline-offset-2 hover:underline"
+												onClick={() =>
+													void navigate({ to: "/computers/$hostId", params: { hostId: host.id } })
+												}
+											>
+												{host.name}
+											</button>
 											<HostStatusDot host={host} />
 										</div>
 										<p className="mt-0.5 truncate text-xs text-settings-muted">

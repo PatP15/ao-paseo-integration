@@ -29,7 +29,11 @@ func SkillPolicyGated(name, description string) bool {
 	if !strings.Contains(lowered, "agent") {
 		return false
 	}
-	for _, marker := range []string{"spawn", "schedule", "delegat", "orchestrat", "hand off", "handoff", "committee", "loop until"} {
+	// Markers are the orchestration verbs themselves — not softer words like
+	// "delegate" or "hand off", which appear NEGATED in perfectly gate-free
+	// skills ("…without delegating the work itself"). The named list above
+	// already covers the canonical paseo-* orchestrators.
+	for _, marker := range []string{"spawn", "schedule", "orchestrat", "committee", "loop until"} {
 		if strings.Contains(lowered, marker) {
 			return true
 		}

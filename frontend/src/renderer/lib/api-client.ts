@@ -70,6 +70,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/execution/hosts/{hostId}/providers",
 	"/api/v1/execution/hosts/{hostId}/schedules",
 	"/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}",
+	"/api/v1/execution/projects/{projectId}/hosts/{hostId}",
 	"/api/v1/execution/secrets",
 	"/api/v1/import",
 	"/api/v1/notifications",

@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { ArrowLeft, Check, Plus, X } from "lucide-react";
+import { ArrowLeft, Check, Plus, Rocket, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { CenterPanelShell } from "./CenterPanelShell";
+import { DispatchWorkItemDialog } from "./DispatchWorkItemDialog";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 import {
 	Dialog,
@@ -76,6 +77,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [createOpen, setCreateOpen] = useState(false);
+	const [dispatchItem, setDispatchItem] = useState<WorkItem | null>(null);
 	const [decisionError, setDecisionError] = useState<string | null>(null);
 
 	const itemsQuery = useQuery({
@@ -142,6 +144,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 						) : null}
 						{items.map((item) => {
 							const decidable = item.approvalState === "draft" || item.approvalState === "proposed";
+							const dispatchable = item.approvalState === "approved" && item.lifecycleFact === "open";
 							return (
 								<div
 									key={item.id}
@@ -169,6 +172,18 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 												) : null}
 											</div>
 										</div>
+										{dispatchable ? (
+											<div className="flex shrink-0 items-center gap-2">
+												<button
+													type="button"
+													className="settings-option-trigger inline-flex items-center gap-1.5"
+													onClick={() => setDispatchItem(item)}
+												>
+													<Rocket className="size-icon-base" aria-hidden="true" />
+													{t("workItems.dispatch")}
+												</button>
+											</div>
+										) : null}
 										{decidable ? (
 											<div className="flex shrink-0 items-center gap-2">
 												<button
@@ -199,6 +214,14 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 				)}
 			</div>
 			<CreateWorkItemDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
+			<DispatchWorkItemDialog
+				projectId={projectId}
+				workItem={dispatchItem}
+				open={dispatchItem !== null}
+				onOpenChange={(next) => {
+					if (!next) setDispatchItem(null);
+				}}
+			/>
 		</CenterPanelShell>
 	);
 }

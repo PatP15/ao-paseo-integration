@@ -211,7 +211,7 @@ func (s *Service) ValidateDispatchSettings(ctx context.Context, hostID domain.Ex
 		}
 		return apierr.Invalid("THINKING_OPTION_UNKNOWN",
 			fmt.Sprintf("model %s on host %s does not report thinking option %q", model, hostID, thinkingOptionID),
-			map[string]any{"validThinkingOptionIds": append([]string(nil), candidate.ThinkingOptionIDs...)})
+			map[string]any{"validThinkingOptionIds": append([]string{}, candidate.ThinkingOptionIDs...)})
 	}
 	return apierr.Invalid("MODEL_UNKNOWN",
 		fmt.Sprintf("provider %s on host %s does not report model %q", provider, hostID, model),

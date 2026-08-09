@@ -6,6 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	Check,
+	ClipboardList,
 	Copy,
 	GitBranch,
 	LoaderCircle,
@@ -258,6 +259,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
+			<TopbarButton
+				aria-label={t("workItems.title")}
+				onClick={() =>
+					projectId && void navigate({ to: "/projects/$projectId/work-items", params: { projectId } })
+				}
+			>
+				<ClipboardList className="size-icon-md" aria-hidden="true" />
+				{t("workItems.title")}
+			</TopbarButton>
 			<TopbarButton
 				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}

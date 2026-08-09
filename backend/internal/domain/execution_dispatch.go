@@ -72,29 +72,29 @@ type ExecutionStartPayload struct {
 // one approved work item. The store assigns the conventional project-N
 // session ID and derives the workspace title and idempotency key from it.
 type ExecutionDispatchSeed struct {
-	WorkItemID         string
-	Session            SessionRecord
-	HostID             ExecutionHostID
-	BoundServerID      string
-	HostRepoPath       string
-	BaseBranch         string
-	Branch             string
-	Provider           string
-	Model              string
-	Mode               string
-	ThinkingOptionID   string
+	WorkItemID       string
+	Session          SessionRecord
+	HostID           ExecutionHostID
+	BoundServerID    string
+	HostRepoPath     string
+	BaseBranch       string
+	Branch           string
+	Provider         string
+	Model            string
+	Mode             string
+	ThinkingOptionID string
 	// SkillPolicyOverrides are recorded as audit events in the dispatch
 	// transaction; they never change what launches. Actor is the identity the
 	// audit rows carry.
 	SkillPolicyOverrides []string
 	Actor                string
 	Prompt               string
-	IntentID           ExecutionIntentID
-	Attempt            int
-	DispatchGeneration int
-	LaunchID           string
-	CommandID          string
-	CreatedAt          time.Time
+	IntentID             ExecutionIntentID
+	Attempt              int
+	DispatchGeneration   int
+	LaunchID             string
+	CommandID            string
+	CreatedAt            time.Time
 }
 
 // ExecutionDispatch is the atomically committed session, binding, and first

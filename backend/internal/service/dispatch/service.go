@@ -124,7 +124,7 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 		HostRepoPath: selection.Binding.HostRepoPath, BaseBranch: selection.Binding.BaseBranch,
 		Branch: req.Branch, Provider: req.Provider, Model: req.Model, Mode: req.Mode,
 		ThinkingOptionID: req.ThinkingOptionID, SkillPolicyOverrides: normalizeOverrides(req.SkillPolicyOverrides),
-		Prompt: req.Prompt,
+		Prompt:   req.Prompt,
 		IntentID: domain.ExecutionIntentID(s.newID()), Attempt: 1, DispatchGeneration: 1,
 		LaunchID: s.newID(), CommandID: s.newID(), CreatedAt: now,
 	})

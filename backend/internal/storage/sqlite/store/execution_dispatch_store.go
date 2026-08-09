@@ -135,7 +135,7 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 				return fmt.Errorf("marshal skill override audit: %w", err)
 			}
 			if _, err := q.InsertAuditEvent(ctx, gen.InsertAuditEventParams{
-				ID: fmt.Sprintf("%s:skill-override:%s", seed.CommandID, skill),
+				ID:        fmt.Sprintf("%s:skill-override:%s", seed.CommandID, skill),
 				EventType: "execution.skill_policy_override", ActorType: "human", ActorID: actor,
 				SubjectType: "work_item", SubjectID: seed.WorkItemID,
 				DetailJson: string(detail), CreatedAt: encodeExecutionTime(now),

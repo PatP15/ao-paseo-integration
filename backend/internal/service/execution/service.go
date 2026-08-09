@@ -67,6 +67,10 @@ type Service struct {
 	// providerDiscovery, when set, asks one host's daemon what it can launch.
 	// Injected for the same reason as the two above.
 	providerDiscovery func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error)
+	// questionResolved, when set, closes the advisory notification announcing
+	// a question once a human has answered or decided it. Failures stay inside
+	// the hook: a notification is never load-bearing for the decision itself.
+	questionResolved func(ctx context.Context, sessionID domain.SessionID, questionID string)
 
 	providerCacheMu sync.Mutex
 	providerCache   map[domain.ExecutionHostID]providerCacheEntry
@@ -519,6 +523,12 @@ func (s *Service) openQuestion(ctx context.Context, id string) (domain.Execution
 	return question, nil
 }
 
+// SetQuestionResolvedHook installs the notification-closing hook, injected by
+// the daemon alongside the notification writer.
+func (s *Service) SetQuestionResolvedHook(hook func(ctx context.Context, sessionID domain.SessionID, questionID string)) {
+	s.questionResolved = hook
+}
+
 func (s *Service) resolve(ctx context.Context, resolution domain.ExecutionQuestionResolution) (domain.ExecutionCommand, error) {
 	command, err := s.store.ResolveExecutionQuestion(ctx, resolution)
 	switch {
@@ -530,6 +540,9 @@ func (s *Service) resolve(ctx context.Context, resolution domain.ExecutionQuesti
 			"question "+resolution.QuestionID+" belongs to a session with no execution host", nil)
 	case err != nil:
 		return domain.ExecutionCommand{}, fmt.Errorf("resolve execution question %s: %w", resolution.QuestionID, err)
+	}
+	if s.questionResolved != nil {
+		s.questionResolved(ctx, command.SessionID, resolution.QuestionID)
 	}
 	return command, nil
 }

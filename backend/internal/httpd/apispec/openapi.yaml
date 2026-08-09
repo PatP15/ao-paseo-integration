@@ -4714,10 +4714,15 @@ components:
           enum:
           - session
           - pr
+          - execution_question
           type: string
         prUrl:
           type: string
+        questionId:
+          type: string
         sessionId:
+          type: string
+        workItemId:
           type: string
       required:
       - kind

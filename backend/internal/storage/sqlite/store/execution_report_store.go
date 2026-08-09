@@ -116,27 +116,31 @@ func (s *Store) MarkExecutionReportApplied(ctx context.Context, sessionID domain
 // permission request needs an explicit decision carrying the host's full request
 // id. The row id is derived from the report's event id, so a replayed report
 // does not file the same question twice.
-func (s *Store) OpenExecutionAgentQuestion(ctx context.Context, question domain.ExecutionAgentQuestion) (bool, error) {
+//
+// The returned id is the inbox question id — the one the answer endpoint takes
+// — whether or not this call inserted the row.
+func (s *Store) OpenExecutionAgentQuestion(ctx context.Context, question domain.ExecutionAgentQuestion) (string, bool, error) {
 	if question.SessionID == "" || question.EventID == "" || question.Question == "" {
-		return false, fmt.Errorf("invalid agent question: required field is empty")
+		return "", false, fmt.Errorf("invalid agent question: required field is empty")
 	}
 	options, err := json.Marshal(nonNilStrings(question.Options))
 	if err != nil {
-		return false, fmt.Errorf("marshal agent question options: %w", err)
+		return "", false, fmt.Errorf("marshal agent question options: %w", err)
 	}
+	id := hashHex("agent_event", string(question.SessionID), question.EventID)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.InsertHumanQuestion(ctx, gen.InsertHumanQuestionParams{
-		ID:        hashHex("agent_event", string(question.SessionID), question.EventID),
+		ID:        id,
 		SessionID: string(question.SessionID), WorkItemID: nullableString(question.WorkItemID),
 		Source: "agent_event", ExternalQuestionID: question.EventID, Question: question.Question,
 		Recommendation: question.Recommendation, OptionsJson: string(options), State: "open",
 		CreatedAt: encodeExecutionTime(question.CreatedAt),
 	})
 	if err != nil {
-		return false, fmt.Errorf("open agent question for session %s: %w", question.SessionID, err)
+		return "", false, fmt.Errorf("open agent question for session %s: %w", question.SessionID, err)
 	}
-	return rows > 0, nil
+	return id, rows > 0, nil
 }
 
 // RecordSessionCheckpoint stores mid-run progress evidence and reports whether

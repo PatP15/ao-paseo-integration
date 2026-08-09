@@ -39,7 +39,7 @@ type Store interface {
 	ListActiveSessionExecutionBindingsByHost(context.Context, domain.ExecutionHostID) ([]domain.SessionExecutionBinding, error)
 	RecordExecutionHostProbe(context.Context, domain.ExecutionHostProbe) error
 	RecordExecutionObservation(context.Context, domain.ExecutionObservationEvent) (bool, error)
-	OpenExecutionPermissionQuestion(context.Context, domain.ExecutionPermissionQuestion) (bool, error)
+	OpenExecutionPermissionQuestion(context.Context, domain.ExecutionPermissionQuestion) (string, bool, error)
 	RecordExecutionOrphan(context.Context, domain.ExecutionOrphan) (bool, error)
 	MarkSessionExecutionObserved(context.Context, domain.SessionID, time.Time) error
 }
@@ -86,8 +86,21 @@ type Observer struct {
 
 	hot, cold, sweepEvery, latency time.Duration
 
+	// notifyQuestion, when set, announces a newly opened permission request to
+	// the notification stream. Advisory by invariant — notifications identify,
+	// never authorize or trigger lifecycle action — so it returns nothing and
+	// its failures stay inside the hook.
+	notifyQuestion func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string)
+
 	due       map[domain.SessionID]time.Time
 	lastSweep map[domain.ExecutionHostID]time.Time
+}
+
+// SetQuestionNotifier installs the advisory announcement hook. Injected by the
+// daemon because building a notification needs the session's project, which
+// the observer deliberately does not read.
+func (o *Observer) SetQuestionNotifier(notify func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string)) {
+	o.notifyQuestion = notify
 }
 
 // New constructs the observer. It performs no I/O; call Poll for one pass or
@@ -309,11 +322,20 @@ func (o *Observer) openQuestion(
 			"session", binding.SessionID, "tool", permission.ToolName)
 		return nil
 	}
-	_, err := o.store.OpenExecutionPermissionQuestion(ctx, domain.ExecutionPermissionQuestion{
+	question := permissionQuestion(permission)
+	questionID, opened, err := o.store.OpenExecutionPermissionQuestion(ctx, domain.ExecutionPermissionQuestion{
 		SessionID: binding.SessionID, WorkItemID: binding.WorkItemID, ExternalID: permission.ID,
-		ToolName: permission.ToolName, Question: permissionQuestion(permission), CreatedAt: now,
+		ToolName: permission.ToolName, Question: question, CreatedAt: now,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Advisory only, and only on the transition to open: the observer re-sees
+	// an unanswered request every tick, and each re-observation is a no-op.
+	if opened && o.notifyQuestion != nil {
+		o.notifyQuestion(ctx, binding.SessionID, binding.WorkItemID, questionID, question)
+	}
+	return nil
 }
 
 func permissionQuestion(permission domain.ExecutionPermission) string {

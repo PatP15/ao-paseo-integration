@@ -135,6 +135,8 @@ type Notification struct {
 	Status     domain.NotificationStatus
 	CreatedAt  time.Time
 	ResolvedAt sql.NullTime
+	WorkItemID string
+	QuestionID string
 }
 
 type PR struct {

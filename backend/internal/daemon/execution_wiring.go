@@ -29,6 +29,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	paseoobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/paseo"
 	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -187,13 +188,61 @@ func startExecutionObserver(
 	store *sqlite.Store,
 	lcm *lifecycle.Manager,
 	backends *executionBackends,
+	notifications *notify.Manager,
 	logger *slog.Logger,
 ) (<-chan struct{}, <-chan struct{}) {
+	notifyQuestion := newQuestionNotifier(store, notifications, logger)
 	reports := paseoevent.NewIngestor(store, lcm, backends, logger)
+	reports.SetQuestionNotifier(notifyQuestion)
 	observer := paseoobserve.NewWithReports(store, lcm, backends, reports, logger)
+	observer.SetQuestionNotifier(notifyQuestion)
 	logger.Info("execution: paseo observer and dispatch drain starting",
 		"secrets", backends.secrets.dir)
 	return observer.Start(ctx), startDispatchWorker(ctx, store, backends, logger)
+}
+
+// newQuestionNotifier turns a newly opened execution question into a
+// needs_input notification carrying the question id for deep-linking.
+//
+// Advisory by invariant (U8): a notification identifies the question, it never
+// authorizes or triggers lifecycle action, so every failure here is a log line
+// and the ingest or observation that opened the question proceeds untouched.
+func newQuestionNotifier(
+	store *sqlite.Store,
+	notifications *notify.Manager,
+	logger *slog.Logger,
+) func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string) {
+	return func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string) {
+		rec, found, err := store.GetSession(ctx, sessionID)
+		if err != nil || !found {
+			logger.Warn("execution: question notification skipped; session unavailable",
+				"session", sessionID, "question", questionID, "err", err)
+			return
+		}
+		if err := notifications.Notify(ctx, ports.NotificationIntent{
+			Type: domain.NotificationNeedsInput, SessionID: sessionID, ProjectID: rec.ProjectID,
+			WorkItemID: workItemID, QuestionID: questionID,
+			SessionDisplayName: rec.DisplayName, QuestionText: question,
+		}); err != nil {
+			logger.Warn("execution: question notification failed",
+				"session", sessionID, "question", questionID, "err", err)
+		}
+	}
+}
+
+// newQuestionResolvedHook closes the notification for one answered question.
+func newQuestionResolvedHook(
+	notifications *notify.Manager,
+	logger *slog.Logger,
+) func(ctx context.Context, sessionID domain.SessionID, questionID string) {
+	return func(ctx context.Context, sessionID domain.SessionID, questionID string) {
+		if err := notifications.Resolve(ctx, ports.NotificationResolution{
+			Type: domain.NotificationNeedsInput, SessionID: sessionID, QuestionID: questionID,
+		}); err != nil {
+			logger.Warn("execution: question notification resolve failed",
+				"session", sessionID, "question", questionID, "err", err)
+		}
+	}
 }
 
 // newProviderDiscovery builds the network half of GET

@@ -11,13 +11,17 @@ const (
 	TargetSession TargetKind = "session"
 	// TargetPR navigates to a pull request view.
 	TargetPR TargetKind = "pr"
+	// TargetExecutionQuestion navigates to one answerable execution inbox item.
+	TargetExecutionQuestion TargetKind = "execution_question"
 )
 
 // Target is the service-facing navigation metadata for a notification.
 type Target struct {
-	Kind      TargetKind
-	SessionID domain.SessionID
-	PRURL     string
+	Kind       TargetKind
+	SessionID  domain.SessionID
+	PRURL      string
+	QuestionID string
+	WorkItemID string
 }
 
 // Notification is the dashboard-facing service DTO assembled from a stored row.

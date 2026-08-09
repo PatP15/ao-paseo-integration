@@ -77,11 +77,18 @@ func (s *memoryIngestStore) RecordExecutionObservation(_ context.Context, event 
 	return true, nil
 }
 
-func (s *memoryIngestStore) OpenExecutionAgentQuestion(_ context.Context, question domain.ExecutionAgentQuestion) (bool, error) {
+func (s *memoryIngestStore) OpenExecutionAgentQuestion(_ context.Context, question domain.ExecutionAgentQuestion) (string, bool, error) {
 	s.order = append(s.order, "question:"+question.EventID)
 	s.applyOrder = append(s.applyOrder, "question:"+question.EventID)
+	// Mirror the real store: re-filing the same report's question is a no-op
+	// that still returns the derived inbox id.
+	for _, existing := range s.questions {
+		if existing.EventID == question.EventID {
+			return "question-" + question.EventID, false, nil
+		}
+	}
 	s.questions = append(s.questions, question)
-	return true, nil
+	return "question-" + question.EventID, true, nil
 }
 
 func (s *memoryIngestStore) RecordSessionCheckpoint(_ context.Context, checkpoint domain.SessionCheckpoint) (bool, error) {
@@ -305,6 +312,44 @@ func TestIngestMapsAQuestionToWaitingInput(t *testing.T) {
 	// session waiting on a question nobody can see.
 	if store.order[1] != "question:e7" {
 		t.Fatalf("order = %v", store.order)
+	}
+}
+
+func TestIngestAnnouncesANewQuestionExactlyOnce(t *testing.T) {
+	store := newMemoryIngestStore()
+	seedBrief(store, testNonce, "launch-1")
+	frames := report(t, domain.ExecutionReportQuestion, "e7", 1,
+		`{"question":"Preserve corrupt saves?","recommendation":"Preserve","options":["reset","preserve"]}`)
+	source := &fakeSource{window: domain.ExecutionEventWindow{Lines: frames, TotalLines: int64(len(frames))}}
+	ingestor := testIngestor(store, &memoryLifecycle{}, source)
+
+	type announced struct{ sessionID, workItemID, questionID, question string }
+	var announcements []announced
+	ingestor.SetQuestionNotifier(func(_ context.Context, sessionID domain.SessionID, workItemID, questionID, question string) {
+		announcements = append(announcements, announced{string(sessionID), workItemID, questionID, question})
+	})
+
+	if _, err := ingestor.IngestSession(context.Background(), testBinding()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(announcements) != 1 {
+		t.Fatalf("announcements = %#v", announcements)
+	}
+	got := announcements[0]
+	if got.sessionID != "project-1" || got.workItemID != "work-1" ||
+		got.questionID != "question-e7" || got.question != "Preserve corrupt saves?" {
+		t.Fatalf("announcement = %#v", got)
+	}
+
+	// A replayed report re-opens nothing, so it must announce nothing: the
+	// human already saw this question. Simulate the crash-before-mark replay,
+	// which is the one path that reaches the open call twice.
+	store.reports["e7"].applied = false
+	if _, err := ingestor.IngestSession(context.Background(), testBinding()); err != nil {
+		t.Fatalf("replay ingest: %v", err)
+	}
+	if len(announcements) != 1 {
+		t.Fatalf("replay announced again: %#v", announcements)
 	}
 }
 

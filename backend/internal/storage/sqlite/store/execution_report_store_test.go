@@ -126,11 +126,11 @@ func TestOpenExecutionAgentQuestionIsFiledOncePerReport(t *testing.T) {
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 	}
 
-	opened, err := s.OpenExecutionAgentQuestion(ctx, question)
+	_, opened, err := s.OpenExecutionAgentQuestion(ctx, question)
 	if err != nil || !opened {
 		t.Fatalf("open question: %v opened=%v", err, opened)
 	}
-	opened, err = s.OpenExecutionAgentQuestion(ctx, question)
+	_, opened, err = s.OpenExecutionAgentQuestion(ctx, question)
 	if err != nil {
 		t.Fatalf("reopen question: %v", err)
 	}

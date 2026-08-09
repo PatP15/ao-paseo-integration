@@ -77,23 +77,27 @@ func (s *Store) RecordExecutionObservation(ctx context.Context, event domain.Exe
 // OpenExecutionPermissionQuestion files a remote permission request in the
 // human inbox and reports whether it was newly opened. Re-observing the same
 // unanswered request is a no-op.
-func (s *Store) OpenExecutionPermissionQuestion(ctx context.Context, question domain.ExecutionPermissionQuestion) (bool, error) {
+//
+// The returned id is the inbox question id — the one the decision endpoint
+// takes — whether or not this call inserted the row.
+func (s *Store) OpenExecutionPermissionQuestion(ctx context.Context, question domain.ExecutionPermissionQuestion) (string, bool, error) {
 	if question.SessionID == "" || question.ExternalID == "" || question.Question == "" {
-		return false, fmt.Errorf("invalid execution permission question: required field is empty")
+		return "", false, fmt.Errorf("invalid execution permission question: required field is empty")
 	}
+	id := hashHex("paseo_permission", string(question.SessionID), question.ExternalID)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.InsertHumanQuestion(ctx, gen.InsertHumanQuestionParams{
-		ID:        hashHex("paseo_permission", string(question.SessionID), question.ExternalID),
+		ID:        id,
 		SessionID: string(question.SessionID), WorkItemID: nullableString(question.WorkItemID),
 		Source: "paseo_permission", ExternalQuestionID: question.ExternalID,
 		Question: question.Question, OptionsJson: "[]", State: "open",
 		CreatedAt: encodeExecutionTime(question.CreatedAt),
 	})
 	if err != nil {
-		return false, fmt.Errorf("open permission question for session %s: %w", question.SessionID, err)
+		return "", false, fmt.Errorf("open permission question for session %s: %w", question.SessionID, err)
 	}
-	return rows > 0, nil
+	return id, rows > 0, nil
 }
 
 // ListOpenExecutionPermissionQuestions returns the unanswered remote permission

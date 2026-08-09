@@ -68,14 +68,14 @@ func (s *memoryStore) RecordExecutionObservation(_ context.Context, event domain
 	return true, nil
 }
 
-func (s *memoryStore) OpenExecutionPermissionQuestion(_ context.Context, question domain.ExecutionPermissionQuestion) (bool, error) {
+func (s *memoryStore) OpenExecutionPermissionQuestion(_ context.Context, question domain.ExecutionPermissionQuestion) (string, bool, error) {
 	key := string(question.SessionID) + "\x00" + question.ExternalID
 	if _, seen := s.seenQuestions[key]; seen {
-		return false, nil
+		return "question-" + question.ExternalID, false, nil
 	}
 	s.seenQuestions[key] = struct{}{}
 	s.questions = append(s.questions, question)
-	return true, nil
+	return "question-" + question.ExternalID, true, nil
 }
 
 func (s *memoryStore) RecordExecutionOrphan(_ context.Context, orphan domain.ExecutionOrphan) (bool, error) {

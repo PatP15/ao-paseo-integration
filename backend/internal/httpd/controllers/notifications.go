@@ -221,9 +221,11 @@ func notificationResponse(n notificationsvc.Notification) NotificationResponse {
 		CreatedAt:  n.CreatedAt,
 		ResolvedAt: optionalTime(n.ResolvedAt),
 		Target: NotificationTarget{
-			Kind:      string(n.Target.Kind),
-			SessionID: string(n.Target.SessionID),
-			PRURL:     n.Target.PRURL,
+			Kind:       string(n.Target.Kind),
+			SessionID:  string(n.Target.SessionID),
+			PRURL:      n.Target.PRURL,
+			QuestionID: n.Target.QuestionID,
+			WorkItemID: n.Target.WorkItemID,
 		},
 	}
 }
@@ -245,6 +247,12 @@ func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationR
 }
 
 func notificationTargetFromRecord(rec domain.NotificationRecord) NotificationTarget {
+	if rec.QuestionID != "" {
+		return NotificationTarget{
+			Kind: "execution_question", SessionID: string(rec.SessionID),
+			QuestionID: rec.QuestionID, WorkItemID: rec.WorkItemID,
+		}
+	}
 	if rec.PRURL != "" {
 		return NotificationTarget{Kind: "pr", SessionID: string(rec.SessionID), PRURL: rec.PRURL}
 	}

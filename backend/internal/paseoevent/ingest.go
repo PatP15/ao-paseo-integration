@@ -34,7 +34,7 @@ type Store interface {
 	RecordExecutionReport(context.Context, domain.ExecutionReportEvent) (bool, error)
 	MarkExecutionReportApplied(context.Context, domain.SessionID, string) error
 	RecordExecutionObservation(context.Context, domain.ExecutionObservationEvent) (bool, error)
-	OpenExecutionAgentQuestion(context.Context, domain.ExecutionAgentQuestion) (bool, error)
+	OpenExecutionAgentQuestion(context.Context, domain.ExecutionAgentQuestion) (string, bool, error)
 	RecordSessionCheckpoint(context.Context, domain.SessionCheckpoint) (bool, error)
 	AdvanceExecutionEventCursor(context.Context, domain.SessionID, string, int64) error
 }
@@ -92,7 +92,20 @@ type Ingestor struct {
 	now       func() time.Time
 	window    int64
 
+	// notifyQuestion, when set, announces a newly opened agent question to the
+	// notification stream. Advisory by invariant: it identifies the question
+	// and never triggers lifecycle action, and a failure inside it must not
+	// fail the ingest, so it returns nothing.
+	notifyQuestion func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string)
+
 	highestSeq map[string]int64
+}
+
+// SetQuestionNotifier installs the advisory announcement hook. Injected by the
+// daemon because building a notification needs the session's project, which
+// this package deliberately does not read.
+func (i *Ingestor) SetQuestionNotifier(notify func(ctx context.Context, sessionID domain.SessionID, workItemID, questionID, question string)) {
+	i.notifyQuestion = notify
 }
 
 // NewIngestor constructs the ingestor. It performs no I/O.
@@ -286,12 +299,18 @@ func (i *Ingestor) apply(ctx context.Context, binding domain.SessionExecutionBin
 		if err != nil {
 			return err
 		}
-		if _, err := i.store.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
+		questionID, opened, err := i.store.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
 			SessionID: binding.SessionID, WorkItemID: binding.WorkItemID, EventID: event.EventID,
 			Question: question.Question, Recommendation: question.Recommendation,
 			Options: question.Options, CreatedAt: i.now().UTC(),
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("open agent question for session %s: %w", binding.SessionID, err)
+		}
+		// Advisory only, and only on the transition to open: a replayed report
+		// must not re-announce a question the human already saw.
+		if opened && i.notifyQuestion != nil {
+			i.notifyQuestion(ctx, binding.SessionID, binding.WorkItemID, questionID, question.Question)
 		}
 		// WaitingInput, not Blocked: AO answers this one with a message. Blocked
 		// is reserved for a host-side permission request, which cannot be

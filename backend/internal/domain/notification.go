@@ -93,6 +93,12 @@ type NotificationRecord struct {
 	Body      string
 	Status    NotificationStatus
 	CreatedAt time.Time
+	// WorkItemID and QuestionID tie a needs_input notification to one
+	// execution inbox question so a dashboard can deep-link to the answerable
+	// thing. Empty for lifecycle- and PR-scoped notifications. They identify
+	// and never authorize: answering still goes through the inbox endpoints.
+	WorkItemID string
+	QuestionID string
 	// ResolvedAt is when the underlying issue went away — the session received
 	// its input, or the PR stopped waiting on a merge. Zero means still open.
 	// Only AO writes it; there is no user-facing "resolve" action.

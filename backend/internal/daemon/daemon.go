@@ -195,7 +195,7 @@ func Run() error {
 	// provider discovery: all three talk to the same hosts and a second cache
 	// would double the client count and version handshakes.
 	executionClients := newExecutionBackends(store, cfg.DataDir, log)
-	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, log)
+	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, notificationWriter, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -271,6 +271,7 @@ func Run() error {
 	execSvc.SetSelfTargetGuard(selfTargetGuard)
 	execSvc.SetHostProber(newHostProber(store, cfg.DataDir, log, selfTargetGuard))
 	execSvc.SetProviderDiscovery(newProviderDiscovery(executionClients))
+	execSvc.SetQuestionResolvedHook(newQuestionResolvedHook(notificationWriter, log))
 	// Dispatch settings are validated against the same discovery (and its
 	// cache) the providers endpoint serves, so what the UI offered and what
 	// dispatch accepts can never be two different vocabularies.

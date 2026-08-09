@@ -1,7 +1,8 @@
 -- name: CreateNotification :one
 INSERT INTO notifications (
-    id, session_id, project_id, pr_url, type, title, body, status, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    id, session_id, project_id, pr_url, type, title, body, status, created_at,
+    work_item_id, question_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListUnreadNotificationsPage :many
@@ -112,5 +113,16 @@ FROM notifications
 WHERE session_id = ?
   AND type = ?
   AND pr_url = ?
+  AND question_id = ?
   AND (status = 'unread' OR resolved_at IS NULL)
 LIMIT 1;
+
+-- Answering or deciding one inbox question closes exactly that question's
+-- notification, never the session's other open questions.
+-- name: ResolveQuestionNotifications :many
+UPDATE notifications
+SET resolved_at = sqlc.arg(resolved_at)
+WHERE question_id = sqlc.arg(question_id)
+  AND question_id <> ''
+  AND resolved_at IS NULL
+RETURNING *;

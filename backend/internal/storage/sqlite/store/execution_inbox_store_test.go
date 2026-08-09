@@ -61,7 +61,7 @@ func TestResolveExecutionQuestionCommitsAnswerCommandAndAudit(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Second)
 	sessionID := seedBoundSession(t, s, at)
 
-	opened, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
+	_, opened, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
 		SessionID: sessionID, WorkItemID: "work-1", EventID: "event-1",
 		Question: "Rebase or merge?", Recommendation: "rebase",
 		Options: []string{"rebase", "merge"}, CreatedAt: at,
@@ -119,7 +119,7 @@ func TestResolveExecutionQuestionRefusesASecondAnswer(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Second)
 	sessionID := seedBoundSession(t, s, at)
 
-	if _, err := s.OpenExecutionPermissionQuestion(ctx, domain.ExecutionPermissionQuestion{
+	if _, _, err := s.OpenExecutionPermissionQuestion(ctx, domain.ExecutionPermissionQuestion{
 		SessionID: sessionID, WorkItemID: "work-1",
 		ExternalID: "perm_2f6c9a4b8e1d0f37a5c2b9e4d8f1a6c3", ToolName: "Bash",
 		Question: "Allow Bash: rm -rf build", CreatedAt: at,
@@ -162,7 +162,7 @@ func TestResolveExecutionQuestionRefusesASessionWithNoHost(t *testing.T) {
 	ctx := context.Background()
 	at := time.Now().UTC().Truncate(time.Second)
 
-	if _, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
+	if _, _, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
 		SessionID: "local-1", EventID: "event-1", Question: "Which branch?", CreatedAt: at,
 	}); err != nil {
 		t.Fatalf("open agent question: %v", err)
@@ -192,7 +192,7 @@ func TestGetExecutionQuestionDistinguishesMissingFromAnswered(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Second)
 	sessionID := seedBoundSession(t, s, at)
 
-	if _, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
+	if _, _, err := s.OpenExecutionAgentQuestion(ctx, domain.ExecutionAgentQuestion{
 		SessionID: sessionID, EventID: "event-1", Question: "Proceed?", CreatedAt: at,
 	}); err != nil {
 		t.Fatalf("open agent question: %v", err)

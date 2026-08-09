@@ -1669,9 +1669,11 @@ export interface components {
         };
         NotificationTarget: {
             /** @enum {string} */
-            kind: "session" | "pr";
+            kind: "session" | "pr" | "execution_question";
             prUrl?: string;
+            questionId?: string;
             sessionId: string;
+            workItemId?: string;
         };
         OpenShellTerminalRequest: {
             /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */

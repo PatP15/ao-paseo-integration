@@ -675,9 +675,14 @@ type NotificationIDParam struct {
 
 // NotificationTarget is the dashboard navigation target for a notification.
 type NotificationTarget struct {
-	Kind      string `json:"kind" enum:"session,pr"`
+	Kind      string `json:"kind" enum:"session,pr,execution_question"`
 	SessionID string `json:"sessionId"`
 	PRURL     string `json:"prUrl,omitempty"`
+	// QuestionID and WorkItemID deep-link an execution_question target to the
+	// answerable inbox item. They identify; answering still goes through the
+	// execution questions/permissions endpoints.
+	QuestionID string `json:"questionId,omitempty"`
+	WorkItemID string `json:"workItemId,omitempty"`
 }
 
 // NotificationResponse is one stored notification returned by the API.

@@ -137,11 +137,11 @@ func TestOpenExecutionPermissionQuestionIsIdempotent(t *testing.T) {
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 	}
 
-	opened, err := s.OpenExecutionPermissionQuestion(ctx, question)
+	_, opened, err := s.OpenExecutionPermissionQuestion(ctx, question)
 	if err != nil || !opened {
 		t.Fatalf("open question: opened=%v err=%v", opened, err)
 	}
-	opened, err = s.OpenExecutionPermissionQuestion(ctx, question)
+	_, opened, err = s.OpenExecutionPermissionQuestion(ctx, question)
 	if err != nil || opened {
 		t.Fatalf("re-observed question: opened=%v err=%v", opened, err)
 	}
@@ -159,7 +159,7 @@ func TestOpenExecutionPermissionQuestionIsIdempotent(t *testing.T) {
 	}
 
 	question.ExternalID = "perm_second"
-	opened, err = s.OpenExecutionPermissionQuestion(ctx, question)
+	_, opened, err = s.OpenExecutionPermissionQuestion(ctx, question)
 	if err != nil || !opened {
 		t.Fatalf("second request: opened=%v err=%v", opened, err)
 	}

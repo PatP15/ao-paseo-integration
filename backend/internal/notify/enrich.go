@@ -9,12 +9,14 @@ import (
 
 func enrich(intent Intent) (domain.NotificationRecord, error) {
 	rec := domain.NotificationRecord{
-		SessionID: intent.SessionID,
-		ProjectID: intent.ProjectID,
-		PRURL:     strings.TrimSpace(intent.PRURL),
-		Type:      intent.Type,
-		Status:    domain.NotificationUnread,
-		CreatedAt: intent.CreatedAt,
+		SessionID:  intent.SessionID,
+		ProjectID:  intent.ProjectID,
+		PRURL:      strings.TrimSpace(intent.PRURL),
+		Type:       intent.Type,
+		Status:     domain.NotificationUnread,
+		CreatedAt:  intent.CreatedAt,
+		WorkItemID: strings.TrimSpace(intent.WorkItemID),
+		QuestionID: strings.TrimSpace(intent.QuestionID),
 	}
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType
@@ -45,9 +47,19 @@ func titleForIntent(intent Intent) string {
 	}
 }
 
+// maxQuestionBodyLen keeps an agent-authored question from turning a
+// notification row into a document; the full text lives on the inbox question.
+const maxQuestionBodyLen = 300
+
 func bodyForIntent(intent Intent) string {
 	switch intent.Type {
 	case domain.NotificationNeedsInput:
+		if question := strings.TrimSpace(intent.QuestionText); question != "" {
+			if len(question) > maxQuestionBodyLen {
+				question = question[:maxQuestionBodyLen] + "…"
+			}
+			return question
+		}
 		return "The agent is waiting for your response."
 	case domain.NotificationReadyToMerge:
 		if s := sessionLabel(intent); s != "session" {

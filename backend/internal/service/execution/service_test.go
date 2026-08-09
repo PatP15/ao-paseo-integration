@@ -508,6 +508,39 @@ func TestListQuestionsReturnsBothSources(t *testing.T) {
 	}
 }
 
+func TestAnswerAndDecideCloseTheQuestionNotification(t *testing.T) {
+	store := newFakeStore()
+	store.questions["q-agent"] = agentQuestion()
+	store.questions["q-perm"] = permissionQuestion()
+	svc := newTestService(store)
+
+	type closed struct {
+		sessionID  domain.SessionID
+		questionID string
+	}
+	var closures []closed
+	svc.SetQuestionResolvedHook(func(_ context.Context, sessionID domain.SessionID, questionID string) {
+		closures = append(closures, closed{sessionID, questionID})
+	})
+
+	if _, err := svc.Answer(context.Background(), AnswerInput{
+		QuestionID: "q-agent", Answer: "rebase", AnsweredBy: "operator",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Decide(context.Background(), DecisionInput{
+		QuestionID: "q-perm", Decision: domain.ExecutionPermissionAllow, DecidedBy: "operator",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(closures) != 2 || closures[0].questionID != "q-agent" || closures[1].questionID != "q-perm" {
+		t.Fatalf("closures = %#v", closures)
+	}
+	if closures[0].sessionID == "" {
+		t.Fatalf("closure carries no session: %#v", closures[0])
+	}
+}
+
 // TestBindProjectRequiresHostRepoPath pins the field AO cannot infer.
 //
 // The same repository is /home/u/x on one machine and C:\Projects\X on another,

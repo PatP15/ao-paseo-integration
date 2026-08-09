@@ -26,6 +26,22 @@ func (f *fakeStore) CreateNotification(_ context.Context, rec domain.Notificatio
 	return rec, true, nil
 }
 
+func (f *fakeStore) ResolveQuestionNotifications(
+	_ context.Context, questionID string, at time.Time,
+) ([]domain.NotificationRecord, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var resolved []domain.NotificationRecord
+	for i := range f.rows {
+		if f.rows[i].QuestionID == questionID && f.rows[i].ResolvedAt.IsZero() {
+			f.rows[i].ResolvedAt = at
+			resolved = append(resolved, f.rows[i])
+		}
+	}
+	return resolved, nil
+}
+
 func (f *fakeStore) ResolveSessionNotifications(
 	_ context.Context,
 	id domain.SessionID,

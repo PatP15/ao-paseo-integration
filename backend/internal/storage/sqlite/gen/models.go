@@ -94,6 +94,21 @@ type ExecutionHostCapability struct {
 	Capability string
 }
 
+type ExecutionHostPref struct {
+	HostID      string
+	Content     string
+	Sha256      string
+	FileExists  int64
+	ConfirmedAt string
+}
+
+type ExecutionHostSkill struct {
+	HostID      string
+	Name        string
+	Description string
+	CapturedAt  string
+}
+
 type ExecutionZone struct {
 	ID                string
 	Name              string

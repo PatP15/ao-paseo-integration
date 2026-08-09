@@ -165,6 +165,101 @@ func TestHostSchedulesFlagEveryRowAsAPolicyViolation(t *testing.T) {
 	}
 }
 
+type fakeMaintenance struct {
+	skills    []domain.ExecutionHostSkill
+	prefs     domain.ExecutionHostPrefs
+	written   []byte
+	expectSHA string
+	err       error
+}
+
+func (f *fakeMaintenance) Inventory(context.Context, domain.ExecutionHost) ([]domain.ExecutionHostSkill, error) {
+	return f.skills, f.err
+}
+
+func (f *fakeMaintenance) ReadPrefs(context.Context, domain.ExecutionHost) (domain.ExecutionHostPrefs, error) {
+	return f.prefs, f.err
+}
+
+func (f *fakeMaintenance) WritePrefs(_ context.Context, _ domain.ExecutionHost, content []byte, expectSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.written, f.expectSHA = content, expectSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: f.prefs.HostID, Content: string(content), SHA256: "confirmed", Exists: true}, nil
+}
+
+func TestInventoryCachesAndRefreshRunsTheChannel(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+	if _, err := svc.RegisterHost(ctx, validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Inventory(ctx, "worker-1", false); errCode(t, err) != "MAINTENANCE_CHANNEL_UNAVAILABLE" {
+		t.Fatalf("unwired channel error = %v", err)
+	}
+	channel := &fakeMaintenance{
+		skills: []domain.ExecutionHostSkill{{HostID: "worker-1", Name: "deploy", Description: "Deploy"}},
+		prefs:  domain.ExecutionHostPrefs{HostID: "worker-1", Content: `{"providers":{}}`, SHA256: "live-hash", Exists: true},
+	}
+	svc.SetMaintenanceChannel(channel)
+
+	// Cached read on an empty cache: no skills, no prefs, no live call implied.
+	empty, err := svc.Inventory(ctx, "worker-1", false)
+	if err != nil || len(empty.Skills) != 0 || empty.Prefs != nil || empty.FromLiveProbe {
+		t.Fatalf("cached-empty inventory = (%+v, %v)", empty, err)
+	}
+
+	refreshed, err := svc.Inventory(ctx, "worker-1", true)
+	if err != nil || len(refreshed.Skills) != 1 || refreshed.Prefs == nil || !refreshed.FromLiveProbe {
+		t.Fatalf("refreshed inventory = (%+v, %v)", refreshed, err)
+	}
+	if refreshed.Prefs.SHA256 != "live-hash" || !refreshed.SkillsAsOf.Equal(testNow) {
+		t.Fatalf("refreshed facts = %+v", refreshed)
+	}
+
+	// The refresh persisted: a later cached read answers without the channel.
+	svc.SetMaintenanceChannel(&fakeMaintenance{err: errors.New("must not be called")})
+	cached, err := svc.Inventory(ctx, "worker-1", false)
+	if err != nil || len(cached.Skills) != 1 || cached.Prefs == nil || cached.FromLiveProbe {
+		t.Fatalf("cached inventory = (%+v, %v)", cached, err)
+	}
+}
+
+func TestPutPreferencesValidatesAndPersistsTheConfirmRead(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+	if _, err := svc.RegisterHost(ctx, validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+	channel := &fakeMaintenance{prefs: domain.ExecutionHostPrefs{HostID: "worker-1"}}
+	svc.SetMaintenanceChannel(channel)
+
+	if _, err := svc.PutPreferences(ctx, "worker-1", " ", "abc"); errCode(t, err) != "PREFS_CONTENT_REQUIRED" {
+		t.Fatalf("empty content error = %v", err)
+	}
+	if _, err := svc.PutPreferences(ctx, "worker-1", "not json", "abc"); errCode(t, err) != "PREFS_CONTENT_INVALID" {
+		t.Fatalf("invalid json error = %v", err)
+	}
+	if _, err := svc.PutPreferences(ctx, "worker-1", `{"providers":{}}`, ""); errCode(t, err) != "PREFS_BASE_HASH_REQUIRED" {
+		t.Fatalf("missing base hash error = %v", err)
+	}
+
+	prefs, err := svc.PutPreferences(ctx, "worker-1", `{"providers":{}}`, "BASE1234")
+	if err != nil || prefs.SHA256 != "confirmed" {
+		t.Fatalf("put = (%+v, %v)", prefs, err)
+	}
+	if string(channel.written) != `{"providers":{}}` || channel.expectSHA != "base1234" {
+		t.Fatalf("channel saw content=%q expect=%q", channel.written, channel.expectSHA)
+	}
+	stored, found, err := store.GetExecutionHostPrefs(ctx, "worker-1")
+	if err != nil || !found || stored.SHA256 != "confirmed" || !stored.ConfirmedAt.Equal(testNow) {
+		t.Fatalf("persisted prefs = (%+v, %v, %v)", stored, found, err)
+	}
+}
+
 func TestValidateDispatchSettingsRefusesUndiscoveredIDs(t *testing.T) {
 	store := newFakeStore()
 	svc := newTestService(store)

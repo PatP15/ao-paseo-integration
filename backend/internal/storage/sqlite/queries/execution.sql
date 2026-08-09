@@ -256,6 +256,26 @@ LIMIT sqlc.arg(row_limit);
 -- name: GetExecutionEventCursor :one
 SELECT ingested_at, id FROM execution_events WHERE session_id = ? AND id = ?;
 
+-- name: DeleteExecutionHostSkills :exec
+DELETE FROM execution_host_skills WHERE host_id = ?;
+
+-- name: InsertExecutionHostSkill :exec
+INSERT INTO execution_host_skills (host_id, name, description, captured_at)
+VALUES (?, ?, ?, ?);
+
+-- name: ListExecutionHostSkills :many
+SELECT * FROM execution_host_skills WHERE host_id = ? ORDER BY name;
+
+-- name: UpsertExecutionHostPrefs :exec
+INSERT INTO execution_host_prefs (host_id, content, sha256, file_exists, confirmed_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(host_id) DO UPDATE SET
+    content = excluded.content, sha256 = excluded.sha256,
+    file_exists = excluded.file_exists, confirmed_at = excluded.confirmed_at;
+
+-- name: GetExecutionHostPrefs :one
+SELECT * FROM execution_host_prefs WHERE host_id = ?;
+
 -- Agent-authored reports are recorded before they are applied, so the applied
 -- flag is what a replay after a crash reads to know it still owes the apply.
 -- name: GetExecutionReportApplied :one

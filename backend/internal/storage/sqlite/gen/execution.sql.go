@@ -154,6 +154,15 @@ func (q *Queries) DeleteExecutionHostCapabilities(ctx context.Context, hostID st
 	return err
 }
 
+const deleteExecutionHostSkills = `-- name: DeleteExecutionHostSkills :exec
+DELETE FROM execution_host_skills WHERE host_id = ?
+`
+
+func (q *Queries) DeleteExecutionHostSkills(ctx context.Context, hostID string) error {
+	_, err := q.db.ExecContext(ctx, deleteExecutionHostSkills, hostID)
+	return err
+}
+
 const escalateSessionExecutionBinding = `-- name: EscalateSessionExecutionBinding :execrows
 UPDATE session_execution_bindings
 SET workspace_title = ?1,
@@ -349,6 +358,23 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 		&i.ZoneID,
 		&i.Isolated,
 		&i.IsolationNote,
+	)
+	return i, err
+}
+
+const getExecutionHostPrefs = `-- name: GetExecutionHostPrefs :one
+SELECT host_id, content, sha256, file_exists, confirmed_at FROM execution_host_prefs WHERE host_id = ?
+`
+
+func (q *Queries) GetExecutionHostPrefs(ctx context.Context, hostID string) (ExecutionHostPref, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionHostPrefs, hostID)
+	var i ExecutionHostPref
+	err := row.Scan(
+		&i.HostID,
+		&i.Content,
+		&i.Sha256,
+		&i.FileExists,
+		&i.ConfirmedAt,
 	)
 	return i, err
 }
@@ -637,6 +663,28 @@ type InsertExecutionHostCapabilityParams struct {
 
 func (q *Queries) InsertExecutionHostCapability(ctx context.Context, arg InsertExecutionHostCapabilityParams) error {
 	_, err := q.db.ExecContext(ctx, insertExecutionHostCapability, arg.HostID, arg.Capability)
+	return err
+}
+
+const insertExecutionHostSkill = `-- name: InsertExecutionHostSkill :exec
+INSERT INTO execution_host_skills (host_id, name, description, captured_at)
+VALUES (?, ?, ?, ?)
+`
+
+type InsertExecutionHostSkillParams struct {
+	HostID      string
+	Name        string
+	Description string
+	CapturedAt  string
+}
+
+func (q *Queries) InsertExecutionHostSkill(ctx context.Context, arg InsertExecutionHostSkillParams) error {
+	_, err := q.db.ExecContext(ctx, insertExecutionHostSkill,
+		arg.HostID,
+		arg.Name,
+		arg.Description,
+		arg.CapturedAt,
+	)
 	return err
 }
 
@@ -1144,6 +1192,38 @@ func (q *Queries) ListExecutionHostCapabilities(ctx context.Context, hostID stri
 	return items, nil
 }
 
+const listExecutionHostSkills = `-- name: ListExecutionHostSkills :many
+SELECT host_id, name, description, captured_at FROM execution_host_skills WHERE host_id = ? ORDER BY name
+`
+
+func (q *Queries) ListExecutionHostSkills(ctx context.Context, hostID string) ([]ExecutionHostSkill, error) {
+	rows, err := q.db.QueryContext(ctx, listExecutionHostSkills, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionHostSkill{}
+	for rows.Next() {
+		var i ExecutionHostSkill
+		if err := rows.Scan(
+			&i.HostID,
+			&i.Name,
+			&i.Description,
+			&i.CapturedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExecutionHosts = `-- name: ListExecutionHosts :many
 SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts ORDER BY name, id
 `
@@ -1491,6 +1571,33 @@ func (q *Queries) UpsertExecutionHost(ctx context.Context, arg UpsertExecutionHo
 		arg.LastProbeError,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const upsertExecutionHostPrefs = `-- name: UpsertExecutionHostPrefs :exec
+INSERT INTO execution_host_prefs (host_id, content, sha256, file_exists, confirmed_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(host_id) DO UPDATE SET
+    content = excluded.content, sha256 = excluded.sha256,
+    file_exists = excluded.file_exists, confirmed_at = excluded.confirmed_at
+`
+
+type UpsertExecutionHostPrefsParams struct {
+	HostID      string
+	Content     string
+	Sha256      string
+	FileExists  int64
+	ConfirmedAt string
+}
+
+func (q *Queries) UpsertExecutionHostPrefs(ctx context.Context, arg UpsertExecutionHostPrefsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertExecutionHostPrefs,
+		arg.HostID,
+		arg.Content,
+		arg.Sha256,
+		arg.FileExists,
+		arg.ConfirmedAt,
 	)
 	return err
 }

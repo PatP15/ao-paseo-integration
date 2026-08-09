@@ -48,6 +48,10 @@ type Store interface {
 	GetExecutionCommand(context.Context, string) (domain.ExecutionCommand, bool, error)
 	GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessionExecutionEvents(context.Context, domain.SessionID, string, int) ([]domain.ExecutionEventRecord, error)
+	ReplaceExecutionHostSkills(context.Context, domain.ExecutionHostID, []domain.ExecutionHostSkill, time.Time) error
+	ListExecutionHostSkills(context.Context, domain.ExecutionHostID) ([]domain.ExecutionHostSkill, error)
+	UpsertExecutionHostPrefs(context.Context, domain.ExecutionHostPrefs) error
+	GetExecutionHostPrefs(context.Context, domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -76,6 +80,8 @@ type Service struct {
 	// talk to the network and this package does not.
 	scheduleReader  func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error)
 	scheduleDeleter func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error
+	// maintenance, when set, is the live host maintenance channel (U9).
+	maintenance MaintenanceChannel
 
 	providerCacheMu sync.Mutex
 	providerCache   map[domain.ExecutionHostID]providerCacheEntry
@@ -226,6 +232,132 @@ func modelIDs(models []domain.ExecutionProviderModel) []string {
 		ids = append(ids, model.ID)
 	}
 	return ids
+}
+
+// MaintenanceChannel is the live worker-side channel: skills inventory and the
+// preferences file, read and written through the host's own AO-owned binary.
+type MaintenanceChannel interface {
+	Inventory(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSkill, error)
+	ReadPrefs(ctx context.Context, host domain.ExecutionHost) (domain.ExecutionHostPrefs, error)
+	// WritePrefs replaces the file guarded by expectSHA256 (hex digest of the
+	// content currently on disk; a missing file hashes the empty string) and
+	// returns the worker's confirm-read of what it committed.
+	WritePrefs(ctx context.Context, host domain.ExecutionHost, content []byte, expectSHA256 string) (domain.ExecutionHostPrefs, error)
+}
+
+// SetMaintenanceChannel installs the network-facing maintenance channel.
+func (s *Service) SetMaintenanceChannel(channel MaintenanceChannel) {
+	s.maintenance = channel
+}
+
+// HostInventory is the persisted maintenance view of one host: the cached
+// skills inventory and the confirmed preferences copy, each stamped with when
+// AO captured it.
+type HostInventory struct {
+	Skills        []domain.ExecutionHostSkill
+	SkillsAsOf    time.Time
+	Prefs         *domain.ExecutionHostPrefs
+	PrefsAsOf     time.Time
+	FromLiveProbe bool
+}
+
+// Inventory returns one host's maintenance view. With refresh the channel runs
+// live and the result is persisted before it is returned; without it the
+// cached rows answer, with their asOf timestamps carrying the staleness.
+func (s *Service) Inventory(ctx context.Context, id domain.ExecutionHostID, refresh bool) (HostInventory, error) {
+	host, err := s.maintenanceHost(ctx, id)
+	if err != nil {
+		return HostInventory{}, err
+	}
+	if refresh {
+		skills, err := s.maintenance.Inventory(ctx, host)
+		if err != nil {
+			return HostInventory{}, err
+		}
+		now := s.now().UTC()
+		if err := s.store.ReplaceExecutionHostSkills(ctx, host.ID, skills, now); err != nil {
+			return HostInventory{}, fmt.Errorf("persist host %s skills: %w", host.ID, err)
+		}
+		prefs, err := s.maintenance.ReadPrefs(ctx, host)
+		if err != nil {
+			return HostInventory{}, err
+		}
+		prefs.ConfirmedAt = now
+		if err := s.store.UpsertExecutionHostPrefs(ctx, prefs); err != nil {
+			return HostInventory{}, fmt.Errorf("persist host %s prefs: %w", host.ID, err)
+		}
+	}
+	skills, err := s.store.ListExecutionHostSkills(ctx, host.ID)
+	if err != nil {
+		return HostInventory{}, err
+	}
+	inventory := HostInventory{Skills: skills, FromLiveProbe: refresh}
+	for _, skill := range skills {
+		if skill.CapturedAt.After(inventory.SkillsAsOf) {
+			inventory.SkillsAsOf = skill.CapturedAt
+		}
+	}
+	if prefs, found, err := s.store.GetExecutionHostPrefs(ctx, host.ID); err != nil {
+		return HostInventory{}, err
+	} else if found {
+		inventory.Prefs, inventory.PrefsAsOf = &prefs, prefs.ConfirmedAt
+	}
+	return inventory, nil
+}
+
+// PutPreferences replaces one host's orchestration preferences.
+//
+// The flow is write → worker confirm-read → persist, and the write is guarded
+// by baseSHA256 — the digest of the content the caller believes is on the host
+// (the one the inventory read returned). The worker refuses a mismatch as
+// drift, so a file edited on the host since AO last looked is surfaced, never
+// clobbered; and an unreachable host refuses before anything is sent, because
+// a config write may never be ambiguous.
+func (s *Service) PutPreferences(ctx context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error) {
+	if strings.TrimSpace(content) == "" {
+		return domain.ExecutionHostPrefs{}, apierr.Invalid("PREFS_CONTENT_REQUIRED", "content is required", nil)
+	}
+	if !json.Valid([]byte(content)) {
+		return domain.ExecutionHostPrefs{}, apierr.Invalid("PREFS_CONTENT_INVALID",
+			"content must be valid JSON: the file is read by every Paseo skill on the host", nil)
+	}
+	baseSHA256 = strings.ToLower(strings.TrimSpace(baseSHA256))
+	if baseSHA256 == "" {
+		return domain.ExecutionHostPrefs{}, apierr.Invalid("PREFS_BASE_HASH_REQUIRED",
+			"baseSha256 is required: it is the hash of the content currently on the host, from the inventory read", nil)
+	}
+	host, err := s.maintenanceHost(ctx, id)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	prefs, err := s.maintenance.WritePrefs(ctx, host, []byte(content), baseSHA256)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	prefs.ConfirmedAt = s.now().UTC()
+	if err := s.store.UpsertExecutionHostPrefs(ctx, prefs); err != nil {
+		return domain.ExecutionHostPrefs{}, fmt.Errorf("persist host %s prefs: %w", host.ID, err)
+	}
+	return prefs, nil
+}
+
+func (s *Service) maintenanceHost(ctx context.Context, id domain.ExecutionHostID) (domain.ExecutionHost, error) {
+	id = domain.ExecutionHostID(strings.TrimSpace(string(id)))
+	if id == "" {
+		return domain.ExecutionHost{}, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
+	}
+	host, _, found, err := s.store.GetExecutionHost(ctx, id)
+	if err != nil {
+		return domain.ExecutionHost{}, fmt.Errorf("get execution host %s: %w", id, err)
+	}
+	if !found {
+		return domain.ExecutionHost{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+	}
+	if s.maintenance == nil {
+		return domain.ExecutionHost{}, apierr.Internal("MAINTENANCE_CHANNEL_UNAVAILABLE",
+			"this daemon was started without host maintenance wiring")
+	}
+	return host, nil
 }
 
 // SetScheduleChannel installs the network-facing schedule read and delete used

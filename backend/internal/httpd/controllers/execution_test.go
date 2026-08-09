@@ -42,6 +42,30 @@ type fakeExecutionService struct {
 
 	schedules       []executionsvc.HostSchedule
 	deletedSchedule string
+
+	inventory        executionsvc.HostInventory
+	inventoryRefresh bool
+	putPrefs         struct{ content, baseSHA string }
+}
+
+func (f *fakeExecutionService) Inventory(_ context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error) {
+	f.providersHostID = id
+	f.inventoryRefresh = refresh
+	if f.err != nil {
+		return executionsvc.HostInventory{}, f.err
+	}
+	inventory := f.inventory
+	inventory.FromLiveProbe = refresh
+	return inventory, nil
+}
+
+func (f *fakeExecutionService) PutPreferences(_ context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error) {
+	f.providersHostID = id
+	f.putPrefs.content, f.putPrefs.baseSHA = content, baseSHA256
+	if f.err != nil {
+		return domain.ExecutionHostPrefs{}, f.err
+	}
+	return domain.ExecutionHostPrefs{HostID: id, Content: content, SHA256: "confirmed-hash", Exists: true}, nil
 }
 
 func (f *fakeExecutionService) HostSchedules(_ context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error) {
@@ -232,6 +256,8 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodGet, "/api/v1/sessions/project-1/execution-events", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/schedules", ""},
 		{http.MethodDelete, "/api/v1/execution/hosts/worker-1/schedules/sch-1", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/inventory", ""},
+		{http.MethodPut, "/api/v1/execution/hosts/worker-1/preferences", `{}`},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
@@ -558,6 +584,55 @@ func TestHostScheduleRoutesListAndDelete(t *testing.T) {
 	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/schedules", "")
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"schedules":[]`) {
 		t.Fatalf("empty list = %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestHostInventoryAndPreferencesRoutes(t *testing.T) {
+	at := time.Unix(400, 0).UTC()
+	svc := &fakeExecutionService{inventory: executionsvc.HostInventory{
+		Skills: []domain.ExecutionHostSkill{
+			{HostID: "worker-1", Name: "deploy", Description: "Deploy safely", CapturedAt: at},
+		},
+		SkillsAsOf: at,
+		Prefs: &domain.ExecutionHostPrefs{
+			HostID: "worker-1", Content: `{"providers":{}}`, SHA256: "hash-1", Exists: true, ConfirmedAt: at,
+		},
+		PrefsAsOf: at,
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/inventory?refresh=true", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("inventory status = %d body = %s", resp.StatusCode, body)
+	}
+	if !svc.inventoryRefresh || svc.providersHostID != "worker-1" {
+		t.Fatalf("service saw refresh=%v host=%q", svc.inventoryRefresh, svc.providersHostID)
+	}
+	var inventory controllers.ExecutionHostInventoryResponse
+	if err := json.Unmarshal(body, &inventory); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(inventory.Skills) != 1 || inventory.Skills[0].Name != "deploy" || !inventory.Refreshed {
+		t.Fatalf("inventory = %#v", inventory)
+	}
+	if inventory.Prefs == nil || inventory.Prefs.SHA256 != "hash-1" {
+		t.Fatalf("inventory prefs = %#v", inventory.Prefs)
+	}
+
+	resp, body = doJSON(t, http.MethodPut, srv.URL+"/api/v1/execution/hosts/worker-1/preferences",
+		`{"content":"{\"providers\":{}}","baseSha256":"hash-1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("preferences status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.putPrefs.content != `{"providers":{}}` || svc.putPrefs.baseSHA != "hash-1" {
+		t.Fatalf("service saw put = %#v", svc.putPrefs)
+	}
+	var confirmed controllers.ExecutionPreferencesEnvelope
+	if err := json.Unmarshal(body, &confirmed); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if confirmed.Prefs.SHA256 != "confirmed-hash" {
+		t.Fatalf("confirmed prefs = %#v", confirmed.Prefs)
 	}
 }
 

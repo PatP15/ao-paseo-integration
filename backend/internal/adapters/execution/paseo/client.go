@@ -93,6 +93,19 @@ func (c *Client) ProviderModels(ctx context.Context, provider string) ([]Provide
 	return runJSON[[]ProviderModel](ctx, c, args, err)
 }
 
+// CreateLocalWorkspace creates a non-worktree workspace rooted at the remote
+// daemon's own cwd, used as the container for maintenance terminals.
+func (c *Client) CreateLocalWorkspace(ctx context.Context, title string) (Workspace, error) {
+	args, err := workspaceCreateLocalArgs(c.host, title)
+	return runJSON[Workspace](ctx, c, args, err)
+}
+
+// ArchiveWorkspace archives one explicitly identified workspace.
+func (c *Client) ArchiveWorkspace(ctx context.Context, workspaceID string) error {
+	args, err := workspaceArchiveArgs(c.host, workspaceID)
+	return c.runNoOutput(ctx, args, err)
+}
+
 // ListSchedules lists the host's recurring schedules. Heartbeats have no
 // listing in the pinned CLI, so this is deliberately not a statement about
 // them.

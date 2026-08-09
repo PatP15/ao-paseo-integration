@@ -35,6 +35,41 @@ type fakeStore struct {
 	eventsErr       error
 	eventsSeenAfter string
 	eventsSeenLimit int
+
+	hostSkills map[domain.ExecutionHostID][]domain.ExecutionHostSkill
+	hostPrefs  map[domain.ExecutionHostID]domain.ExecutionHostPrefs
+}
+
+func (f *fakeStore) ReplaceExecutionHostSkills(
+	_ context.Context, hostID domain.ExecutionHostID, skills []domain.ExecutionHostSkill, at time.Time,
+) error {
+	if f.hostSkills == nil {
+		f.hostSkills = map[domain.ExecutionHostID][]domain.ExecutionHostSkill{}
+	}
+	stamped := make([]domain.ExecutionHostSkill, 0, len(skills))
+	for _, skill := range skills {
+		skill.CapturedAt = at
+		stamped = append(stamped, skill)
+	}
+	f.hostSkills[hostID] = stamped
+	return nil
+}
+
+func (f *fakeStore) ListExecutionHostSkills(_ context.Context, hostID domain.ExecutionHostID) ([]domain.ExecutionHostSkill, error) {
+	return f.hostSkills[hostID], nil
+}
+
+func (f *fakeStore) UpsertExecutionHostPrefs(_ context.Context, prefs domain.ExecutionHostPrefs) error {
+	if f.hostPrefs == nil {
+		f.hostPrefs = map[domain.ExecutionHostID]domain.ExecutionHostPrefs{}
+	}
+	f.hostPrefs[prefs.HostID] = prefs
+	return nil
+}
+
+func (f *fakeStore) GetExecutionHostPrefs(_ context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostPrefs, bool, error) {
+	prefs, ok := f.hostPrefs[hostID]
+	return prefs, ok, nil
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {

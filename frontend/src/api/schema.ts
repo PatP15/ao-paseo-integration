@@ -208,6 +208,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/hosts/{hostId}/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one host's maintenance view: installed skills and confirmed preferences, cached with asOf; refresh=true runs the channel live */
+        get: operations["getExecutionHostInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts/{hostId}/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the host's orchestration preferences: write, worker confirm-read, persist; drift and unreachable hosts are refused whole */
+        put: operations["putExecutionHostPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/hosts/{hostId}/probe": {
         parameters: {
             query?: never;
@@ -1350,6 +1384,29 @@ export interface components {
             /** @enum {string} */
             transport: "terminal" | "sentinel" | "inspect" | "output_schema";
         };
+        ControllersExecutionHostInventoryResponse: {
+            prefs?: components["schemas"]["ControllersExecutionHostPrefsResponse"];
+            /** @description True when this response came from a live channel run rather than cache alone. */
+            refreshed: boolean;
+            skills: components["schemas"]["ControllersExecutionHostSkillResponse"][];
+            /** Format: date-time */
+            skillsAsOf?: string;
+        };
+        ControllersExecutionHostPrefsResponse: {
+            /** Format: date-time */
+            confirmedAt: string;
+            content: string;
+            /** @description False when the file is absent on the host; content is then empty and sha256 is the empty-string hash. */
+            exists: boolean;
+            sha256: string;
+        };
+        ControllersExecutionHostSkillResponse: {
+            description?: string;
+            name: string;
+        };
+        ControllersExecutionPreferencesEnvelope: {
+            prefs: components["schemas"]["ControllersExecutionHostPrefsResponse"];
+        };
         ControllersExecutionProviderModelResponse: {
             defaultThinkingOptionId?: string;
             description?: string;
@@ -1399,6 +1456,12 @@ export interface components {
         };
         ControllersListExecutionSecretsResponse: {
             refs: string[];
+        };
+        ControllersPutExecutionPreferencesRequest: {
+            /** @description Hex sha256 of the content currently on the host, from the inventory read. A mismatch on the host is refused as drift. */
+            baseSha256: string;
+            /** @description Complete new file content; must be valid JSON. */
+            content: string;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -2856,6 +2919,149 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getExecutionHostInventory: {
+        parameters: {
+            query?: {
+                /** @description Run the maintenance channel live and persist before answering; without it the cached rows answer with their asOf timestamps. */
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Registered execution host. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionHostInventoryResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putExecutionHostPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Execution host identifier. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersPutExecutionPreferencesRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersExecutionPreferencesEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

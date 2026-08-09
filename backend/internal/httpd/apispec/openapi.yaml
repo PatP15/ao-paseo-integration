@@ -505,6 +505,124 @@ paths:
       summary: Register or replace one remote execution host
       tags:
       - execution
+  /api/v1/execution/hosts/{hostId}/inventory:
+    get:
+      operationId: getExecutionHostInventory
+      parameters:
+      - description: Run the maintenance channel live and persist before answering;
+          without it the cached rows answer with their asOf timestamps.
+        in: query
+        name: refresh
+        schema:
+          description: Run the maintenance channel live and persist before answering;
+            without it the cached rows answer with their asOf timestamps.
+          type: boolean
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionHostInventoryResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Read one host''s maintenance view: installed skills and confirmed
+        preferences, cached with asOf; refresh=true runs the channel live'
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/preferences:
+    put:
+      operationId: putExecutionHostPreferences
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPutExecutionPreferencesRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersExecutionPreferencesEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'Replace the host''s orchestration preferences: write, worker confirm-read,
+        persist; drift and unreachable hosts are refused whole'
+      tags:
+      - execution
   /api/v1/execution/hosts/{hostId}/probe:
     post:
       operationId: probeExecutionHost
@@ -3898,6 +4016,60 @@ components:
       - ingestedAt
       - applied
       type: object
+    ControllersExecutionHostInventoryResponse:
+      properties:
+        prefs:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+        refreshed:
+          description: True when this response came from a live channel run rather
+            than cache alone.
+          type: boolean
+        skills:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionHostSkillResponse'
+          type: array
+        skillsAsOf:
+          format: date-time
+          type: string
+      required:
+      - skills
+      - refreshed
+      type: object
+    ControllersExecutionHostPrefsResponse:
+      properties:
+        confirmedAt:
+          format: date-time
+          type: string
+        content:
+          type: string
+        exists:
+          description: False when the file is absent on the host; content is then
+            empty and sha256 is the empty-string hash.
+          type: boolean
+        sha256:
+          type: string
+      required:
+      - content
+      - sha256
+      - exists
+      - confirmedAt
+      type: object
+    ControllersExecutionHostSkillResponse:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+      required:
+      - name
+      type: object
+    ControllersExecutionPreferencesEnvelope:
+      properties:
+        prefs:
+          $ref: '#/components/schemas/ControllersExecutionHostPrefsResponse'
+      required:
+      - prefs
+      type: object
     ControllersExecutionProviderModelResponse:
       properties:
         defaultThinkingOptionId:
@@ -4028,6 +4200,19 @@ components:
           type: array
       required:
       - refs
+      type: object
+    ControllersPutExecutionPreferencesRequest:
+      properties:
+        baseSha256:
+          description: Hex sha256 of the content currently on the host, from the inventory
+            read. A mismatch on the host is refused as drift.
+          type: string
+        content:
+          description: Complete new file content; must be valid JSON.
+          type: string
+      required:
+      - content
+      - baseSha256
       type: object
     ControllersSessionView:
       properties:

@@ -152,6 +152,30 @@ func providerModelsArgs(host, provider string) ([]string, error) {
 	return append(args, provider, "--json"), nil
 }
 
+func workspaceCreateLocalArgs(host, title string) ([]string, error) {
+	if strings.TrimSpace(title) == "" {
+		return nil, fmt.Errorf("local workspace requires a title")
+	}
+	args, err := hostArgs([]string{"workspace", "create"}, host)
+	if err != nil {
+		return nil, err
+	}
+	// No --path on purpose: it defaults to the remote daemon's own cwd, which
+	// is the only directory AO can name without knowing the host's filesystem.
+	return append(args, "--isolation", "local", "--title", title, "--json"), nil
+}
+
+func workspaceArchiveArgs(host, workspaceID string) ([]string, error) {
+	if workspaceID == "" || strings.ContainsAny(workspaceID, " \t\r\n") || strings.HasPrefix(workspaceID, "-") {
+		return nil, fmt.Errorf("invalid workspace id %q", workspaceID)
+	}
+	args, err := hostArgs([]string{"workspace", "archive"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, workspaceID), nil
+}
+
 func scheduleListArgs(host string) ([]string, error) {
 	args, err := hostArgs([]string{"schedule", "ls"}, host)
 	if err != nil {

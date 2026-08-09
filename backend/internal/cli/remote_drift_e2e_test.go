@@ -71,6 +71,14 @@ func (c *captureExecutionService) DeleteHostSchedule(context.Context, domain.Exe
 	return nil
 }
 
+func (c *captureExecutionService) Inventory(context.Context, domain.ExecutionHostID, bool) (executionsvc.HostInventory, error) {
+	return executionsvc.HostInventory{}, nil
+}
+
+func (c *captureExecutionService) PutPreferences(context.Context, domain.ExecutionHostID, string, string) (domain.ExecutionHostPrefs, error) {
+	return domain.ExecutionHostPrefs{}, nil
+}
+
 func (c *captureExecutionService) ListBindings(context.Context, executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
 	return nil, nil
 }

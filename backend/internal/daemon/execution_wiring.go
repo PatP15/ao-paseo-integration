@@ -17,6 +17,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -275,6 +276,75 @@ func newScheduleChannel(backends *executionBackends) (
 		return nil
 	}
 	return read, remove
+}
+
+// maintenanceChannel adapts the shared backends cache to the execution
+// service's MaintenanceChannel, typing failures the same way the other remote
+// reads do. A worker-side refusal (drift, corruption) surfaces as a 409 with
+// the worker's message verbatim — it is a fact about the host's state, and the
+// operation did not happen.
+type maintenanceChannel struct {
+	backends *executionBackends
+}
+
+func (m maintenanceChannel) resolve(ctx context.Context, host domain.ExecutionHost) (*paseoexec.Backend, error) {
+	client, ok := m.backends.client(ctx, host.ID)
+	if !ok {
+		return nil, apierr.Conflict("HOST_UNAVAILABLE",
+			"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
+			nil)
+	}
+	return paseoexec.NewBackend(client, m.backends.store), nil
+}
+
+func (m maintenanceChannel) typed(host domain.ExecutionHost, err error) error {
+	var refused *paseoexec.MaintenanceRefusedError
+	if errors.As(err, &refused) {
+		return apierr.Conflict("MAINTENANCE_REFUSED", refused.Message, nil)
+	}
+	if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
+		return apierr.Conflict("HOST_UNREACHABLE",
+			"host "+string(host.ID)+" did not answer: "+paseoexec.Redact(err.Error()), nil)
+	}
+	return err
+}
+
+func (m maintenanceChannel) Inventory(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSkill, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := backend.HostInventory(ctx, host.ID)
+	if err != nil {
+		return nil, m.typed(host, err)
+	}
+	return skills, nil
+}
+
+func (m maintenanceChannel) ReadPrefs(ctx context.Context, host domain.ExecutionHost) (domain.ExecutionHostPrefs, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	prefs, err := backend.HostPrefs(ctx, host.ID)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, m.typed(host, err)
+	}
+	return prefs, nil
+}
+
+func (m maintenanceChannel) WritePrefs(
+	ctx context.Context, host domain.ExecutionHost, content []byte, expectSHA256 string,
+) (domain.ExecutionHostPrefs, error) {
+	backend, err := m.resolve(ctx, host)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, err
+	}
+	prefs, err := backend.WriteHostPrefs(ctx, host.ID, content, expectSHA256)
+	if err != nil {
+		return domain.ExecutionHostPrefs{}, m.typed(host, err)
+	}
+	return prefs, nil
 }
 
 // newQuestionResolvedHook closes the notification for one answered question.

@@ -273,6 +273,7 @@ func Run() error {
 	execSvc.SetProviderDiscovery(newProviderDiscovery(executionClients))
 	execSvc.SetQuestionResolvedHook(newQuestionResolvedHook(notificationWriter, log))
 	execSvc.SetScheduleChannel(newScheduleChannel(executionClients))
+	execSvc.SetMaintenanceChannel(maintenanceChannel{backends: executionClients})
 	// Dispatch settings are validated against the same discovery (and its
 	// cache) the providers endpoint serves, so what the UI offered and what
 	// dispatch accepts can never be two different vocabularies.

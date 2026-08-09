@@ -34,6 +34,8 @@ type ExecutionService interface {
 	ListSessionEvents(ctx context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error)
 	HostSchedules(ctx context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error)
 	DeleteHostSchedule(ctx context.Context, id domain.ExecutionHostID, scheduleID string) error
+	Inventory(ctx context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error)
+	PutPreferences(ctx context.Context, id domain.ExecutionHostID, content, baseSHA256 string) (domain.ExecutionHostPrefs, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -82,6 +84,99 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/execution-events", c.listSessionEvents)
 	r.Get("/execution/hosts/{hostId}/schedules", c.listHostSchedules)
 	r.Delete("/execution/hosts/{hostId}/schedules/{scheduleId}", c.deleteHostSchedule)
+	r.Get("/execution/hosts/{hostId}/inventory", c.hostInventory)
+	r.Put("/execution/hosts/{hostId}/preferences", c.putHostPreferences)
+}
+
+// ExecutionInventoryQuery selects one host's maintenance view.
+type ExecutionInventoryQuery struct {
+	HostID  string `path:"hostId" description:"Registered execution host."`
+	Refresh bool   `query:"refresh" description:"Run the maintenance channel live and persist before answering; without it the cached rows answer with their asOf timestamps."`
+}
+
+// ExecutionHostSkillResponse is one installed skill on the host.
+type ExecutionHostSkillResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ExecutionHostPrefsResponse is the host's orchestration preferences as last
+// confirmed by the maintenance channel. Sha256 is the drift anchor: pass it
+// back as baseSha256 when writing.
+type ExecutionHostPrefsResponse struct {
+	Content     string    `json:"content"`
+	SHA256      string    `json:"sha256"`
+	Exists      bool      `json:"exists" description:"False when the file is absent on the host; content is then empty and sha256 is the empty-string hash."`
+	ConfirmedAt time.Time `json:"confirmedAt"`
+}
+
+// ExecutionHostInventoryResponse is the body of GET
+// /api/v1/execution/hosts/{hostId}/inventory: cached remote facts, each
+// stamped with when AO captured them.
+type ExecutionHostInventoryResponse struct {
+	Skills     []ExecutionHostSkillResponse `json:"skills"`
+	SkillsAsOf time.Time                    `json:"skillsAsOf,omitempty"`
+	Prefs      *ExecutionHostPrefsResponse  `json:"prefs,omitempty"`
+	Refreshed  bool                         `json:"refreshed" description:"True when this response came from a live channel run rather than cache alone."`
+}
+
+// PutExecutionPreferencesRequest replaces the host's preferences file.
+type PutExecutionPreferencesRequest struct {
+	Content    string `json:"content" description:"Complete new file content; must be valid JSON."`
+	BaseSHA256 string `json:"baseSha256" description:"Hex sha256 of the content currently on the host, from the inventory read. A mismatch on the host is refused as drift."`
+}
+
+// ExecutionPreferencesEnvelope wraps the confirmed preferences after a write.
+type ExecutionPreferencesEnvelope struct {
+	Prefs ExecutionHostPrefsResponse `json:"prefs"`
+}
+
+func (c *ExecutionController) hostInventory(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/hosts/{hostId}/inventory")
+		return
+	}
+	refresh := r.URL.Query().Get("refresh") == "true"
+	inventory, err := c.Svc.Inventory(r.Context(), domain.ExecutionHostID(chi.URLParam(r, "hostId")), refresh)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	skills := make([]ExecutionHostSkillResponse, 0, len(inventory.Skills))
+	for _, skill := range inventory.Skills {
+		skills = append(skills, ExecutionHostSkillResponse{Name: skill.Name, Description: skill.Description})
+	}
+	out := ExecutionHostInventoryResponse{
+		Skills: skills, SkillsAsOf: inventory.SkillsAsOf, Refreshed: inventory.FromLiveProbe,
+	}
+	if inventory.Prefs != nil {
+		out.Prefs = &ExecutionHostPrefsResponse{
+			Content: inventory.Prefs.Content, SHA256: inventory.Prefs.SHA256,
+			Exists: inventory.Prefs.Exists, ConfirmedAt: inventory.Prefs.ConfirmedAt,
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, out)
+}
+
+func (c *ExecutionController) putHostPreferences(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPut, "/api/v1/execution/hosts/{hostId}/preferences")
+		return
+	}
+	var in PutExecutionPreferencesRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	prefs, err := c.Svc.PutPreferences(r.Context(),
+		domain.ExecutionHostID(chi.URLParam(r, "hostId")), in.Content, in.BaseSHA256)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExecutionPreferencesEnvelope{Prefs: ExecutionHostPrefsResponse{
+		Content: prefs.Content, SHA256: prefs.SHA256, Exists: prefs.Exists, ConfirmedAt: prefs.ConfirmedAt,
+	}})
 }
 
 // ExecutionScheduleIDParams identifies one schedule on one host.

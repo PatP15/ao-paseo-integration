@@ -20,6 +20,7 @@ import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
+import { ExecutionQuestionActions } from "./ExecutionQuestionActions";
 import {
 	createNotificationsTransport,
 	getCachedNotifications,
@@ -504,6 +505,9 @@ function NotificationItem({
 						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
 							{notification.body}
 						</p>
+					) : null}
+					{notification.target.kind === "execution_question" && notification.target.questionId && !notification.resolvedAt ? (
+						<ExecutionQuestionActions questionId={notification.target.questionId} />
 					) : null}
 				</div>
 				{/* Time + restore share the same icon-height band so they stay level. */}

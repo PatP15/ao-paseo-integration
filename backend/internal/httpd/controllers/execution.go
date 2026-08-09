@@ -29,6 +29,7 @@ type ExecutionService interface {
 	BindProject(ctx context.Context, in executionsvc.BindingInput) (domain.ProjectHostBinding, error)
 	ListBindings(ctx context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error)
 	GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error)
+	HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -64,6 +65,7 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/hosts", c.listHosts)
 	r.Put("/execution/hosts/{hostId}", c.registerHost)
 	r.Post("/execution/hosts/{hostId}/probe", c.probeHost)
+	r.Get("/execution/hosts/{hostId}/providers", c.hostProviders)
 	r.Post("/execution/dispatch", c.dispatch)
 	r.Put("/execution/projects/{projectId}/hosts/{hostId}", c.bindProject)
 	r.Get("/execution/bindings", c.listBindings)
@@ -73,6 +75,72 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Post("/execution/secrets", c.createSecret)
 	r.Get("/execution/secrets", c.listSecrets)
 	r.Get("/execution/commands/{commandId}", c.getCommand)
+}
+
+// ExecutionProviderModelResponse is one launchable model with its thinking
+// vocabulary. ThinkingOptionIds is the complete valid set for
+// settings.thinkingOptionId on this model.
+type ExecutionProviderModelResponse struct {
+	ID                      string   `json:"id"`
+	Label                   string   `json:"label"`
+	Description             string   `json:"description,omitempty"`
+	ThinkingOptionIDs       []string `json:"thinkingOptionIds"`
+	DefaultThinkingOptionID string   `json:"defaultThinkingOptionId,omitempty"`
+}
+
+// ExecutionProviderResponse is one provider as the host's daemon reports it.
+// ModeLabels are display labels, not mode ids; they describe, never validate.
+type ExecutionProviderResponse struct {
+	Provider    string                           `json:"provider"`
+	Label       string                           `json:"label"`
+	Status      string                           `json:"status" description:"Provider availability as the host daemon reports it, e.g. available or unavailable."`
+	Enabled     bool                             `json:"enabled"`
+	DefaultMode string                           `json:"defaultMode,omitempty"`
+	ModeLabels  []string                         `json:"modeLabels"`
+	Models      []ExecutionProviderModelResponse `json:"models" description:"Populated for available providers only."`
+}
+
+// ListExecutionProvidersResponse is the body of GET
+// /api/v1/execution/hosts/{hostId}/providers.
+type ListExecutionProvidersResponse struct {
+	Providers []ExecutionProviderResponse `json:"providers"`
+}
+
+// hostProviders reports what one host can launch, for dispatch settings UIs.
+func (c *ExecutionController) hostProviders(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/hosts/{hostId}/providers")
+		return
+	}
+	providers, err := c.Svc.HostProviders(r.Context(), domain.ExecutionHostID(chi.URLParam(r, "hostId")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := make([]ExecutionProviderResponse, 0, len(providers))
+	for _, provider := range providers {
+		models := make([]ExecutionProviderModelResponse, 0, len(provider.Models))
+		for _, model := range provider.Models {
+			ids := model.ThinkingOptionIDs
+			if ids == nil {
+				ids = []string{}
+			}
+			models = append(models, ExecutionProviderModelResponse{
+				ID: model.ID, Label: model.Label, Description: model.Description,
+				ThinkingOptionIDs: ids, DefaultThinkingOptionID: model.DefaultThinkingOptionID,
+			})
+		}
+		labels := provider.ModeLabels
+		if labels == nil {
+			labels = []string{}
+		}
+		out = append(out, ExecutionProviderResponse{
+			Provider: provider.Provider, Label: provider.Label, Status: provider.Status,
+			Enabled: provider.Enabled, DefaultMode: provider.DefaultMode,
+			ModeLabels: labels, Models: models,
+		})
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListExecutionProvidersResponse{Providers: out})
 }
 
 // ExecutionCommandIDParam identifies one outbox command.
@@ -349,7 +417,7 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	result, err := c.Dispatch.Dispatch(r.Context(), dispatchsvc.Request{
+	req := dispatchsvc.Request{
 		WorkItemID:           strings.TrimSpace(in.WorkItemID),
 		ProjectID:            in.ProjectID,
 		TrustZone:            in.TrustZone,
@@ -362,7 +430,12 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 		Model:                strings.TrimSpace(in.Model),
 		Mode:                 strings.TrimSpace(in.Mode),
 		Prompt:               in.Prompt,
-	})
+	}
+	if in.Settings != nil {
+		req.ThinkingOptionID = strings.TrimSpace(in.Settings.ThinkingOptionID)
+		req.Features = in.Settings.Features
+	}
+	result, err := c.Dispatch.Dispatch(r.Context(), req)
 	if err != nil {
 		// "No eligible host" is an expected scheduling outcome, not a server
 		// fault: every host may be offline, at capacity, in another zone, or
@@ -590,7 +663,18 @@ type DispatchExecutionRequest struct {
 	Provider             string                    `json:"provider" description:"Remote provider to launch, e.g. claude or codex."`
 	Model                string                    `json:"model,omitempty"`
 	Mode                 string                    `json:"mode,omitempty"`
+	Settings             *DispatchSettings         `json:"settings,omitempty"`
 	Prompt               string                    `json:"prompt"`
+}
+
+// DispatchSettings are provider runtime settings validated against what
+// provider discovery reports for the selected host: an id discovery did not
+// return is refused, never forwarded.
+type DispatchSettings struct {
+	ThinkingOptionID string `json:"thinkingOptionId,omitempty" description:"Thinking option id from the host's provider discovery; requires model to be set."`
+	// Features are refused by the pinned Paseo CLI (no discovery, no run flag);
+	// the field exists so the request shape is stable when the CLI grows one.
+	Features map[string]bool `json:"features,omitempty" description:"Provider feature toggles. Not supported by the pinned Paseo CLI; any entry is refused."`
 }
 
 // DispatchExecutionResponse reports what AO committed. Nothing remote exists
@@ -644,6 +728,20 @@ func (in DispatchExecutionRequest) validate() error {
 		{"MODE_INVALID", "mode", in.Mode},
 	} {
 		if err := validateExecutionArg(arg.code, arg.field, arg.value); err != nil {
+			return err
+		}
+	}
+	if in.Settings != nil {
+		// Refused here rather than silently dropped: a caller who asked for a
+		// feature and got a normal launch would trust a setting that never
+		// applied. The pinned Paseo CLI exposes no feature discovery
+		// (inspect_provider is MCP-only) and no run flag to forward one.
+		if len(in.Settings.Features) > 0 {
+			return apierr.Invalid("FEATURES_UNSUPPORTED",
+				"settings.features is not supported by the pinned Paseo CLI; only settings.thinkingOptionId can be forwarded", nil)
+		}
+		if err := validateExecutionArg("THINKING_OPTION_INVALID", "settings.thinkingOptionId",
+			in.Settings.ThinkingOptionID); err != nil {
 			return err
 		}
 	}

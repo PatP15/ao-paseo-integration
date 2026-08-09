@@ -33,6 +33,17 @@ type fakeExecutionService struct {
 
 	bindingsList  []domain.ProjectHostBinding
 	bindingFilter executionsvc.BindingFilter
+
+	providers       []domain.ExecutionHostProvider
+	providersHostID domain.ExecutionHostID
+}
+
+func (f *fakeExecutionService) HostProviders(_ context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
+	f.providersHostID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.providers, nil
 }
 
 // BindProject records a project's checkout path on a host.
@@ -189,6 +200,7 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodGet, "/api/v1/execution/hosts", ""},
 		{http.MethodPut, "/api/v1/execution/hosts/worker-1", `{}`},
 		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/providers", ""},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
@@ -306,6 +318,16 @@ func TestDispatchValidatesBeforeCommitting(t *testing.T) {
 			name: "empty capability", code: "CAPABILITY_INVALID",
 			edit: func(m map[string]any) { m["requiredCapabilities"] = []string{"linux", ""} },
 		},
+		{
+			// The pinned Paseo CLI has no feature discovery and no run flag to
+			// forward one; refusing is honest, silently dropping is not.
+			name: "provider features", code: "FEATURES_UNSUPPORTED",
+			edit: func(m map[string]any) { m["settings"] = map[string]any{"features": map[string]bool{"fast_mode": true}} },
+		},
+		{
+			name: "flag-shaped thinking option", code: "THINKING_OPTION_INVALID",
+			edit: func(m map[string]any) { m["settings"] = map[string]any{"thinkingOptionId": "--verbose"} },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -360,6 +382,64 @@ func TestDispatchValidatesBeforeCommitting(t *testing.T) {
 	}
 	if dispatcher.request.Harness != domain.HarnessCodex {
 		t.Fatalf("dispatched request = %#v", dispatcher.request)
+	}
+}
+
+func TestDispatchForwardsValidatedSettings(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	srv := executionServer(t, httpd.APIDeps{ExecutionDispatch: dispatcher})
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/dispatch", `{
+		"workItemId":"work-1","projectId":"project","trustZone":"work","harness":"codex",
+		"branch":"ao/work-1","provider":"claude","model":"claude-opus-5",
+		"settings":{"thinkingOptionId":"high"},"prompt":"Implement the approved task."
+	}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if dispatcher.request.ThinkingOptionID != "high" {
+		t.Fatalf("dispatched thinking option = %q", dispatcher.request.ThinkingOptionID)
+	}
+	if len(dispatcher.request.Features) != 0 {
+		t.Fatalf("dispatched features = %#v, want none", dispatcher.request.Features)
+	}
+}
+
+func TestListExecutionHostProviders(t *testing.T) {
+	svc := &fakeExecutionService{providers: []domain.ExecutionHostProvider{
+		{
+			Provider: "claude", Label: "Claude", Status: "available", Enabled: true,
+			DefaultMode: "auto", ModeLabels: []string{"Plan Mode", "Bypass"},
+			Models: []domain.ExecutionProviderModel{{
+				ID: "claude-opus-5", Label: "Opus 5",
+				ThinkingOptionIDs:       []string{"off", "low", "high"},
+				DefaultThinkingOptionID: "low",
+			}},
+		},
+		{Provider: "copilot", Label: "Copilot", Status: "unavailable", Enabled: true},
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/providers", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.providersHostID != "worker-1" {
+		t.Fatalf("service saw host %q", svc.providersHostID)
+	}
+	var out controllers.ListExecutionProvidersResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Providers) != 2 || out.Providers[0].Provider != "claude" {
+		t.Fatalf("providers = %#v", out.Providers)
+	}
+	claude := out.Providers[0]
+	if len(claude.Models) != 1 || claude.Models[0].ID != "claude-opus-5" || len(claude.Models[0].ThinkingOptionIDs) != 3 {
+		t.Fatalf("claude models = %#v", claude.Models)
+	}
+	// The unavailable provider is present with empty (not null) collections, so
+	// a UI can render "configured but unavailable" without null checks.
+	if !strings.Contains(string(body), `"models":[]`) || !strings.Contains(string(body), `"modeLabels":[]`) {
+		t.Fatalf("empty collections serialise as null: %s", body)
 	}
 }
 

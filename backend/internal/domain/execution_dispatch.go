@@ -52,17 +52,20 @@ type ExecutionCommand struct {
 // start_agent command created by an approved dispatch. Provision and Launch
 // consume it in order; their remote identifiers are persisted by the backend.
 type ExecutionStartPayload struct {
-	ProjectID  ProjectID         `json:"projectId"`
-	RepoPath   string            `json:"repoPath"`
-	BaseBranch string            `json:"baseBranch"`
-	Branch     string            `json:"branch"`
-	Provider   string            `json:"provider"`
-	Model      string            `json:"model,omitempty"`
-	Mode       string            `json:"mode,omitempty"`
-	Prompt     string            `json:"prompt"`
-	IntentID   ExecutionIntentID `json:"intentId"`
-	Attempt    int               `json:"attempt"`
-	LaunchID   string            `json:"launchId"`
+	ProjectID  ProjectID `json:"projectId"`
+	RepoPath   string    `json:"repoPath"`
+	BaseBranch string    `json:"baseBranch"`
+	Branch     string    `json:"branch"`
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model,omitempty"`
+	Mode       string    `json:"mode,omitempty"`
+	// ThinkingOptionID is only ever a value discovery reported for the payload's
+	// provider and model; dispatch refuses anything else before it is committed.
+	ThinkingOptionID string            `json:"thinkingOptionId,omitempty"`
+	Prompt           string            `json:"prompt"`
+	IntentID         ExecutionIntentID `json:"intentId"`
+	Attempt          int               `json:"attempt"`
+	LaunchID         string            `json:"launchId"`
 }
 
 // ExecutionDispatchSeed contains everything the store commits atomically for
@@ -79,6 +82,7 @@ type ExecutionDispatchSeed struct {
 	Provider           string
 	Model              string
 	Mode               string
+	ThinkingOptionID   string
 	Prompt             string
 	IntentID           ExecutionIntentID
 	Attempt            int

@@ -21,6 +21,7 @@ type RunRequest struct {
 	Provider    string
 	Model       string
 	Mode        string
+	Thinking    string
 	Title       string
 	Labels      []string
 	Prompt      string
@@ -94,6 +95,9 @@ func runArgs(host string, req RunRequest) ([]string, error) {
 	if req.Mode != "" {
 		args = append(args, "--mode", req.Mode)
 	}
+	if req.Thinking != "" {
+		args = append(args, "--thinking", req.Thinking)
+	}
 	if req.Title != "" {
 		args = append(args, "--title", req.Title)
 	}
@@ -125,6 +129,27 @@ func listAgentsArgs(host, label string) ([]string, error) {
 		args = append(args, "--label", label)
 	}
 	return args, nil
+}
+
+func providerListArgs(host string) ([]string, error) {
+	args, err := hostArgs([]string{"provider", "ls"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, "--json"), nil
+}
+
+func providerModelsArgs(host, provider string) ([]string, error) {
+	// The provider name becomes one argv element; the same argv rules the
+	// dispatch path enforces apply here.
+	if provider == "" || strings.ContainsAny(provider, " \t\r\n") || strings.HasPrefix(provider, "-") {
+		return nil, fmt.Errorf("invalid provider name %q", provider)
+	}
+	args, err := hostArgs([]string{"provider", "models"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, provider, "--json"), nil
 }
 
 func inspectArgs(host, agentID string) ([]string, error) {

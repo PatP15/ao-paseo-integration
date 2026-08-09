@@ -65,28 +65,32 @@ func (s *memoryExecutionStore) UpsertSessionExecutionBinding(_ context.Context, 
 }
 
 type fakeExecutionClient struct {
-	status          DaemonStatus
-	statusErr       error
-	workspaces      []Workspace
-	workspaceResult Workspace
-	workspaceErr    error
-	runResult       RunResult
-	runErr          error
-	agents          []Agent
-	listLabels      []string
-	listErr         error
-	details         map[string]AgentDetail
-	inspectErr      error
-	logs            string
-	logsErr         error
-	capture         TerminalCapture
-	captureErr      error
-	stopErr         error
-	sendErr         error
-	calls           []string
-	events          *[]string
-	onCreate        func()
-	onRun           func()
+	status            DaemonStatus
+	statusErr         error
+	workspaces        []Workspace
+	workspaceResult   Workspace
+	workspaceErr      error
+	runResult         RunResult
+	runErr            error
+	providers         []Provider
+	providersErr      error
+	providerModels    map[string][]ProviderModel
+	providerModelsErr error
+	agents            []Agent
+	listLabels        []string
+	listErr           error
+	details           map[string]AgentDetail
+	inspectErr        error
+	logs              string
+	logsErr           error
+	capture           TerminalCapture
+	captureErr        error
+	stopErr           error
+	sendErr           error
+	calls             []string
+	events            *[]string
+	onCreate          func()
+	onRun             func()
 }
 
 func newFakeExecutionClient(events *[]string) *fakeExecutionClient {
@@ -129,6 +133,16 @@ func (c *fakeExecutionClient) CreateWorkspace(context.Context, WorkspaceCreateRe
 func (c *fakeExecutionClient) ListWorkspaces(context.Context) ([]Workspace, error) {
 	c.record("list-workspaces")
 	return append([]Workspace(nil), c.workspaces...), nil
+}
+
+func (c *fakeExecutionClient) ListProviders(context.Context) ([]Provider, error) {
+	c.record("list-providers")
+	return append([]Provider(nil), c.providers...), c.providersErr
+}
+
+func (c *fakeExecutionClient) ProviderModels(_ context.Context, provider string) ([]ProviderModel, error) {
+	c.record("provider-models:" + provider)
+	return append([]ProviderModel(nil), c.providerModels[provider]...), c.providerModelsErr
 }
 
 func (c *fakeExecutionClient) Run(context.Context, RunRequest) (RunResult, error) {

@@ -30,6 +30,8 @@ type executionClient interface {
 	CreateWorkspace(context.Context, WorkspaceCreateRequest) (Workspace, error)
 	ListWorkspaces(context.Context) ([]Workspace, error)
 	Run(context.Context, RunRequest) (RunResult, error)
+	ListProviders(context.Context) ([]Provider, error)
+	ProviderModels(context.Context, string) ([]ProviderModel, error)
 	ListAgents(context.Context, string) ([]Agent, error)
 	Inspect(context.Context, string) (AgentDetail, error)
 	Stop(context.Context, string) error
@@ -204,7 +206,8 @@ func (b *Backend) Launch(ctx context.Context, req ports.ExecutionLaunchRequest) 
 
 	result, runErr := b.client.Run(ctx, RunRequest{
 		WorkspaceID: string(req.WorkspaceID), Provider: req.Provider, Model: req.Model,
-		Mode: req.Mode, Title: binding.WorkspaceTitle, Labels: sortedLabels(req.Labels), Prompt: req.Prompt,
+		Mode: req.Mode, Thinking: req.ThinkingOptionID,
+		Title: binding.WorkspaceTitle, Labels: sortedLabels(req.Labels), Prompt: req.Prompt,
 	})
 	if runErr != nil {
 		return b.reconcileRunFailure(ctx, &binding, req, runErr)

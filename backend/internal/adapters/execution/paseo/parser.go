@@ -99,6 +99,18 @@ type Provider struct {
 	Modes       string `json:"modes"`
 }
 
+// ProviderModel is Paseo 0.2.5's provider-models JSON shape. Model is the
+// display name and ID the launchable identifier; ThinkingOptions restates
+// ThinkingOptionIDs as one display string.
+type ProviderModel struct {
+	Model                   string   `json:"model"`
+	ID                      string   `json:"id"`
+	Description             string   `json:"description"`
+	ThinkingOptionIDs       []string `json:"thinkingOptionIds"`
+	DefaultThinkingOptionID string   `json:"defaultThinkingOptionId"`
+	ThinkingOptions         string   `json:"thinkingOptions"`
+}
+
 // TerminalCapture is a cursored slice of hard-wrapped terminal screen lines.
 type TerminalCapture struct {
 	TerminalID string   `json:"terminalId"`

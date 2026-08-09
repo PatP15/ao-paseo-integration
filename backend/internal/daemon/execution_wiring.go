@@ -186,18 +186,40 @@ func startExecutionObserver(
 	ctx context.Context,
 	store *sqlite.Store,
 	lcm *lifecycle.Manager,
-	dataDir string,
+	backends *executionBackends,
 	logger *slog.Logger,
 ) (<-chan struct{}, <-chan struct{}) {
-	// One cache shared by both: the observer and the drain talk to the same
-	// hosts, and a second cache would double the client count and the version
-	// handshakes for no benefit.
-	backends := newExecutionBackends(store, dataDir, logger)
 	reports := paseoevent.NewIngestor(store, lcm, backends, logger)
 	observer := paseoobserve.NewWithReports(store, lcm, backends, reports, logger)
 	logger.Info("execution: paseo observer and dispatch drain starting",
-		"secrets", filepath.Join(dataDir, "secrets"))
+		"secrets", backends.secrets.dir)
 	return observer.Start(ctx), startDispatchWorker(ctx, store, backends, logger)
+}
+
+// newProviderDiscovery builds the network half of GET
+// /execution/hosts/{hostId}/providers. It resolves through the shared backends
+// cache — the same client, credential, and version pin every other remote read
+// uses — and converts adapter failures into typed errors: a host the cache
+// refuses (disabled, missing credential, failed handshake) and a host that
+// does not answer are operator-visible facts, not 500s.
+func newProviderDiscovery(backends *executionBackends) func(context.Context, domain.ExecutionHost) ([]domain.ExecutionHostProvider, error) {
+	return func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error) {
+		client, ok := backends.client(ctx, host.ID)
+		if !ok {
+			return nil, apierr.Conflict("HOST_UNAVAILABLE",
+				"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
+				nil)
+		}
+		providers, err := paseoexec.NewBackend(client, backends.store).Providers(ctx, host.ID)
+		if err != nil {
+			if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
+				return nil, apierr.Conflict("HOST_UNREACHABLE",
+					"host "+string(host.ID)+" did not answer provider discovery: "+paseoexec.Redact(err.Error()), nil)
+			}
+			return nil, fmt.Errorf("discover providers on host %s: %w", host.ID, err)
+		}
+		return providers, nil
+	}
 }
 
 // ResolveExecutionBackend implements dispatch.BackendResolver.

@@ -105,7 +105,8 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 		payload, err := json.Marshal(domain.ExecutionStartPayload{
 			ProjectID: rec.ProjectID, RepoPath: seed.HostRepoPath, BaseBranch: seed.BaseBranch,
 			Branch: seed.Branch, Provider: seed.Provider, Model: seed.Model, Mode: seed.Mode,
-			Prompt: seed.Prompt, IntentID: seed.IntentID, Attempt: seed.Attempt, LaunchID: seed.LaunchID,
+			ThinkingOptionID: seed.ThinkingOptionID,
+			Prompt:           seed.Prompt, IntentID: seed.IntentID, Attempt: seed.Attempt, LaunchID: seed.LaunchID,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal start command: %w", err)

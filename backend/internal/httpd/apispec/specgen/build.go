@@ -425,6 +425,22 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/execution/hosts/{hostId}/providers",
+			id: "listExecutionHostProviders", tag: "execution",
+			summary:    "List what one host can launch: providers, models, and thinking options",
+			pathParams: []any{controllers.ExecutionHostIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionProvidersResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				// Conflict is an unusable or unreachable host: a fact about the
+				// host, distinct from AO failing.
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPut, path: "/api/v1/execution/projects/{projectId}/hosts/{hostId}",
 			id: "bindProjectHost", tag: "execution",
 			summary:    "Bind a project to a host by its checkout path there",

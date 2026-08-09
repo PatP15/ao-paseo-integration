@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -61,7 +62,24 @@ type Service struct {
 	// daemon for the same reason as selfTargetGuard: it talks to the network,
 	// and this package deliberately makes no remote calls of its own.
 	hostProber func(ctx context.Context, host domain.ExecutionHost) error
+	// providerDiscovery, when set, asks one host's daemon what it can launch.
+	// Injected for the same reason as the two above.
+	providerDiscovery func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error)
+
+	providerCacheMu sync.Mutex
+	providerCache   map[domain.ExecutionHostID]providerCacheEntry
 }
+
+type providerCacheEntry struct {
+	providers []domain.ExecutionHostProvider
+	fetchedAt time.Time
+}
+
+// providerCacheTTL bounds how stale a served discovery result can be. Each
+// discovery costs one CLI invocation per provider at ~0.9s each, so a settings
+// panel that re-renders must not re-pay that; 30s is short enough that an
+// operator toggling a provider on the host sees it on the next look.
+const providerCacheTTL = 30 * time.Second
 
 // New constructs the service.
 func New(store Store) *Service {
@@ -89,6 +107,114 @@ func (s *Service) SetSelfTargetGuard(guard func(ctx context.Context, host domain
 // the host afterwards so the response reflects what was just recorded.
 func (s *Service) SetHostProber(prober func(ctx context.Context, host domain.ExecutionHost) error) {
 	s.hostProber = prober
+}
+
+// SetProviderDiscovery installs the network-facing provider discovery behind
+// GET /execution/hosts/{hostId}/providers and dispatch settings validation.
+func (s *Service) SetProviderDiscovery(discovery func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error)) {
+	s.providerDiscovery = discovery
+}
+
+// HostProviders returns what one registered host can launch, served from a
+// brief cache. The discovery function's own errors pass through typed: an
+// unreachable host is a fact the caller can present, not a server fault.
+func (s *Service) HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
+	id = domain.ExecutionHostID(strings.TrimSpace(string(id)))
+	if id == "" {
+		return nil, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
+	}
+	host, _, found, err := s.store.GetExecutionHost(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get execution host %s: %w", id, err)
+	}
+	if !found {
+		return nil, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+	}
+	if s.providerDiscovery == nil {
+		return nil, apierr.Internal("PROVIDER_DISCOVERY_UNAVAILABLE",
+			"this daemon was started without execution provider discovery wiring")
+	}
+
+	s.providerCacheMu.Lock()
+	entry, cached := s.providerCache[id]
+	s.providerCacheMu.Unlock()
+	if cached && s.now().Sub(entry.fetchedAt) < providerCacheTTL {
+		return entry.providers, nil
+	}
+
+	providers, err := s.providerDiscovery(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	s.providerCacheMu.Lock()
+	if s.providerCache == nil {
+		s.providerCache = map[domain.ExecutionHostID]providerCacheEntry{}
+	}
+	s.providerCache[id] = providerCacheEntry{providers: providers, fetchedAt: s.now()}
+	s.providerCacheMu.Unlock()
+	return providers, nil
+}
+
+// ValidateDispatchSettings checks a thinking-option id against what discovery
+// reports for the selected host, provider, and model. It refuses an id
+// discovery did not return, naming the valid set so the caller can correct the
+// request rather than guess.
+func (s *Service) ValidateDispatchSettings(ctx context.Context, hostID domain.ExecutionHostID, provider, model, thinkingOptionID string) error {
+	providers, err := s.HostProviders(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	var match *domain.ExecutionHostProvider
+	for i := range providers {
+		if providers[i].Provider == provider {
+			match = &providers[i]
+			break
+		}
+	}
+	if match == nil {
+		return apierr.Invalid("PROVIDER_UNKNOWN",
+			fmt.Sprintf("host %s does not report provider %q", hostID, provider),
+			map[string]any{"providers": providerNames(providers)})
+	}
+	// No model requested means the provider's default model, whose thinking
+	// vocabulary AO cannot see through discovery; requiring the model keeps
+	// "validated" meaning validated instead of assumed.
+	if strings.TrimSpace(model) == "" {
+		return apierr.Invalid("MODEL_REQUIRED_FOR_SETTINGS",
+			"model is required when settings.thinkingOptionId is set: thinking options are per-model", nil)
+	}
+	for _, candidate := range match.Models {
+		if candidate.ID != model {
+			continue
+		}
+		for _, valid := range candidate.ThinkingOptionIDs {
+			if valid == thinkingOptionID {
+				return nil
+			}
+		}
+		return apierr.Invalid("THINKING_OPTION_UNKNOWN",
+			fmt.Sprintf("model %s on host %s does not report thinking option %q", model, hostID, thinkingOptionID),
+			map[string]any{"validThinkingOptionIds": append([]string(nil), candidate.ThinkingOptionIDs...)})
+	}
+	return apierr.Invalid("MODEL_UNKNOWN",
+		fmt.Sprintf("provider %s on host %s does not report model %q", provider, hostID, model),
+		map[string]any{"validModelIds": modelIDs(match.Models)})
+}
+
+func providerNames(providers []domain.ExecutionHostProvider) []string {
+	names := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		names = append(names, provider.Provider)
+	}
+	return names
+}
+
+func modelIDs(models []domain.ExecutionProviderModel) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids
 }
 
 // ProbeHost probes one registered host now and returns the refreshed registry

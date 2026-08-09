@@ -30,8 +30,20 @@ type Request struct {
 	Provider             string
 	Model                string
 	Mode                 string
-	Prompt               string
+	// ThinkingOptionID must be an id provider discovery reported for this
+	// host+provider+model; Dispatch refuses anything else before committing.
+	ThinkingOptionID string
+	// Features are provider feature toggles (e.g. Codex fast_mode). The pinned
+	// Paseo CLI has no feature discovery or forwarding surface, so any entry is
+	// refused; the field exists so the API shape is stable when the CLI grows one.
+	Features map[string]bool
+	Prompt   string
 }
+
+// SettingsValidator checks dispatch settings against what provider discovery
+// reports for the selected host. It is injected by the daemon because
+// discovery talks to the network and this package deliberately does not.
+type SettingsValidator func(ctx context.Context, hostID domain.ExecutionHostID, provider, model, thinkingOptionID string) error
 
 // Service enqueues execution commands. Every command is persisted before any
 // remote call, so a crash between enqueue and delivery replays rather than
@@ -41,6 +53,16 @@ type Service struct {
 	router *Router
 	now    func() time.Time
 	newID  func() string
+	// settingsValidator, when set, validates settings against provider
+	// discovery for the selected host. When unset, a request carrying settings
+	// is refused outright: forwarding an unvalidated id is never an option.
+	settingsValidator SettingsValidator
+}
+
+// SetSettingsValidator installs discovery-backed settings validation. Set
+// after construction so New stays a pure store wrapper.
+func (s *Service) SetSettingsValidator(validator SettingsValidator) {
+	s.settingsValidator = validator
 }
 
 // New constructs the dispatch Service.
@@ -65,6 +87,15 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 	if err != nil {
 		return domain.ExecutionDispatch{}, err
 	}
+	if req.ThinkingOptionID != "" {
+		if s.settingsValidator == nil {
+			return domain.ExecutionDispatch{}, fmt.Errorf(
+				"dispatch: settings cannot be validated: this daemon has no provider discovery wired, and an unvalidated thinking option is never forwarded")
+		}
+		if err := s.settingsValidator(ctx, selection.Host.ID, req.Provider, req.Model, req.ThinkingOptionID); err != nil {
+			return domain.ExecutionDispatch{}, err
+		}
+	}
 	now := s.now().UTC()
 	return s.store.CreateExecutionDispatch(ctx, domain.ExecutionDispatchSeed{
 		WorkItemID: req.WorkItemID,
@@ -74,7 +105,8 @@ func (s *Service) Dispatch(ctx context.Context, req Request) (domain.ExecutionDi
 		},
 		HostID: selection.Host.ID, BoundServerID: selection.Host.ServerID,
 		HostRepoPath: selection.Binding.HostRepoPath, BaseBranch: selection.Binding.BaseBranch,
-		Branch: req.Branch, Provider: req.Provider, Model: req.Model, Mode: req.Mode, Prompt: req.Prompt,
+		Branch: req.Branch, Provider: req.Provider, Model: req.Model, Mode: req.Mode,
+		ThinkingOptionID: req.ThinkingOptionID, Prompt: req.Prompt,
 		IntentID: domain.ExecutionIntentID(s.newID()), Attempt: 1, DispatchGeneration: 1,
 		LaunchID: s.newID(), CommandID: s.newID(), CreatedAt: now,
 	})
@@ -88,6 +120,14 @@ func validateRequest(req Request) error {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("dispatch: %s is required", name)
 		}
+	}
+	// Refused unconditionally, not silently dropped: a caller who asked for
+	// fast_mode and got a normal launch would trust a setting that never
+	// applied. Paseo 0.2.5's CLI has no feature discovery (`inspect_provider`
+	// is MCP-only) and `run` has no feature flag, so there is nothing to
+	// validate against and no way to forward one.
+	if len(req.Features) > 0 {
+		return fmt.Errorf("dispatch: provider features are not supported by the pinned Paseo CLI; remove settings.features")
 	}
 	return nil
 }

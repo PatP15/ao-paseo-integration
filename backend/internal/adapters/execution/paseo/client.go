@@ -80,6 +80,19 @@ func (c *Client) ListAgents(ctx context.Context, label string) ([]Agent, error) 
 	return runJSON[[]Agent](ctx, c, args, err)
 }
 
+// ListProviders lists the host's providers with availability and mode labels.
+func (c *Client) ListProviders(ctx context.Context) ([]Provider, error) {
+	args, err := providerListArgs(c.host)
+	return runJSON[[]Provider](ctx, c, args, err)
+}
+
+// ProviderModels lists one provider's launchable models with their thinking
+// options.
+func (c *Client) ProviderModels(ctx context.Context, provider string) ([]ProviderModel, error) {
+	args, err := providerModelsArgs(c.host, provider)
+	return runJSON[[]ProviderModel](ctx, c, args, err)
+}
+
 // Inspect returns strict, reconciliation-grade facts for one agent.
 func (c *Client) Inspect(ctx context.Context, agentID string) (AgentDetail, error) {
 	args, err := inspectArgs(c.host, agentID)

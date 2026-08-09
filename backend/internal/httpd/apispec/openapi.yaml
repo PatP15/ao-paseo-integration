@@ -556,6 +556,57 @@ paths:
       summary: Probe one host now and return the refreshed registry entry
       tags:
       - execution
+  /api/v1/execution/hosts/{hostId}/providers:
+    get:
+      operationId: listExecutionHostProviders
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionProvidersResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: 'List what one host can launch: providers, models, and thinking options'
+      tags:
+      - execution
   /api/v1/execution/permissions/{questionId}/decision:
     post:
       operationId: decideExecutionPermission
@@ -3547,6 +3598,19 @@ components:
       - name
       - value
       type: object
+    ControllersDispatchSettings:
+      properties:
+        features:
+          additionalProperties:
+            type: boolean
+          description: Provider feature toggles. Not supported by the pinned Paseo
+            CLI; any entry is refused.
+          type: object
+        thinkingOptionId:
+          description: Thinking option id from the host's provider discovery; requires
+            model to be set.
+          type: string
+      type: object
     ControllersExecutionBindingResponse:
       properties:
         baseBranch:
@@ -3627,6 +3691,56 @@ components:
       - attemptCount
       - createdAt
       type: object
+    ControllersExecutionProviderModelResponse:
+      properties:
+        defaultThinkingOptionId:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        thinkingOptionIds:
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      - label
+      - thinkingOptionIds
+      type: object
+    ControllersExecutionProviderResponse:
+      properties:
+        defaultMode:
+          type: string
+        enabled:
+          type: boolean
+        label:
+          type: string
+        modeLabels:
+          items:
+            type: string
+          type: array
+        models:
+          description: Populated for available providers only.
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderModelResponse'
+          type: array
+        provider:
+          type: string
+        status:
+          description: Provider availability as the host daemon reports it, e.g. available
+            or unavailable.
+          type: string
+      required:
+      - provider
+      - label
+      - status
+      - enabled
+      - modeLabels
+      - models
+      type: object
     ControllersExecutionSecretEnvelope:
       properties:
         ref:
@@ -3643,6 +3757,15 @@ components:
           type: array
       required:
       - bindings
+      type: object
+    ControllersListExecutionProvidersResponse:
+      properties:
+        providers:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionProviderResponse'
+          type: array
+      required:
+      - providers
       type: object
     ControllersListExecutionSecretsResponse:
       properties:
@@ -3919,6 +4042,8 @@ components:
           items:
             type: string
           type: array
+        settings:
+          $ref: '#/components/schemas/ControllersDispatchSettings'
         trustZone:
           enum:
           - hobby

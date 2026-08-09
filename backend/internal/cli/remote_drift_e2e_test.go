@@ -55,6 +55,10 @@ func (c *captureExecutionService) ProbeHost(_ context.Context, id domain.Executi
 	return executionsvc.Host{ExecutionHost: domain.ExecutionHost{ID: id}}, nil
 }
 
+func (c *captureExecutionService) HostProviders(context.Context, domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
+	return nil, nil
+}
+
 func (c *captureExecutionService) ListBindings(context.Context, executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
 	return nil, nil
 }

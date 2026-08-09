@@ -34,6 +34,14 @@ type ExecutionRuntime interface {
 	SendMessage(ctx context.Context, handle RuntimeHandle, message string) error
 }
 
+// ExecutionProviderDiscovery reads what one host's daemon can launch:
+// providers, their models, and each model's thinking-option vocabulary. The
+// result is the sole validation source for dispatch settings — an id discovery
+// did not return is refused, never forwarded.
+type ExecutionProviderDiscovery interface {
+	Providers(ctx context.Context, hostID domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error)
+}
+
 // ExecutionObserver reads remote host and agent state without mutating it.
 type ExecutionObserver interface {
 	Status(ctx context.Context, hostID domain.ExecutionHostID) (domain.ExecutionHostStatus, error)
@@ -90,4 +98,7 @@ type ExecutionLaunchRequest struct {
 	Provider      string
 	Model         string
 	Mode          string
+	// ThinkingOptionID was validated against provider discovery at dispatch
+	// time; adapters forward it verbatim.
+	ThinkingOptionID string
 }

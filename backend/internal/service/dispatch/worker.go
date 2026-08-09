@@ -172,6 +172,7 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 			"ao.intent": string(payload.IntentID), "paseo.worktree": fmt.Sprintf("%s:%d", command.SessionID, payload.Attempt),
 		},
 		Provider: payload.Provider, Model: payload.Model, Mode: payload.Mode,
+		ThinkingOptionID: payload.ThinkingOptionID,
 	})
 	if err != nil {
 		return true, w.retryOrFail(ctx, command, err)

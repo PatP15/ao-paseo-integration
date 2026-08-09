@@ -191,7 +191,11 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
-	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, cfg.DataDir, log)
+	// One backends cache shared by the observer, the dispatch drain, and
+	// provider discovery: all three talk to the same hosts and a second cache
+	// would double the client count and version handshakes.
+	executionClients := newExecutionBackends(store, cfg.DataDir, log)
+	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -266,6 +270,12 @@ func Run() error {
 	selfTargetGuard := newSelfTargetGuard(cfg.DataDir, log)
 	execSvc.SetSelfTargetGuard(selfTargetGuard)
 	execSvc.SetHostProber(newHostProber(store, cfg.DataDir, log, selfTargetGuard))
+	execSvc.SetProviderDiscovery(newProviderDiscovery(executionClients))
+	// Dispatch settings are validated against the same discovery (and its
+	// cache) the providers endpoint serves, so what the UI offered and what
+	// dispatch accepts can never be two different vocabularies.
+	dispatchSvc := dispatchsvc.New(store)
+	dispatchSvc.SetSettingsValidator(execSvc.ValidateDispatchSettings)
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
@@ -298,7 +308,7 @@ func Run() error {
 		// with no execution backend registered yet.
 		SessionExecution:  store,
 		Execution:         execSvc,
-		ExecutionDispatch: dispatchsvc.New(store),
+		ExecutionDispatch: dispatchSvc,
 		ExecutionSecrets:  secretstore.New(cfg.DataDir),
 		WorkItems:         workitemsvc.New(store),
 	})

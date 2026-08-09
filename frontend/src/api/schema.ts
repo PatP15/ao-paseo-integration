@@ -225,6 +225,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/hosts/{hostId}/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List what one host can launch: providers, models, and thinking options */
+        get: operations["listExecutionHostProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/permissions/{questionId}/decision": {
         parameters: {
             query?: never;
@@ -1223,6 +1240,14 @@ export interface components {
             /** @description The credential. Stored 0600 under the daemon's data dir; never returned, logged, or persisted anywhere else. */
             value: string;
         };
+        ControllersDispatchSettings: {
+            /** @description Provider feature toggles. Not supported by the pinned Paseo CLI; any entry is refused. */
+            features?: {
+                [key: string]: boolean;
+            };
+            /** @description Thinking option id from the host's provider discovery; requires model to be set. */
+            thinkingOptionId?: string;
+        };
         ControllersExecutionBindingResponse: {
             baseBranch: string;
             /** Format: date-time */
@@ -1257,12 +1282,33 @@ export interface components {
             nextAttemptAt?: string;
             sessionId: string;
         };
+        ControllersExecutionProviderModelResponse: {
+            defaultThinkingOptionId?: string;
+            description?: string;
+            id: string;
+            label: string;
+            thinkingOptionIds: string[];
+        };
+        ControllersExecutionProviderResponse: {
+            defaultMode?: string;
+            enabled: boolean;
+            label: string;
+            modeLabels: string[];
+            /** @description Populated for available providers only. */
+            models: components["schemas"]["ControllersExecutionProviderModelResponse"][];
+            provider: string;
+            /** @description Provider availability as the host daemon reports it, e.g. available or unavailable. */
+            status: string;
+        };
         ControllersExecutionSecretEnvelope: {
             /** @description The stored ref, as passed to endpointSecretRef at host registration. */
             ref: string;
         };
         ControllersListExecutionBindingsResponse: {
             bindings: components["schemas"]["ControllersExecutionBindingResponse"][];
+        };
+        ControllersListExecutionProvidersResponse: {
+            providers: components["schemas"]["ControllersExecutionProviderResponse"][];
         };
         ControllersListExecutionSecretsResponse: {
             refs: string[];
@@ -1370,6 +1416,7 @@ export interface components {
             /** @description Remote provider to launch, e.g. claude or codex. */
             provider: string;
             requiredCapabilities?: string[];
+            settings?: components["schemas"]["ControllersDispatchSettings"];
             /** @enum {string} */
             trustZone: "hobby" | "work" | "mixed";
             workItemId: string;
@@ -2766,6 +2813,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionHostEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionHostProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Execution host identifier. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListExecutionProvidersResponse"];
                 };
             };
             /** @description Bad Request */

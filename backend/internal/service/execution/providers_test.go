@@ -88,6 +88,38 @@ func TestHostProvidersPassesDiscoveryErrorsThroughTyped(t *testing.T) {
 	}
 }
 
+func TestListSessionEventsChecksSessionAndClampsLimit(t *testing.T) {
+	store := newFakeStore()
+	store.sessions = map[domain.SessionID]domain.SessionRecord{"project-1": {ID: "project-1"}}
+	store.events = map[domain.SessionID][]domain.ExecutionEventRecord{
+		"project-1": {{ID: "evt-1", SessionID: "project-1", EventType: "checkpoint"}},
+	}
+	svc := newTestService(store)
+	ctx := context.Background()
+
+	if _, err := svc.ListSessionEvents(ctx, EventsFilter{SessionID: "ghost"}); errCode(t, err) != "SESSION_NOT_FOUND" {
+		t.Fatalf("unknown session error = %v", err)
+	}
+	events, err := svc.ListSessionEvents(ctx, EventsFilter{SessionID: "project-1", AfterID: " evt-0 ", Limit: 5000})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("ListSessionEvents = (%v, %v)", events, err)
+	}
+	if store.eventsSeenAfter != "evt-0" || store.eventsSeenLimit != MaxEventLimit {
+		t.Fatalf("store saw after=%q limit=%d", store.eventsSeenAfter, store.eventsSeenLimit)
+	}
+	if _, err := svc.ListSessionEvents(ctx, EventsFilter{SessionID: "project-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.eventsSeenLimit != DefaultEventLimit {
+		t.Fatalf("default limit = %d", store.eventsSeenLimit)
+	}
+
+	store.eventsErr = domain.ErrExecutionEventCursorUnknown
+	if _, err := svc.ListSessionEvents(ctx, EventsFilter{SessionID: "project-1", AfterID: "stale"}); errCode(t, err) != "EVENT_CURSOR_UNKNOWN" {
+		t.Fatalf("stale cursor error = %v", err)
+	}
+}
+
 func TestValidateDispatchSettingsRefusesUndiscoveredIDs(t *testing.T) {
 	store := newFakeStore()
 	svc := newTestService(store)

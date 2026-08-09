@@ -299,6 +299,27 @@ func (q *Queries) GetExecutionCommandByIdempotencyKey(ctx context.Context, idemp
 	return i, err
 }
 
+const getExecutionEventCursor = `-- name: GetExecutionEventCursor :one
+SELECT ingested_at, id FROM execution_events WHERE session_id = ? AND id = ?
+`
+
+type GetExecutionEventCursorParams struct {
+	SessionID string
+	ID        string
+}
+
+type GetExecutionEventCursorRow struct {
+	IngestedAt string
+	ID         string
+}
+
+func (q *Queries) GetExecutionEventCursor(ctx context.Context, arg GetExecutionEventCursorParams) (GetExecutionEventCursorRow, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionEventCursor, arg.SessionID, arg.ID)
+	var i GetExecutionEventCursorRow
+	err := row.Scan(&i.IngestedAt, &i.ID)
+	return i, err
+}
+
 const getExecutionHost = `-- name: GetExecutionHost :one
 SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts WHERE id = ?
 `
@@ -998,6 +1019,68 @@ SELECT id, session_id, host_id, launch_id, protocol_event_id, protocol_seq, even
 
 func (q *Queries) ListExecutionEventsBySession(ctx context.Context, sessionID string) ([]ExecutionEvent, error) {
 	rows, err := q.db.QueryContext(ctx, listExecutionEventsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionEvent{}
+	for rows.Next() {
+		var i ExecutionEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.HostID,
+			&i.LaunchID,
+			&i.ProtocolEventID,
+			&i.ProtocolSeq,
+			&i.EventType,
+			&i.Transport,
+			&i.PayloadJson,
+			&i.PayloadSha256,
+			&i.RawLine,
+			&i.ObservedAt,
+			&i.IngestedAt,
+			&i.Applied,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExecutionEventsBySessionAfter = `-- name: ListExecutionEventsBySessionAfter :many
+SELECT id, session_id, host_id, launch_id, protocol_event_id, protocol_seq, event_type, transport, payload_json, payload_sha256, raw_line, observed_at, ingested_at, applied FROM execution_events
+WHERE session_id = ?1
+  AND (ingested_at > ?2
+       OR (ingested_at = ?2 AND id > ?3))
+ORDER BY ingested_at, id
+LIMIT ?4
+`
+
+type ListExecutionEventsBySessionAfterParams struct {
+	SessionID       string
+	AfterIngestedAt string
+	AfterID         string
+	RowLimit        int64
+}
+
+// Keyset pagination over (ingested_at, id): passing empty strings for both
+// cursor halves starts from the beginning, because every stored ingested_at is
+// a non-empty RFC3339 string.
+func (q *Queries) ListExecutionEventsBySessionAfter(ctx context.Context, arg ListExecutionEventsBySessionAfterParams) ([]ExecutionEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listExecutionEventsBySessionAfter,
+		arg.SessionID,
+		arg.AfterIngestedAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

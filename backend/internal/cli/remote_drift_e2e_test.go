@@ -59,6 +59,10 @@ func (c *captureExecutionService) HostProviders(context.Context, domain.Executio
 	return nil, nil
 }
 
+func (c *captureExecutionService) ListSessionEvents(context.Context, executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error) {
+	return nil, nil
+}
+
 func (c *captureExecutionService) ListBindings(context.Context, executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
 	return nil, nil
 }

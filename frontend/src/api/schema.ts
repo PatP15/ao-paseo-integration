@@ -709,6 +709,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/execution-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page one session's ingested execution events, oldest first */
+        get: operations["listSessionExecutionEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1282,6 +1299,23 @@ export interface components {
             nextAttemptAt?: string;
             sessionId: string;
         };
+        ControllersExecutionEventResponse: {
+            /** @description Whether AO has applied this event to its own state. */
+            applied: boolean;
+            hostId: string;
+            id: string;
+            /** Format: date-time */
+            ingestedAt: string;
+            /** @description Event type as ingested, e.g. checkpoint, status_transition. */
+            kind: string;
+            launchId?: string;
+            /** Format: date-time */
+            observedAt: string;
+            payloadJson: string;
+            sessionId: string;
+            /** @enum {string} */
+            transport: "terminal" | "sentinel" | "inspect" | "output_schema";
+        };
         ControllersExecutionProviderModelResponse: {
             defaultThinkingOptionId?: string;
             description?: string;
@@ -1306,6 +1340,10 @@ export interface components {
         };
         ControllersListExecutionBindingsResponse: {
             bindings: components["schemas"]["ControllersExecutionBindingResponse"][];
+        };
+        ControllersListExecutionEventsResponse: {
+            events: components["schemas"]["ControllersExecutionEventResponse"][];
+            nextAfter?: string;
         };
         ControllersListExecutionProvidersResponse: {
             providers: components["schemas"]["ControllersExecutionProviderResponse"][];
@@ -4607,6 +4645,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetActivityResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionExecutionEvents: {
+        parameters: {
+            query?: {
+                /** @description Last event id already held; response resumes after it. Empty starts from the beginning. */
+                after?: string;
+                /** @description Maximum events to return (default 200, capped at 1000). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description AO session whose ingested execution events should be returned. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListExecutionEventsResponse"];
                 };
             };
             /** @description Bad Request */

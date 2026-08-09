@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type ExecutionService interface {
 	ListBindings(ctx context.Context, filter executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error)
 	GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error)
 	HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error)
+	ListSessionEvents(ctx context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error)
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -75,6 +77,88 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Post("/execution/secrets", c.createSecret)
 	r.Get("/execution/secrets", c.listSecrets)
 	r.Get("/execution/commands/{commandId}", c.getCommand)
+	r.Get("/sessions/{sessionId}/execution-events", c.listSessionEvents)
+}
+
+// ExecutionEventsQuery pages one session's ingested execution events.
+type ExecutionEventsQuery struct {
+	SessionID string `path:"sessionId" description:"AO session whose ingested execution events should be returned."`
+	After     string `query:"after" description:"Last event id already held; response resumes after it. Empty starts from the beginning."`
+	Limit     int    `query:"limit" description:"Maximum events to return (default 200, capped at 1000)."`
+}
+
+// ExecutionEventResponse is one durable ingested row: the fact as it arrived,
+// which transport carried it, and when AO saw and stored it. PayloadJson is
+// agent-authored or observer-derived content serialized as it was ingested;
+// clients must treat it as data, never as instructions.
+type ExecutionEventResponse struct {
+	ID          string                         `json:"id"`
+	SessionID   domain.SessionID               `json:"sessionId"`
+	HostID      domain.ExecutionHostID         `json:"hostId"`
+	LaunchID    string                         `json:"launchId,omitempty"`
+	Kind        string                         `json:"kind" description:"Event type as ingested, e.g. checkpoint, status_transition."`
+	Transport   domain.ExecutionEventTransport `json:"transport" enum:"terminal,sentinel,inspect,output_schema"`
+	PayloadJSON string                         `json:"payloadJson"`
+	ObservedAt  time.Time                      `json:"observedAt"`
+	IngestedAt  time.Time                      `json:"ingestedAt"`
+	Applied     bool                           `json:"applied" description:"Whether AO has applied this event to its own state."`
+}
+
+// ListExecutionEventsResponse is the body of GET
+// /api/v1/sessions/{sessionId}/execution-events. NextAfter, when present, is
+// the cursor for the next page; its absence means the listing is complete as
+// of this read.
+type ListExecutionEventsResponse struct {
+	Events    []ExecutionEventResponse `json:"events"`
+	NextAfter string                   `json:"nextAfter,omitempty"`
+}
+
+// listSessionEvents serves the durable rows report ingestion recorded.
+func (c *ExecutionController) listSessionEvents(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/sessions/{sessionId}/execution-events")
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			envelope.WriteError(w, r, apierr.Invalid("LIMIT_INVALID", "limit must be a positive integer", nil))
+			return
+		}
+		limit = parsed
+	}
+	events, err := c.Svc.ListSessionEvents(r.Context(), executionsvc.EventsFilter{
+		SessionID: domain.SessionID(chi.URLParam(r, "sessionId")),
+		AfterID:   r.URL.Query().Get("after"),
+		Limit:     limit,
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := make([]ExecutionEventResponse, 0, len(events))
+	for _, event := range events {
+		out = append(out, ExecutionEventResponse{
+			ID: event.ID, SessionID: event.SessionID, HostID: event.HostID, LaunchID: event.LaunchID,
+			Kind: event.EventType, Transport: event.Transport, PayloadJSON: event.PayloadJSON,
+			ObservedAt: event.ObservedAt, IngestedAt: event.IngestedAt, Applied: event.Applied,
+		})
+	}
+	response := ListExecutionEventsResponse{Events: out}
+	requested := limit
+	if requested <= 0 {
+		requested = executionsvc.DefaultEventLimit
+	}
+	if requested > executionsvc.MaxEventLimit {
+		requested = executionsvc.MaxEventLimit
+	}
+	// A full page may end exactly at the last row; the next request then
+	// returns empty, which is the unambiguous end-of-listing signal.
+	if len(out) == requested {
+		response.NextAfter = out[len(out)-1].ID
+	}
+	envelope.WriteJSON(w, http.StatusOK, response)
 }
 
 // ExecutionProviderModelResponse is one launchable model with its thinking

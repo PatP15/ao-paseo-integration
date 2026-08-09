@@ -441,6 +441,19 @@ func executionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/execution-events",
+			id: "listSessionExecutionEvents", tag: "execution",
+			summary:    "Page one session's ingested execution events, oldest first",
+			pathParams: []any{controllers.ExecutionEventsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListExecutionEventsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPut, path: "/api/v1/execution/projects/{projectId}/hosts/{hostId}",
 			id: "bindProjectHost", tag: "execution",
 			summary:    "Bind a project to a host by its checkout path there",

@@ -46,6 +46,8 @@ type Store interface {
 	ListProjectHostBindings(context.Context, domain.ProjectID) ([]domain.ProjectHostBinding, error)
 	ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error)
 	GetExecutionCommand(context.Context, string) (domain.ExecutionCommand, bool, error)
+	GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
+	ListSessionExecutionEvents(context.Context, domain.SessionID, string, int) ([]domain.ExecutionEventRecord, error)
 }
 
 // Service answers host-registry and inbox requests for the HTTP API.
@@ -736,6 +738,54 @@ func (s *Service) GetCommand(ctx context.Context, id string) (domain.ExecutionCo
 		return domain.ExecutionCommand{}, apierr.NotFound("COMMAND_NOT_FOUND", "command "+id+" was not found")
 	}
 	return command, nil
+}
+
+// Event-listing bounds. The default suits a UI timeline's first load; the cap
+// keeps one request from dragging a long session's whole history through JSON
+// at once — the cursor exists precisely so a caller never needs to.
+const (
+	DefaultEventLimit = 200
+	MaxEventLimit     = 1000
+)
+
+// EventsFilter selects one session's ingested execution events. AfterID is the
+// last event id the caller already holds; empty starts from the beginning.
+type EventsFilter struct {
+	SessionID domain.SessionID
+	AfterID   string
+	Limit     int
+}
+
+// ListSessionEvents returns the durable rows report ingestion has recorded for
+// one session, oldest first: agent-authored reports and observer transitions
+// alike, distinguished by transport. Read-only projection — serving it can
+// never re-apply an event.
+func (s *Service) ListSessionEvents(ctx context.Context, filter EventsFilter) ([]domain.ExecutionEventRecord, error) {
+	sessionID := domain.SessionID(strings.TrimSpace(string(filter.SessionID)))
+	if sessionID == "" {
+		return nil, apierr.Invalid("SESSION_ID_REQUIRED", "sessionId is required", nil)
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultEventLimit
+	}
+	if limit > MaxEventLimit {
+		limit = MaxEventLimit
+	}
+	if _, found, err := s.store.GetSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("get session %s: %w", sessionID, err)
+	} else if !found {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "session "+string(sessionID)+" was not found")
+	}
+	events, err := s.store.ListSessionExecutionEvents(ctx, sessionID, strings.TrimSpace(filter.AfterID), limit)
+	if errors.Is(err, domain.ErrExecutionEventCursorUnknown) {
+		return nil, apierr.Invalid("EVENT_CURSOR_UNKNOWN",
+			"after does not name an event of this session; restart from the beginning", nil)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list execution events for session %s: %w", sessionID, err)
+	}
+	return events, nil
 }
 
 // BindingFilter narrows a bindings list. Both fields are optional; an empty

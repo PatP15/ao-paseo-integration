@@ -1934,6 +1934,65 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/execution-events:
+    get:
+      operationId: listSessionExecutionEvents
+      parameters:
+      - description: Last event id already held; response resumes after it. Empty
+          starts from the beginning.
+        in: query
+        name: after
+        schema:
+          description: Last event id already held; response resumes after it. Empty
+            starts from the beginning.
+          type: string
+      - description: Maximum events to return (default 200, capped at 1000).
+        in: query
+        name: limit
+        schema:
+          description: Maximum events to return (default 200, capped at 1000).
+          type: integer
+      - description: AO session whose ingested execution events should be returned.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: AO session whose ingested execution events should be returned.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionEventsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Page one session's ingested execution events, oldest first
+      tags:
+      - execution
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -3691,6 +3750,48 @@ components:
       - attemptCount
       - createdAt
       type: object
+    ControllersExecutionEventResponse:
+      properties:
+        applied:
+          description: Whether AO has applied this event to its own state.
+          type: boolean
+        hostId:
+          type: string
+        id:
+          type: string
+        ingestedAt:
+          format: date-time
+          type: string
+        kind:
+          description: Event type as ingested, e.g. checkpoint, status_transition.
+          type: string
+        launchId:
+          type: string
+        observedAt:
+          format: date-time
+          type: string
+        payloadJson:
+          type: string
+        sessionId:
+          type: string
+        transport:
+          enum:
+          - terminal
+          - sentinel
+          - inspect
+          - output_schema
+          type: string
+      required:
+      - id
+      - sessionId
+      - hostId
+      - kind
+      - transport
+      - payloadJson
+      - observedAt
+      - ingestedAt
+      - applied
+      type: object
     ControllersExecutionProviderModelResponse:
       properties:
         defaultThinkingOptionId:
@@ -3757,6 +3858,17 @@ components:
           type: array
       required:
       - bindings
+      type: object
+    ControllersListExecutionEventsResponse:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionEventResponse'
+          type: array
+        nextAfter:
+          type: string
+      required:
+      - events
       type: object
     ControllersListExecutionProvidersResponse:
       properties:

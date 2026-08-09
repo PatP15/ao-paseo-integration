@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // SessionBrief is the immutable instruction package AO commits before a remote
 // launch. Nothing overwrites one: a correction is a new version that names the
@@ -71,6 +74,26 @@ type ExecutionReportEvent struct {
 	PayloadJSON string
 	RawLine     string
 	ObservedAt  time.Time
+}
+
+// ErrExecutionEventCursorUnknown reports an `after` cursor naming an event the
+// session does not have; the caller's cursor is stale or fabricated.
+var ErrExecutionEventCursorUnknown = errors.New("execution event cursor does not name a stored event")
+
+// ExecutionEventRecord is one durable ingested row as the read API serves it:
+// the fact as it arrived, its transport, and when AO saw and stored it. It is
+// a projection of the execution_events table and is never written through.
+type ExecutionEventRecord struct {
+	ID          string
+	SessionID   SessionID
+	HostID      ExecutionHostID
+	LaunchID    string
+	EventType   string
+	Transport   ExecutionEventTransport
+	PayloadJSON string
+	ObservedAt  time.Time
+	IngestedAt  time.Time
+	Applied     bool
 }
 
 // ExecutionAgentQuestion is a question an agent asked AO to put to a human. It

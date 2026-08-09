@@ -36,6 +36,17 @@ type fakeExecutionService struct {
 
 	providers       []domain.ExecutionHostProvider
 	providersHostID domain.ExecutionHostID
+
+	events       []domain.ExecutionEventRecord
+	eventsFilter executionsvc.EventsFilter
+}
+
+func (f *fakeExecutionService) ListSessionEvents(_ context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error) {
+	f.eventsFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.events, nil
 }
 
 func (f *fakeExecutionService) HostProviders(_ context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
@@ -201,6 +212,7 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodPut, "/api/v1/execution/hosts/worker-1", `{}`},
 		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/providers", ""},
+		{http.MethodGet, "/api/v1/sessions/project-1/execution-events", ""},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
@@ -440,6 +452,55 @@ func TestListExecutionHostProviders(t *testing.T) {
 	// a UI can render "configured but unavailable" without null checks.
 	if !strings.Contains(string(body), `"models":[]`) || !strings.Contains(string(body), `"modeLabels":[]`) {
 		t.Fatalf("empty collections serialise as null: %s", body)
+	}
+}
+
+func TestListSessionExecutionEventsPagesAndSignalsMore(t *testing.T) {
+	at := time.Unix(300, 0).UTC()
+	svc := &fakeExecutionService{events: []domain.ExecutionEventRecord{
+		{ID: "evt-1", SessionID: "project-1", HostID: "worker-1", LaunchID: "launch-1",
+			EventType: "checkpoint", Transport: domain.ExecutionEventTerminal,
+			PayloadJSON: `{"summary":"step"}`, ObservedAt: at, IngestedAt: at, Applied: true},
+		{ID: "evt-2", SessionID: "project-1", HostID: "worker-1",
+			EventType: "status_transition", Transport: domain.ExecutionEventInspect,
+			PayloadJSON: `{"to":"idle"}`, ObservedAt: at, IngestedAt: at},
+	}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+	resp, body := doJSON(t, http.MethodGet,
+		srv.URL+"/api/v1/sessions/project-1/execution-events?after=evt-0&limit=2", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.eventsFilter.SessionID != "project-1" || svc.eventsFilter.AfterID != "evt-0" || svc.eventsFilter.Limit != 2 {
+		t.Fatalf("service saw filter %#v", svc.eventsFilter)
+	}
+	var out controllers.ListExecutionEventsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Events) != 2 || out.Events[0].Kind != "checkpoint" || out.Events[0].Transport != domain.ExecutionEventTerminal {
+		t.Fatalf("events = %#v", out.Events)
+	}
+	// A full page names the last event as the next cursor.
+	if out.NextAfter != "evt-2" {
+		t.Fatalf("nextAfter = %q", out.NextAfter)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/project-1/execution-events?limit=50", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	out = controllers.ListExecutionEventsResponse{}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAfter != "" {
+		t.Fatalf("short page nextAfter = %q, want empty", out.NextAfter)
+	}
+
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/project-1/execution-events?limit=zero", "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad limit status = %d body = %s", resp.StatusCode, body)
 	}
 }
 

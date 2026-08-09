@@ -29,6 +29,27 @@ type fakeStore struct {
 	projectBindings map[domain.ProjectID][]domain.ProjectHostBinding
 	upsertedBinding domain.ProjectHostBinding
 	commands        map[string]domain.ExecutionCommand
+
+	sessions        map[domain.SessionID]domain.SessionRecord
+	events          map[domain.SessionID][]domain.ExecutionEventRecord
+	eventsErr       error
+	eventsSeenAfter string
+	eventsSeenLimit int
+}
+
+func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	session, ok := f.sessions[id]
+	return session, ok, nil
+}
+
+func (f *fakeStore) ListSessionExecutionEvents(
+	_ context.Context, sessionID domain.SessionID, afterID string, limit int,
+) ([]domain.ExecutionEventRecord, error) {
+	f.eventsSeenAfter, f.eventsSeenLimit = afterID, limit
+	if f.eventsErr != nil {
+		return nil, f.eventsErr
+	}
+	return f.events[sessionID], nil
 }
 
 // UpsertProjectHostBinding records where a project is checked out on a host.

@@ -242,6 +242,20 @@ ON CONFLICT DO NOTHING;
 -- name: ListExecutionEventsBySession :many
 SELECT * FROM execution_events WHERE session_id = ? ORDER BY ingested_at, id;
 
+-- Keyset pagination over (ingested_at, id): passing empty strings for both
+-- cursor halves starts from the beginning, because every stored ingested_at is
+-- a non-empty RFC3339 string.
+-- name: ListExecutionEventsBySessionAfter :many
+SELECT * FROM execution_events
+WHERE session_id = sqlc.arg(session_id)
+  AND (ingested_at > sqlc.arg(after_ingested_at)
+       OR (ingested_at = sqlc.arg(after_ingested_at) AND id > sqlc.arg(after_id)))
+ORDER BY ingested_at, id
+LIMIT sqlc.arg(row_limit);
+
+-- name: GetExecutionEventCursor :one
+SELECT ingested_at, id FROM execution_events WHERE session_id = ? AND id = ?;
+
 -- Agent-authored reports are recorded before they are applied, so the applied
 -- flag is what a replay after a crash reads to know it still owes the apply.
 -- name: GetExecutionReportApplied :one

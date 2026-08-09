@@ -3973,6 +3973,8 @@ components:
       - commandState
       - attemptCount
       - createdAt
+      - nextAttemptAt
+      - acknowledgedAt
       type: object
     ControllersExecutionEventResponse:
       properties:
@@ -4033,6 +4035,7 @@ components:
           type: string
       required:
       - skills
+      - skillsAsOf
       - refreshed
       type: object
     ControllersExecutionHostPrefsResponse:
@@ -4144,6 +4147,8 @@ components:
       - id
       - cadence
       - status
+      - nextRunAt
+      - lastRunAt
       - policyViolation
       type: object
     ControllersExecutionSecretEnvelope:
@@ -4665,6 +4670,8 @@ components:
       - paseoVersion
       - requiresNoMcp
       - requiresNoRelay
+      - lastSuccessfulProbeAt
+      - lastFailedProbeAt
       type: object
     ExecutionQuestionResponse:
       properties:

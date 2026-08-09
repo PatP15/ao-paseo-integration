@@ -35,6 +35,7 @@ type maintenanceClient interface {
 	CreateTerminal(context.Context, TerminalCreateRequest) (Terminal, error)
 	SendTerminalKeys(context.Context, string, ...string) error
 	CaptureTerminal(context.Context, string, int, int) (TerminalCapture, error)
+	KillTerminal(context.Context, string) error
 }
 
 const (
@@ -161,6 +162,9 @@ func (b *Backend) runMaintenance(
 	if terminal.ID == "" {
 		return paseoevent.MaintenanceResult{}, fmt.Errorf("maintenance terminal response is missing an id")
 	}
+	// Terminals join workspaces by cwd, so archiving alone may not end this
+	// one; kill it explicitly. Best-effort like the archive.
+	defer func() { _ = client.KillTerminal(context.WithoutCancel(ctx), terminal.ID) }()
 
 	command := []string{
 		shellQuote(paseoevent.ReporterBinary), "maintain", verb, "--nonce", shellQuote(nonce),

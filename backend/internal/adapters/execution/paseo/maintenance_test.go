@@ -27,6 +27,7 @@ type fakeMaintenanceClient struct {
 	workspaceID  string
 	created      []string
 	archived     []string
+	killed       []string
 	sentCommands []string
 	captureLines []string
 }
@@ -52,6 +53,11 @@ func (c *fakeMaintenanceClient) SendTerminalKeys(_ context.Context, terminalID s
 
 func (c *fakeMaintenanceClient) CaptureTerminal(_ context.Context, terminalID string, start, end int) (TerminalCapture, error) {
 	return TerminalCapture{TerminalID: terminalID, Lines: c.captureLines, TotalLines: len(c.captureLines)}, nil
+}
+
+func (c *fakeMaintenanceClient) KillTerminal(_ context.Context, terminalID string) error {
+	c.killed = append(c.killed, terminalID)
+	return nil
 }
 
 func withFixedNonce(t *testing.T) {

@@ -1350,7 +1350,7 @@ export interface components {
         };
         ControllersExecutionCommandResponse: {
             /** Format: date-time */
-            acknowledgedAt?: string;
+            acknowledgedAt: string;
             /** @description Delivery attempts so far, including escalations. */
             attemptCount: number;
             commandId: string;
@@ -1364,7 +1364,7 @@ export interface components {
             /** @description Most recent delivery failure, cleared by success. */
             lastError?: string;
             /** Format: date-time */
-            nextAttemptAt?: string;
+            nextAttemptAt: string;
             sessionId: string;
         };
         ControllersExecutionEventResponse: {
@@ -1390,7 +1390,7 @@ export interface components {
             refreshed: boolean;
             skills: components["schemas"]["ControllersExecutionHostSkillResponse"][];
             /** Format: date-time */
-            skillsAsOf?: string;
+            skillsAsOf: string;
         };
         ControllersExecutionHostPrefsResponse: {
             /** Format: date-time */
@@ -1429,10 +1429,10 @@ export interface components {
             cadence: string;
             id: string;
             /** Format: date-time */
-            lastRunAt?: string;
+            lastRunAt: string;
             name?: string;
             /** Format: date-time */
-            nextRunAt?: string;
+            nextRunAt: string;
             policyViolation: boolean;
             status: string;
             target?: string;
@@ -1615,10 +1615,10 @@ export interface components {
             endpointSecretRef: string;
             id: string;
             /** Format: date-time */
-            lastFailedProbeAt?: string;
+            lastFailedProbeAt: string;
             lastProbeError?: string;
             /** Format: date-time */
-            lastSuccessfulProbeAt?: string;
+            lastSuccessfulProbeAt: string;
             maxConcurrentSessions: number;
             name: string;
             paseoVersion: string;

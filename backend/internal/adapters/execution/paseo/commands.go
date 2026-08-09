@@ -160,9 +160,11 @@ func workspaceCreateLocalArgs(host, title string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No --path on purpose: it defaults to the remote daemon's own cwd, which
-	// is the only directory AO can name without knowing the host's filesystem.
-	return append(args, "--isolation", "local", "--title", title, "--json"), nil
+	// --path is "/" on purpose: with no --path the CLI sends ITS OWN cwd — a
+	// path on the AO machine that need not exist on the host — and AO cannot
+	// know the host's home. The root exists on every POSIX host, and the
+	// maintenance binary resolves its real targets from $HOME itself.
+	return append(args, "--isolation", "local", "--path", "/", "--title", title, "--json"), nil
 }
 
 func workspaceArchiveArgs(host, workspaceID string) ([]string, error) {

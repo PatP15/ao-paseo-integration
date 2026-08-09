@@ -109,8 +109,11 @@ func TestReporterTerminalCommandsPinHostWorkspaceAndLiteralKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// No --workspace: Paseo 0.2.5's terminal create does not accept it (found
+	// live — the flag was refused by a real 0.2.5 daemon); a terminal joins a
+	// workspace by cwd.
 	wantCreate := []string{
-		"terminal", "create", "--host", "worker:6767", "--workspace", "wks-1",
+		"terminal", "create", "--host", "worker:6767",
 		"--cwd", "/remote/worktree", "--name", "ao-reporter-123", "--json",
 	}
 	if !reflect.DeepEqual(create, wantCreate) {

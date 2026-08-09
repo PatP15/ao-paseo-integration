@@ -115,7 +115,7 @@ type ExecutionHostPrefsResponse struct {
 // stamped with when AO captured them.
 type ExecutionHostInventoryResponse struct {
 	Skills     []ExecutionHostSkillResponse `json:"skills"`
-	SkillsAsOf time.Time                    `json:"skillsAsOf,omitempty"`
+	SkillsAsOf time.Time                    `json:"skillsAsOf,omitzero"`
 	Prefs      *ExecutionHostPrefsResponse  `json:"prefs,omitempty"`
 	Refreshed  bool                         `json:"refreshed" description:"True when this response came from a live channel run rather than cache alone."`
 }
@@ -193,8 +193,8 @@ type ExecutionScheduleResponse struct {
 	Cadence   string    `json:"cadence"`
 	Target    string    `json:"target,omitempty"`
 	Status    string    `json:"status"`
-	NextRunAt time.Time `json:"nextRunAt,omitempty"`
-	LastRunAt time.Time `json:"lastRunAt,omitempty"`
+	NextRunAt time.Time `json:"nextRunAt,omitzero"`
+	LastRunAt time.Time `json:"lastRunAt,omitzero"`
 	// PolicyViolation is true on every row by decision D6: AO owns scheduling
 	// and offers no schedule create, so anything present on an AO-driven host
 	// was created outside AO.
@@ -410,8 +410,8 @@ type ExecutionCommandResponse struct {
 	AttemptCount   int                          `json:"attemptCount" description:"Delivery attempts so far, including escalations."`
 	LastError      string                       `json:"lastError,omitempty" description:"Most recent delivery failure, cleared by success."`
 	CreatedAt      time.Time                    `json:"createdAt"`
-	NextAttemptAt  time.Time                    `json:"nextAttemptAt,omitempty"`
-	AcknowledgedAt time.Time                    `json:"acknowledgedAt,omitempty"`
+	NextAttemptAt  time.Time                    `json:"nextAttemptAt,omitzero"`
+	AcknowledgedAt time.Time                    `json:"acknowledgedAt,omitzero"`
 }
 
 // getCommand answers what happened to one queued command after its 201.
@@ -869,8 +869,8 @@ type ExecutionHostResponse struct {
 	PaseoVersion          string                        `json:"paseoVersion"`
 	RequiresNoMCP         bool                          `json:"requiresNoMcp" description:"Always true: AO only drives hosts whose daemon disables agent-control tool injection."`
 	RequiresNoRelay       bool                          `json:"requiresNoRelay"`
-	LastSuccessfulProbeAt time.Time                     `json:"lastSuccessfulProbeAt,omitempty"`
-	LastFailedProbeAt     time.Time                     `json:"lastFailedProbeAt,omitempty"`
+	LastSuccessfulProbeAt time.Time                     `json:"lastSuccessfulProbeAt,omitzero"`
+	LastFailedProbeAt     time.Time                     `json:"lastFailedProbeAt,omitzero"`
 	LastProbeError        string                        `json:"lastProbeError,omitempty"`
 }
 

@@ -35,6 +35,12 @@ func (c *Client) SendTerminalKeys(ctx context.Context, terminalID string, keys .
 	return c.runNoOutput(ctx, args, err)
 }
 
+// KillTerminal kills one explicitly identified terminal.
+func (c *Client) KillTerminal(ctx context.Context, terminalID string) error {
+	args, err := terminalKillArgs(c.host, terminalID)
+	return c.runNoOutput(ctx, args, err)
+}
+
 func terminalCreateArgs(host string, req TerminalCreateRequest) ([]string, error) {
 	if strings.TrimSpace(req.WorkspaceID) == "" || strings.TrimSpace(req.Cwd) == "" || strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("terminal create requires workspace, cwd, and name")
@@ -43,9 +49,21 @@ func terminalCreateArgs(host string, req TerminalCreateRequest) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	return append(args,
-		"--workspace", req.WorkspaceID, "--cwd", req.Cwd, "--name", req.Name, "--json",
-	), nil
+	// Paseo 0.2.5's terminal create has no --workspace flag: a terminal joins
+	// a workspace by cwd. WorkspaceID stays required above because the caller
+	// must have created that workspace — its cwd is what req.Cwd carries.
+	return append(args, "--cwd", req.Cwd, "--name", req.Name, "--json"), nil
+}
+
+func terminalKillArgs(host, terminalID string) ([]string, error) {
+	if terminalID == "" || strings.ContainsAny(terminalID, " \t\r\n") || strings.HasPrefix(terminalID, "-") {
+		return nil, fmt.Errorf("invalid terminal id %q", terminalID)
+	}
+	args, err := hostArgs([]string{"terminal", "kill"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, terminalID), nil
 }
 
 func terminalSendKeysArgs(host, terminalID string, keys []string) ([]string, error) {

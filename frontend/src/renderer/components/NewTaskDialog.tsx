@@ -22,6 +22,8 @@ type SpawnHarness = components["schemas"]["SpawnSessionRequest"]["harness"];
 type NewTaskDialogProps = {
 	open: boolean;
 	projectId?: string;
+	/** Initial title/prompt, e.g. from "Edit via task" on an instruction file. */
+	prefill?: { title: string; prompt: string };
 	onCreated: (sessionId: string) => void;
 	onOpenChange: (open: boolean) => void;
 };
@@ -70,7 +72,7 @@ async function dispatchRemote(input: {
 	return dispatched.data.sessionId;
 }
 
-export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
+export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const titleId = useId();
@@ -175,6 +177,13 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			setAgent(defaultWorkerAgent);
 		}
 	}, [open, agentTouched, defaultWorkerAgent]);
+
+	useEffect(() => {
+		if (open && prefill) {
+			setTitle(prefill.title);
+			setPrompt(prefill.prompt);
+		}
+	}, [open, prefill]);
 
 	const submit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();

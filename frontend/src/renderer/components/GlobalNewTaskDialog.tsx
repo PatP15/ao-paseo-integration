@@ -17,6 +17,7 @@ export function GlobalNewTaskDialog() {
 	const newTaskRequest = useUiStore((state) => state.newTaskRequest);
 	const [open, setOpen] = useState(false);
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
+	const [prefill, setPrefill] = useState<{ title: string; prompt: string } | undefined>(undefined);
 	const lastNonce = useRef(0);
 
 	useEffect(() => {
@@ -27,6 +28,7 @@ export function GlobalNewTaskDialog() {
 		// not replay the ignored request when the user later closes the dialog.
 		if (open) return;
 		setProjectId(newTaskRequest.projectId);
+		setPrefill(newTaskRequest.prefill);
 		setOpen(true);
 	}, [newTaskRequest, open]);
 
@@ -42,6 +44,7 @@ export function GlobalNewTaskDialog() {
 	return (
 		<NewTaskDialog
 			open={open}
+			prefill={prefill}
 			projectId={projectId}
 			onCreated={(sessionId) => void handleCreated(sessionId)}
 			onOpenChange={setOpen}

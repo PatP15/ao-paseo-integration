@@ -36,6 +36,7 @@ import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNee
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { ComputerBindingsSection } from "./settings/ComputerBindingsSection";
+import { ProjectInstructionsSection } from "./settings/ProjectInstructionsSection";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -278,6 +279,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			)}
 
 			{!isScratchProject && <ComputerBindingsSection projectId={projectId} />}
+
+			{!isScratchProject && <ProjectInstructionsSection projectId={projectId} />}
 
 			<SettingsSection title={t("settings.project.agents")}>
 				<RequiredAgentField

@@ -77,7 +77,17 @@ func MaintainInventory(skillsDir, nonce string, out io.Writer) error {
 	}
 	seq++
 	return paseoevent.WriteMaintenanceEvent(out, nonce, seq, paseoevent.MaintenanceDone,
-		paseoevent.MaintenanceDonePayload{Count: count})
+		paseoevent.MaintenanceDonePayload{Count: count, Home: homeDir()})
+}
+
+// homeDir is best-effort on purpose: an unresolvable home degrades AO back to
+// its "/" fallback, it never fails the run that carried real facts.
+func homeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }
 
 // MaintainPrefsRead emits the preferences file as content chunks plus a done
@@ -163,7 +173,7 @@ func emitPrefsContent(out io.Writer, nonce string, content []byte, exists bool) 
 	}
 	seq++
 	return paseoevent.WriteMaintenanceEvent(out, nonce, seq, paseoevent.MaintenanceDone,
-		paseoevent.MaintenanceDonePayload{Parts: len(chunks), SHA256: sha256Hex(content), Exists: exists})
+		paseoevent.MaintenanceDonePayload{Parts: len(chunks), SHA256: sha256Hex(content), Exists: exists, Home: homeDir()})
 }
 
 func emitMaintenanceError(out io.Writer, nonce, message string) error {

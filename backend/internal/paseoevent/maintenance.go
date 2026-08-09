@@ -70,11 +70,14 @@ type MaintenancePrefsPayload struct {
 // digest of the complete file content (empty file and missing file both hash
 // the empty string; Exists distinguishes them) and Parts is how many prefs
 // chunks were emitted. For inventory runs Count is the number of skills.
+// Home is the worker's home directory, reported by every verb so AO learns
+// where to place later maintenance workspaces without a separate bootstrap.
 type MaintenanceDonePayload struct {
 	Count  int    `json:"count,omitempty"`
 	Parts  int    `json:"parts,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
 	Exists bool   `json:"exists,omitempty"`
+	Home   string `json:"home,omitempty"`
 }
 
 // MaintenanceErrorPayload names why the worker refused or failed.

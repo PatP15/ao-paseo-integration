@@ -87,6 +87,7 @@ type ExecutionHost struct {
 	ZoneID                sql.NullString
 	Isolated              int64
 	IsolationNote         string
+	MaintenanceHome       string
 }
 
 type ExecutionHostCapability struct {

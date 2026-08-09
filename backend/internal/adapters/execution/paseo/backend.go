@@ -22,6 +22,7 @@ type ExecutionStore interface {
 	GetExecutionHost(context.Context, domain.ExecutionHostID) (domain.ExecutionHost, []string, bool, error)
 	GetSessionExecutionBinding(context.Context, domain.SessionID) (domain.SessionExecutionBinding, bool, error)
 	UpsertSessionExecutionBinding(context.Context, domain.SessionExecutionBinding) error
+	SetExecutionHostMaintenanceHome(context.Context, domain.ExecutionHostID, string) error
 }
 
 type executionClient interface {

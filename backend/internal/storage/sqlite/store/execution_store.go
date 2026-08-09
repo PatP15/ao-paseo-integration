@@ -251,8 +251,26 @@ func executionHostFromGen(row gen.ExecutionHost) (domain.ExecutionHost, error) {
 		MaxConcurrentSessions: int(row.MaxConcurrentSessions), ServerID: row.ServerID, PaseoVersion: row.PaseoVersion,
 		RequiresNoMCP: row.RequiresNoMcp != 0, RequiresNoRelay: row.RequiresNoRelay != 0,
 		LastSuccessfulProbeAt: lastSuccess, LastFailedProbeAt: lastFailure, LastProbeError: row.LastProbeError,
-		CreatedAt: created, UpdatedAt: updated,
+		MaintenanceHome: row.MaintenanceHome,
+		CreatedAt:       created, UpdatedAt: updated,
 	}, nil
+}
+
+// SetExecutionHostMaintenanceHome records the worker's home directory as the
+// maintenance channel learned it. Channel-owned like the probe columns: the
+// registration upsert never writes it, so a registry edit cannot erase it.
+func (s *Store) SetExecutionHostMaintenanceHome(ctx context.Context, id domain.ExecutionHostID, home string) error {
+	if id == "" {
+		return fmt.Errorf("set maintenance home: host id is required")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.SetExecutionHostMaintenanceHome(ctx, gen.SetExecutionHostMaintenanceHomeParams{
+		MaintenanceHome: home, ID: string(id),
+	}); err != nil {
+		return fmt.Errorf("set maintenance home for host %s: %w", id, err)
+	}
+	return nil
 }
 
 func sessionExecutionBindingFromGen(row gen.SessionExecutionBinding) (domain.SessionExecutionBinding, error) {

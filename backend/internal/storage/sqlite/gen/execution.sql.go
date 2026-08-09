@@ -330,7 +330,7 @@ func (q *Queries) GetExecutionEventCursor(ctx context.Context, arg GetExecutionE
 }
 
 const getExecutionHost = `-- name: GetExecutionHost :one
-SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts WHERE id = ?
+SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note, maintenance_home FROM execution_hosts WHERE id = ?
 `
 
 func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHost, error) {
@@ -358,6 +358,7 @@ func (q *Queries) GetExecutionHost(ctx context.Context, id string) (ExecutionHos
 		&i.ZoneID,
 		&i.Isolated,
 		&i.IsolationNote,
+		&i.MaintenanceHome,
 	)
 	return i, err
 }
@@ -1225,7 +1226,7 @@ func (q *Queries) ListExecutionHostSkills(ctx context.Context, hostID string) ([
 }
 
 const listExecutionHosts = `-- name: ListExecutionHosts :many
-SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note FROM execution_hosts ORDER BY name, id
+SELECT id, name, backend_type, transport, endpoint, endpoint_secret_ref, trust_zone, enabled, max_concurrent_sessions, server_id, paseo_version, requires_no_mcp, requires_no_relay, last_successful_probe_at, last_failed_probe_at, last_probe_error, created_at, updated_at, zone_id, isolated, isolation_note, maintenance_home FROM execution_hosts ORDER BY name, id
 `
 
 func (q *Queries) ListExecutionHosts(ctx context.Context) ([]ExecutionHost, error) {
@@ -1259,6 +1260,7 @@ func (q *Queries) ListExecutionHosts(ctx context.Context) ([]ExecutionHost, erro
 			&i.ZoneID,
 			&i.Isolated,
 			&i.IsolationNote,
+			&i.MaintenanceHome,
 		); err != nil {
 			return nil, err
 		}
@@ -1454,6 +1456,20 @@ func (q *Queries) RewriteExecutionStartAttempt(ctx context.Context, arg RewriteE
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setExecutionHostMaintenanceHome = `-- name: SetExecutionHostMaintenanceHome :exec
+UPDATE execution_hosts SET maintenance_home = ? WHERE id = ?
+`
+
+type SetExecutionHostMaintenanceHomeParams struct {
+	MaintenanceHome string
+	ID              string
+}
+
+func (q *Queries) SetExecutionHostMaintenanceHome(ctx context.Context, arg SetExecutionHostMaintenanceHomeParams) error {
+	_, err := q.db.ExecContext(ctx, setExecutionHostMaintenanceHome, arg.MaintenanceHome, arg.ID)
+	return err
 }
 
 const touchSessionExecutionBinding = `-- name: TouchSessionExecutionBinding :execrows

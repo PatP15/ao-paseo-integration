@@ -41,8 +41,13 @@ type ExecutionHost struct {
 	LastSuccessfulProbeAt time.Time
 	LastFailedProbeAt     time.Time
 	LastProbeError        string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	// MaintenanceHome is the worker's home directory as the maintenance
+	// channel learned it from a run's done event. Channel-owned, empty until
+	// the first successful run; maintenance workspaces are created here, with
+	// "/" as the only fallback AO can name unaided.
+	MaintenanceHome string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ExecutionHostCapability is one routable capability exposed by a host.

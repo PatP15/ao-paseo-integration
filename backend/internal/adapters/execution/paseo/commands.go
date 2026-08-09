@@ -152,19 +152,22 @@ func providerModelsArgs(host, provider string) ([]string, error) {
 	return append(args, provider, "--json"), nil
 }
 
-func workspaceCreateLocalArgs(host, title string) ([]string, error) {
+func workspaceCreateLocalArgs(host, path, title string) ([]string, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("local workspace requires a title")
+	}
+	// An explicit path is required: with no --path the CLI sends ITS OWN cwd —
+	// a path on the AO machine that need not exist on the host. Callers pass
+	// the home directory the maintenance channel learned, or "/" (which exists
+	// on every POSIX host) before anything has been learned.
+	if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, " \t\r\n") {
+		return nil, fmt.Errorf("invalid local workspace path %q", path)
 	}
 	args, err := hostArgs([]string{"workspace", "create"}, host)
 	if err != nil {
 		return nil, err
 	}
-	// --path is "/" on purpose: with no --path the CLI sends ITS OWN cwd — a
-	// path on the AO machine that need not exist on the host — and AO cannot
-	// know the host's home. The root exists on every POSIX host, and the
-	// maintenance binary resolves its real targets from $HOME itself.
-	return append(args, "--isolation", "local", "--path", "/", "--title", title, "--json"), nil
+	return append(args, "--isolation", "local", "--path", path, "--title", title, "--json"), nil
 }
 
 func workspaceArchiveArgs(host, workspaceID string) ([]string, error) {

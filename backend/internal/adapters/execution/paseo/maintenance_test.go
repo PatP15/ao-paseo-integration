@@ -32,9 +32,9 @@ type fakeMaintenanceClient struct {
 	captureLines []string
 }
 
-func (c *fakeMaintenanceClient) CreateLocalWorkspace(_ context.Context, title string) (Workspace, error) {
-	c.created = append(c.created, title)
-	return Workspace{WorkspaceID: c.workspaceID, Name: title, Isolation: "local", Cwd: "/home/worker"}, nil
+func (c *fakeMaintenanceClient) CreateLocalWorkspace(_ context.Context, path, title string) (Workspace, error) {
+	c.created = append(c.created, path+"|"+title)
+	return Workspace{WorkspaceID: c.workspaceID, Name: title, Isolation: "local", Cwd: path}, nil
 }
 
 func (c *fakeMaintenanceClient) ArchiveWorkspace(_ context.Context, workspaceID string) error {
@@ -127,6 +127,37 @@ func TestHostPrefsAssemblesChunksAndVerifiesTheHash(t *testing.T) {
 	}
 	if prefs.Content != string(content) || !prefs.Exists || prefs.SHA256 != sha256HexOf(content) {
 		t.Fatalf("prefs = %+v", prefs)
+	}
+}
+
+func TestMaintenanceBootstrapsTheWorkerHomeFromDoneEvents(t *testing.T) {
+	withFixedNonce(t)
+	store := newMemoryExecutionStore(nil)
+	client := &fakeMaintenanceClient{
+		fakeExecutionClient: newFakeExecutionClient(nil),
+		workspaceID:         "wks-maint",
+		captureLines: framedLines(t, func(out *bytes.Buffer) error {
+			return paseoevent.WriteMaintenanceEvent(out, maintenanceTestNonce, 1, paseoevent.MaintenanceDone,
+				paseoevent.MaintenanceDonePayload{Count: 0, Home: "/home/worker"})
+		}),
+	}
+	backend := newBackend(client, store, func() time.Time { return backendTestNow })
+
+	// First run: nothing learned yet, so the workspace roots at "/".
+	if _, err := backend.HostInventory(context.Background(), "host-1"); err != nil {
+		t.Fatal(err)
+	}
+	// Second run: the done event's home is now the workspace root.
+	if _, err := backend.HostInventory(context.Background(), "host-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.created) != 2 ||
+		!strings.HasPrefix(client.created[0], "/|") ||
+		!strings.HasPrefix(client.created[1], "/home/worker|") {
+		t.Fatalf("workspace paths = %v, want / then the learned home", client.created)
+	}
+	if store.hosts["host-1"].MaintenanceHome != "/home/worker" {
+		t.Fatalf("persisted home = %q", store.hosts["host-1"].MaintenanceHome)
 	}
 }
 

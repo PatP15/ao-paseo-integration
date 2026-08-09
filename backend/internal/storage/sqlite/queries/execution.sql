@@ -26,6 +26,9 @@ ON CONFLICT (id) DO UPDATE SET
 -- name: GetExecutionHost :one
 SELECT * FROM execution_hosts WHERE id = ?;
 
+-- name: SetExecutionHostMaintenanceHome :exec
+UPDATE execution_hosts SET maintenance_home = ? WHERE id = ?;
+
 -- name: ListExecutionHosts :many
 SELECT * FROM execution_hosts ORDER BY name, id;
 

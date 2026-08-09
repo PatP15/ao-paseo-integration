@@ -46,6 +46,13 @@ func (s *memoryExecutionStore) GetSessionExecutionBinding(_ context.Context, id 
 	return binding, found, nil
 }
 
+func (s *memoryExecutionStore) SetExecutionHostMaintenanceHome(_ context.Context, id domain.ExecutionHostID, home string) error {
+	host := s.hosts[id]
+	host.MaintenanceHome = home
+	s.hosts[id] = host
+	return nil
+}
+
 func (s *memoryExecutionStore) UpsertSessionExecutionBinding(_ context.Context, binding domain.SessionExecutionBinding) error {
 	binding.LabelsWritten = cloneLabels(binding.LabelsWritten)
 	s.bindings[binding.SessionID] = binding

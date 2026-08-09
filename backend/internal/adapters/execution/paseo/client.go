@@ -93,10 +93,10 @@ func (c *Client) ProviderModels(ctx context.Context, provider string) ([]Provide
 	return runJSON[[]ProviderModel](ctx, c, args, err)
 }
 
-// CreateLocalWorkspace creates a non-worktree workspace rooted at the remote
-// daemon's own cwd, used as the container for maintenance terminals.
-func (c *Client) CreateLocalWorkspace(ctx context.Context, title string) (Workspace, error) {
-	args, err := workspaceCreateLocalArgs(c.host, title)
+// CreateLocalWorkspace creates a non-worktree workspace rooted at an explicit
+// host-side path, used as the container for maintenance terminals.
+func (c *Client) CreateLocalWorkspace(ctx context.Context, path, title string) (Workspace, error) {
+	args, err := workspaceCreateLocalArgs(c.host, path, title)
 	return runJSON[Workspace](ctx, c, args, err)
 }
 

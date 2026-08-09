@@ -30,7 +30,7 @@ func sha256HexOf(content []byte) string {
 // maintenanceClient is the optional CLI surface the channel needs, discovered
 // structurally like reportTerminalClient.
 type maintenanceClient interface {
-	CreateLocalWorkspace(context.Context, string) (Workspace, error)
+	CreateLocalWorkspace(context.Context, string, string) (Workspace, error)
 	ArchiveWorkspace(context.Context, string) error
 	CreateTerminal(context.Context, TerminalCreateRequest) (Terminal, error)
 	SendTerminalKeys(context.Context, string, ...string) error
@@ -123,7 +123,8 @@ func (e *MaintenanceRefusedError) Error() string { return "maintenance refused: 
 func (b *Backend) runMaintenance(
 	ctx context.Context, hostID domain.ExecutionHostID, verb string, extraArgs []string,
 ) (paseoevent.MaintenanceResult, error) {
-	if _, err := b.registeredHost(ctx, hostID); err != nil {
+	host, err := b.registeredHost(ctx, hostID)
+	if err != nil {
 		return paseoevent.MaintenanceResult{}, err
 	}
 	client, ok := b.client.(maintenanceClient)
@@ -138,8 +139,21 @@ func (b *Backend) runMaintenance(
 		return paseoevent.MaintenanceResult{}, err
 	}
 
+	// The workspace lives in the home directory the channel learned from a
+	// previous run's done event; before anything has been learned, "/" is the
+	// only path AO can name on a machine it knows nothing about. A learned
+	// home that no longer works falls back the same way and is re-learned
+	// from this run's own done event.
 	title := fmt.Sprintf("ao-maintenance:%s:%s", hostID, nonce)
-	workspace, err := client.CreateLocalWorkspace(ctx, title)
+	path := host.MaintenanceHome
+	if path == "" {
+		path = "/"
+	}
+	workspace, err := client.CreateLocalWorkspace(ctx, path, title)
+	if err != nil && path != "/" {
+		path = "/"
+		workspace, err = client.CreateLocalWorkspace(ctx, path, title)
+	}
 	if err != nil {
 		return paseoevent.MaintenanceResult{}, fmt.Errorf("create maintenance workspace on host %s: %w", hostID, err)
 	}
@@ -189,6 +203,12 @@ func (b *Backend) runMaintenance(
 			return paseoevent.MaintenanceResult{}, &MaintenanceRefusedError{Message: result.Err.Message}
 		}
 		if result.Done != nil {
+			// Learn (or correct) the worker's home for the next run's
+			// workspace. Best-effort: the facts this run carried do not
+			// depend on remembering where to put the next one.
+			if home := strings.TrimSpace(result.Done.Home); home != "" && home != host.MaintenanceHome {
+				_ = b.store.SetExecutionHostMaintenanceHome(context.WithoutCancel(ctx), hostID, home)
+			}
 			return result, nil
 		}
 		select {

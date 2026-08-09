@@ -624,10 +624,7 @@ func newHostProber(
 			// not an internal error: record it and let the view carry it.
 			return recordFailure("cannot resolve host credential: " + err.Error())
 		}
-		endpoint := host.Endpoint
-		if password != "" {
-			endpoint = fmt.Sprintf("tcp://%s?password=%s", host.Endpoint, password)
-		}
+		endpoint := executionClientEndpoint(host.Endpoint, password)
 		client, err := paseoexec.NewClient(ctx, endpoint, paseoexec.CLIRunner{Timeout: 30 * time.Second})
 		if err != nil {
 			return recordFailure(paseoexec.Redact(err.Error(), password))
@@ -682,10 +679,7 @@ func newSelfTargetGuard(dataDir string, logger *slog.Logger) func(context.Contex
 			logger.Debug("self-target guard: cannot resolve secret; skipping", "role", role, "err", err)
 			return "", false
 		}
-		target := endpoint
-		if password != "" {
-			target = fmt.Sprintf("tcp://%s?password=%s", endpoint, password)
-		}
+		target := executionClientEndpoint(endpoint, password)
 		client, err := paseoexec.NewClient(ctx, target, paseoexec.CLIRunner{Timeout: 10 * time.Second})
 		if err != nil {
 			logger.Debug("self-target guard: probe failed; skipping", "role", role,

@@ -10,6 +10,7 @@ import {
 	Copy,
 	GitBranch,
 	LoaderCircle,
+	Monitor,
 	Plus,
 	RotateCcw,
 	RotateCw,
@@ -871,6 +872,15 @@ function SessionCard({
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
+						</div>
+					)}
+					{session.executionHostId && (
+						<div
+							className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive"
+							title={t("shell.remoteHost", { host: session.executionHostId })}
+						>
+							<Monitor aria-hidden="true" className="size-icon-2xs shrink-0" />
+							<span className="truncate">{session.executionHostId}</span>
 						</div>
 					)}
 				</div>

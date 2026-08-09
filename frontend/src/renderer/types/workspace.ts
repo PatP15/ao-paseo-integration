@@ -141,6 +141,10 @@ export type WorkspaceSession = {
 	updatedAt: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
+	/** Registered execution host this session runs on. Absent for local sessions. */
+	executionHostId?: string;
+	/** Provision attempt this session is bound to; bumps on escalation. */
+	executionAttempt?: number;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.

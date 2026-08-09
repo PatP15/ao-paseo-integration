@@ -156,3 +156,42 @@ func TestMaintainPrefsReadReportsAMissingFileAsAFact(t *testing.T) {
 		t.Fatalf("missing file hash = %s, want the empty-string hash", result.Done.SHA256)
 	}
 }
+
+func TestMaintainPrefsWriteCreatesMissingParent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "orchestration-preferences.json")
+	content := []byte(`{"providers":{}}`)
+	var out bytes.Buffer
+	if err := MaintainPrefsWrite(path, testNonce,
+		base64.StdEncoding.EncodeToString(content), sha256HexBytes(content), sha256HexBytes(nil), &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err != nil || result.Done == nil || !result.Done.Exists {
+		t.Fatalf("write result = %+v", result)
+	}
+}
+
+func TestMaintainPrefsReadRefusesSymlinkWithoutDisclosingTarget(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	secret := []byte("must-not-cross-the-maintenance-allowlist")
+	if err := os.WriteFile(outside, secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "orchestration-preferences.json")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := MaintainPrefsRead(path, testNonce, &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err == nil || !strings.Contains(result.Err.Message, "not a regular file") {
+		t.Fatalf("symlink result = %+v", result)
+	}
+	if bytes.Contains(out.Bytes(), secret) {
+		t.Fatalf("maintenance output disclosed symlink target: %q", out.String())
+	}
+}

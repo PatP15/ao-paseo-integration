@@ -182,20 +182,51 @@ func emitMaintenanceError(out io.Writer, nonce, message string) error {
 }
 
 func readPrefs(path string) ([]byte, bool, error) {
-	info, err := os.Stat(path)
+	parent, err := os.OpenRoot(filepath.Dir(path))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("open preferences directory: %w", err)
+	}
+	defer func() { _ = parent.Close() }()
+
+	name := filepath.Base(path)
+	info, err := parent.Lstat(name)
 	if os.IsNotExist(err) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("stat preferences file: %w", err)
 	}
+	if !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("preferences file is not a regular file")
+	}
 	if info.Size() > paseoevent.MaxPrefsFileBytes {
 		return nil, false, fmt.Errorf("preferences file is %d bytes, over the %d byte cap",
 			info.Size(), paseoevent.MaxPrefsFileBytes)
 	}
-	content, err := os.ReadFile(path)
+	file, err := parent.Open(name)
 	if err != nil {
 		return nil, false, fmt.Errorf("read preferences file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("stat opened preferences file: %w", err)
+	}
+	// The lstat/open comparison closes the swap window without following a
+	// caller-planted symlink: Root.Open cannot escape the parent, and a changed
+	// inode is refused before any bytes are read.
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, false, fmt.Errorf("preferences file changed while opening or is not a regular file")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, paseoevent.MaxPrefsFileBytes+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("read preferences file: %w", err)
+	}
+	if len(content) > paseoevent.MaxPrefsFileBytes {
+		return nil, false, fmt.Errorf("preferences file is over the %d byte cap", paseoevent.MaxPrefsFileBytes)
 	}
 	return content, true, nil
 }

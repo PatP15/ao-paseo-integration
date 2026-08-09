@@ -237,6 +237,42 @@ func TestMaintainSkillReadRefusesSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestMaintainSkillPushRefusesSymlinkedStage(t *testing.T) {
+	skillsDir := t.TempDir()
+	outside := t.TempDir()
+	stage := filepath.Join(skillsDir, ".ao-stage-"+testNonce)
+	if err := os.Symlink(outside, stage); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	lines, seq, err := paseoevent.EncodeFileChunkEvents(testNonce,
+		paseoevent.MaintenancePushFile, "SKILL.md", []byte("must-stay-contained"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, err := paseoevent.EncodeMaintenanceEvent(testNonce, seq,
+		paseoevent.MaintenancePushEnd, paseoevent.MaintenancePushEndPayload{Files: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := strings.NewReader(strings.Join(append(lines, end...), "\n") + "\n")
+
+	var out bytes.Buffer
+	if err := MaintainSkillPush(skillsDir, "advisor", testNonce, stream, &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err == nil || !strings.Contains(result.Err.Message, "stage skill") {
+		t.Fatalf("skill push result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("push wrote through staging symlink: %v", err)
+	}
+	if _, err := os.Lstat(stage); err != nil {
+		t.Fatalf("refused push altered pre-existing stage path: %v", err)
+	}
+}
+
 func TestFileVerbsHonorTheAllowlist(t *testing.T) {
 	var out bytes.Buffer
 	if err := MaintainFileRead("etc-passwd", testNonce, &out); err != nil {

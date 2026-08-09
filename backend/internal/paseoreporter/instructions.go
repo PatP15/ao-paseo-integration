@@ -237,7 +237,16 @@ func MaintainSkillPush(skillsDir, name, nonce string, in io.Reader, out io.Write
 		return emitMaintenanceError(out, nonce, "push carried no files")
 	}
 
+	if err := os.MkdirAll(skillsDir, 0o750); err != nil {
+		return emitMaintenanceError(out, nonce, "stage skill: "+err.Error())
+	}
 	stage := filepath.Join(skillsDir, ".ao-stage-"+nonce)
+	// Create the staging root exclusively. Using MkdirAll only for file
+	// parents would follow a stale or attacker-created symlink at stage and
+	// let pushed bytes escape skillsDir before the final rename.
+	if err := os.Mkdir(stage, 0o750); err != nil {
+		return emitMaintenanceError(out, nonce, "stage skill: "+err.Error())
+	}
 	defer func() { _ = os.RemoveAll(stage) }()
 	for _, file := range files {
 		relative := filepath.Clean(filepath.FromSlash(file.Path))

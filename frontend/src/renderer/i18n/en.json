@@ -202,6 +202,7 @@
 	"dispatch.prompt": "Prompt",
 	"dispatch.provider": "Provider",
 	"dispatch.providerDefault": "Provider default",
+	"dispatch.providerUnsupported": "AO has no harness for the \"{{provider}}\" provider, so it cannot record what runs this session. Pick another provider.",
 	"dispatch.selectComputer": "Select a computer",
 	"dispatch.selectProvider": "Select a provider",
 	"dispatch.sessionLine": "Session {{sessionId}} on {{hostId}}",

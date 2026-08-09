@@ -202,6 +202,7 @@
 	"dispatch.prompt": "提示词",
 	"dispatch.provider": "提供方",
 	"dispatch.providerDefault": "提供方默认",
+	"dispatch.providerUnsupported": "AO 没有与“{{provider}}”提供方对应的 harness，无法记录运行该会话的程序。请选择其他提供方。",
 	"dispatch.selectComputer": "选择计算机",
 	"dispatch.selectProvider": "选择提供方",
 	"dispatch.sessionLine": "会话 {{sessionId}}（{{hostId}}）",

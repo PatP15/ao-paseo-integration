@@ -37,7 +37,7 @@ function renderDialog() {
 	return { onCreated, onOpenChange, queryClient };
 }
 
-function mockRemoteHost(reachable = true) {
+function mockRemoteHost(reachable = true, providers = [{ provider: "claude", label: "Claude", status: "available" }]) {
 	const fallback = getMock.getMockImplementation();
 	getMock.mockImplementation(async (path: string, ...args: unknown[]) => {
 		if (path === "/api/v1/execution/hosts") {
@@ -61,11 +61,7 @@ function mockRemoteHost(reachable = true) {
 			return { data: { bindings: [{ hostId: "worker-1", enabled: true }] } };
 		}
 		if (path === "/api/v1/execution/hosts/{hostId}/providers") {
-			return {
-				data: {
-					providers: [{ provider: "claude", label: "Claude", status: "available" }],
-				},
-			};
+			return { data: { providers } };
 		}
 		return fallback?.(path, ...args);
 	});
@@ -287,6 +283,40 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 		expect(await screen.findByText(/Remote tasks do not support image attachments/)).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("records the harness of the provider that actually runs a remote task", async () => {
+		mockRemoteHost(true, [{ provider: "cursor", label: "Cursor CLI", status: "available" }]);
+		postMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/work-items") return { data: { workItem: { id: "wi-1" } } };
+			if (path === "/api/v1/work-items/{id}/approval") return { data: {} };
+			return { data: { sessionId: "sess-1", commandId: "cmd-1", hostId: "worker-1" } };
+		});
+		renderDialog();
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole("button", { name: "Run on" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Worker · work · 0/2" }));
+		await user.click(await screen.findByRole("button", { name: "Provider" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Cursor CLI" }));
+
+		await user.type(screen.getByLabelText("Title"), "Remote work");
+		await user.type(screen.getByLabelText("Brief"), "Run this on the worker.");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/execution/dispatch", expect.anything()));
+		const dispatch = postMock.mock.calls.find((call) => call[0] === "/api/v1/execution/dispatch");
+		expect((dispatch?.[1] as { body: { harness: string } }).body.harness).toBe("cursor");
+	}, 20_000);
+
+	it("refuses a provider AO has no harness for before any work item is created", async () => {
+		mockRemoteHost(true, [{ provider: "gemini", label: "Gemini", status: "available" }]);
+		renderDialog();
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole("button", { name: "Run on" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Worker · work · 0/2" }));
+		await user.click(await screen.findByRole("button", { name: "Provider" }));
+		// Unselectable, so the old silent claude-code fallback is unreachable.
+		expect(await screen.findByRole("menuitem", { name: "Gemini" })).toHaveAttribute("data-disabled");
 	});
 
 	it("never falls back to a local spawn when the selected remote host disappears", async () => {

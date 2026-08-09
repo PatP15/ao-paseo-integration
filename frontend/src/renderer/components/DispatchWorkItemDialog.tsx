@@ -6,6 +6,7 @@ import type { components } from "../../api/schema";
 import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { harnessForProvider } from "../lib/execution-harness";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import {
 	Dialog,
@@ -22,13 +23,6 @@ type WorkItem = components["schemas"]["WorkItemResponse"];
 type Binding = components["schemas"]["ControllersExecutionBindingResponse"];
 type Provider = components["schemas"]["ControllersExecutionProviderResponse"];
 type DispatchResponse = components["schemas"]["DispatchExecutionResponse"];
-
-// AO harness recorded on the session for each remote provider. The store
-// constrains the column, so only values AO already supports may be sent.
-const HARNESS_BY_PROVIDER: Record<string, string> = {
-	claude: "claude-code",
-	codex: "codex",
-};
 
 const NONE = "__none__";
 
@@ -115,6 +109,9 @@ export function DispatchWorkItemDialog({
 	const providers = (providersQuery.data ?? []).filter((entry) => entry.status === "available");
 	const providerInfo = providers.find((entry) => entry.provider === provider);
 	const modelInfo = providerInfo?.models.find((entry) => entry.id === model);
+	// A provider AO has no harness for cannot be dispatched: the session's
+	// harness must describe what actually runs it.
+	const harness = harnessForProvider(provider);
 
 	// The host's cached skill inventory drives insertable prompt snippets. A
 	// host never inventoried degrades to a plain prompt box — absence of
@@ -156,12 +153,13 @@ export function DispatchWorkItemDialog({
 	const dispatchMutation = useMutation({
 		mutationFn: async (): Promise<DispatchResponse> => {
 			if (!workItem || !host) throw new Error(t("dispatch.hostRequired"));
+			if (!harness) throw new Error(t("dispatch.providerUnsupported", { provider }));
 			const { data, error } = await apiClient.POST("/api/v1/execution/dispatch", {
 				body: {
 					workItemId: workItem.id,
 					projectId,
 					trustZone: host.trustZone,
-					harness: HARNESS_BY_PROVIDER[provider] ?? "claude-code",
+					harness,
 					branch: branch.trim(),
 					provider,
 					model: model === NONE ? undefined : model,
@@ -215,6 +213,7 @@ export function DispatchWorkItemDialog({
 		workItem !== null &&
 		host !== undefined &&
 		provider !== "" &&
+		harness !== null &&
 		branch.trim() !== "" &&
 		prompt.trim() !== "";
 
@@ -226,6 +225,7 @@ export function DispatchWorkItemDialog({
 			options: providers.map((entry) => ({
 				value: entry.provider,
 				label: entry.label || entry.provider,
+				disabled: harnessForProvider(entry.provider) === null,
 			})),
 			placeholder: providersQuery.isFetching ? t("dispatch.discovering") : t("dispatch.selectProvider"),
 			disabled: hostId === "" || providers.length === 0,
@@ -368,11 +368,7 @@ export function DispatchWorkItemDialog({
 									setMode(NONE);
 									setThinking(NONE);
 								}}
-								placeholder={
-									boundHosts.length === 0
-										? t("dispatch.noBoundComputers")
-										: t("dispatch.selectComputer")
-								}
+								placeholder={boundHosts.length === 0 ? t("dispatch.noBoundComputers") : t("dispatch.selectComputer")}
 								disabled={boundHosts.length === 0}
 								aria-label={t("dispatch.computer")}
 							/>
@@ -380,9 +376,7 @@ export function DispatchWorkItemDialog({
 								<p className="text-xs text-warning">{t("dispatch.bindHint")}</p>
 							) : null}
 							{host ? (
-								<p className="text-xs text-settings-muted">
-									{t("dispatch.trustZoneLine", { zone: host.trustZone })}
-								</p>
+								<p className="text-xs text-settings-muted">{t("dispatch.trustZoneLine", { zone: host.trustZone })}</p>
 							) : null}
 						</div>
 						<div className="grid gap-4 sm:grid-cols-2">
@@ -400,6 +394,11 @@ export function DispatchWorkItemDialog({
 								</div>
 							))}
 						</div>
+						{provider !== "" && harness === null ? (
+							<p className="text-xs text-warning" role="alert">
+								{t("dispatch.providerUnsupported", { provider })}
+							</p>
+						) : null}
 						{skills.length > 0 ? (
 							<div className="flex flex-col gap-1.5">
 								<span className="text-xs font-medium text-settings-label">{t("dispatch.skills")}</span>
@@ -420,9 +419,7 @@ export function DispatchWorkItemDialog({
 								<p className="text-xs text-settings-muted">{t("dispatch.skillsHint")}</p>
 								{pendingGate ? (
 									<div className="flex flex-col gap-1.5 rounded-md border border-(--color-border-settings-input) px-3 py-2">
-										<p className="text-xs text-warning">
-											{t("dispatch.gateExplanation", { name: pendingGate })}
-										</p>
+										<p className="text-xs text-warning">{t("dispatch.gateExplanation", { name: pendingGate })}</p>
 										<div className="flex items-center gap-2">
 											<button
 												type="button"
@@ -435,11 +432,7 @@ export function DispatchWorkItemDialog({
 											>
 												{t("dispatch.gateEnable")}
 											</button>
-											<button
-												type="button"
-												className="settings-option-trigger"
-												onClick={() => setPendingGate(null)}
-											>
+											<button type="button" className="settings-option-trigger" onClick={() => setPendingGate(null)}>
 												{t("dispatch.gateCancel")}
 											</button>
 										</div>

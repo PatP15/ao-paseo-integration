@@ -10,6 +10,7 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { type ExecutionHost, executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
+import { type AoHarness, harnessForProvider } from "../lib/execution-harness";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -28,11 +29,6 @@ type NewTaskDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-const HARNESS_BY_PROVIDER: Record<string, string> = {
-	claude: "claude-code",
-	codex: "codex",
-};
-
 // Create → approve → dispatch as one submit (Q1). The approval is still a
 // distinct persisted fact carrying the operator identity; only the clicks are
 // collapsed, never the records.
@@ -40,6 +36,7 @@ async function dispatchRemote(input: {
 	projectId: string;
 	host: ExecutionHost;
 	provider: string;
+	harness: AoHarness;
 	title: string;
 	prompt: string;
 	branch: string;
@@ -62,7 +59,7 @@ async function dispatchRemote(input: {
 			workItemId,
 			projectId: input.projectId,
 			trustZone: input.host.trustZone,
-			harness: HARNESS_BY_PROVIDER[input.provider] ?? "claude-code",
+			harness: input.harness,
 			branch: input.branch || `ao/${workItemId.slice(0, 20)}`,
 			provider: input.provider,
 			prompt: input.prompt,
@@ -217,11 +214,20 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 				setIsSubmitting(false);
 				return;
 			}
+			// Resolved before the work item exists: a provider AO cannot name must
+			// not leave an approved item behind that no dispatch will ever claim.
+			const harness = harnessForProvider(remoteProvider);
+			if (!harness) {
+				setError(t("dispatch.providerUnsupported", { provider: remoteProvider }));
+				setIsSubmitting(false);
+				return;
+			}
 			try {
 				const sessionId = await dispatchRemote({
 					projectId,
 					host: remoteHost,
 					provider: remoteProvider,
+					harness,
 					title: cleanTitle,
 					prompt: cleanPrompt,
 					branch: cleanBranch,
@@ -443,11 +449,10 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 											options={(providersQuery.data ?? []).map((entry) => ({
 												value: entry.provider,
 												label: entry.label || entry.provider,
+												disabled: harnessForProvider(entry.provider) === null,
 											}))}
 											onChange={setRemoteProvider}
-											placeholder={
-												providersQuery.isFetching ? t("dispatch.discovering") : t("dispatch.selectProvider")
-											}
+											placeholder={providersQuery.isFetching ? t("dispatch.discovering") : t("dispatch.selectProvider")}
 											disabled={(providersQuery.data ?? []).length === 0}
 											aria-label={t("dispatch.provider")}
 										/>

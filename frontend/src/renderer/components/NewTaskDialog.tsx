@@ -9,6 +9,8 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { type ExecutionHost, executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
@@ -24,6 +26,49 @@ type NewTaskDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
+const HARNESS_BY_PROVIDER: Record<string, string> = {
+	claude: "claude-code",
+	codex: "codex",
+};
+
+// Create → approve → dispatch as one submit (Q1). The approval is still a
+// distinct persisted fact carrying the operator identity; only the clicks are
+// collapsed, never the records.
+async function dispatchRemote(input: {
+	projectId: string;
+	host: ExecutionHost;
+	provider: string;
+	title: string;
+	prompt: string;
+	branch: string;
+}): Promise<string> {
+	const created = await apiClient.POST("/api/v1/work-items", {
+		body: { projectId: input.projectId, title: input.title, body: input.prompt },
+	});
+	if (created.error) throw new Error(apiErrorMessage(created.error));
+	const workItemId = created.data.workItem.id;
+
+	const approved = await apiClient.POST("/api/v1/work-items/{id}/approval", {
+		params: { path: { id: workItemId } },
+		body: { approver: "operator" },
+	});
+	if (approved.error) throw new Error(apiErrorMessage(approved.error));
+
+	const dispatched = await apiClient.POST("/api/v1/execution/dispatch", {
+		body: {
+			workItemId,
+			projectId: input.projectId,
+			trustZone: input.host.trustZone,
+			harness: HARNESS_BY_PROVIDER[input.provider] ?? "claude-code",
+			branch: input.branch || `ao/${workItemId.slice(0, 20)}`,
+			provider: input.provider,
+			prompt: input.prompt,
+		},
+	});
+	if (dispatched.error) throw new Error(apiErrorMessage(dispatched.error));
+	return dispatched.data.sessionId;
+}
+
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -36,6 +81,11 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const [branch, setBranch] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
+	// "local" runs on this machine through the session spawn; a host id runs
+	// remotely via create → approve → dispatch on this one submit (Q1) — the
+	// person pressing the button is the approver, recorded as a durable fact.
+	const [runOn, setRunOn] = useState("local");
+	const [remoteProvider, setRemoteProvider] = useState("");
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [isDragging, setIsDragging] = useState(false);
@@ -73,6 +123,36 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
+	const hostsQuery = useQuery({ ...executionHostsQueryOptions, enabled: open && Boolean(projectId) });
+	const bindingsQuery = useQuery({
+		queryKey: ["execution-bindings", projectId ?? ""],
+		queryFn: async () => {
+			const { data, error: apiError } = await apiClient.GET("/api/v1/execution/bindings", {
+				params: { query: { projectId } },
+			});
+			if (apiError) throw new Error(apiErrorMessage(apiError));
+			return data.bindings;
+		},
+		enabled: open && Boolean(projectId),
+		retry: 1,
+	});
+	const boundHosts = (hostsQuery.data ?? []).filter(
+		(host) => host.enabled && (bindingsQuery.data ?? []).some((b) => b.hostId === host.id && b.enabled),
+	);
+	const remoteHost = boundHosts.find((host) => host.id === runOn);
+	const providersQuery = useQuery({
+		queryKey: ["execution-providers", runOn],
+		queryFn: async () => {
+			const { data, error: apiError } = await apiClient.GET("/api/v1/execution/hosts/{hostId}/providers", {
+				params: { path: { hostId: runOn } },
+			});
+			if (apiError) throw new Error(apiErrorMessage(apiError));
+			return data.providers.filter((entry) => entry.status === "available");
+		},
+		enabled: open && remoteHost !== undefined,
+		retry: 1,
+	});
+
 	useEffect(() => {
 		if (!open) {
 			setTitle("");
@@ -83,6 +163,8 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			setError(undefined);
 			setIsSubmitting(false);
 			setIsDragging(false);
+			setRunOn("local");
+			setRemoteProvider("");
 			clearAttachments();
 		}
 	}, [open, clearAttachments]);
@@ -108,6 +190,32 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		setIsSubmitting(true);
 		setError(undefined);
 		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
+		if (remoteHost) {
+			if (!remoteProvider) {
+				setError(t("dispatch.selectProvider"));
+				setIsSubmitting(false);
+				return;
+			}
+			try {
+				const sessionId = await dispatchRemote({
+					projectId,
+					host: remoteHost,
+					provider: remoteProvider,
+					title: cleanTitle,
+					prompt: cleanPrompt,
+					branch: cleanBranch,
+				});
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
+				onCreated(sessionId);
+				onOpenChange(false);
+			} catch (err) {
+				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
+				setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
+			} finally {
+				setIsSubmitting(false);
+			}
+			return;
+		}
 		try {
 			const body: components["schemas"]["SpawnSessionRequest"] = {
 				projectId,
@@ -285,8 +393,46 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							<p className="text-caption text-muted-foreground">{t("newTask.enterHint")}</p>
 						</div>
 
+						{boundHosts.length > 0 && !isScratchProject ? (
+							<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+								<div className="space-y-1.5">
+									<span className="text-xs font-medium text-muted-foreground">{t("newTask.runOn")}</span>
+									<SettingsOptionMenu
+										value={runOn}
+										options={[
+											{ value: "local", label: t("newTask.thisComputer") },
+											...boundHosts.map((host) => ({ value: host.id, label: host.name })),
+										]}
+										onChange={(value) => {
+											setRunOn(value);
+											setRemoteProvider("");
+										}}
+										aria-label={t("newTask.runOn")}
+									/>
+								</div>
+								{remoteHost ? (
+									<div className="space-y-1.5">
+										<span className="text-xs font-medium text-muted-foreground">{t("dispatch.provider")}</span>
+										<SettingsOptionMenu
+											value={remoteProvider}
+											options={(providersQuery.data ?? []).map((entry) => ({
+												value: entry.provider,
+												label: entry.label || entry.provider,
+											}))}
+											onChange={setRemoteProvider}
+											placeholder={
+												providersQuery.isFetching ? t("dispatch.discovering") : t("dispatch.selectProvider")
+											}
+											disabled={(providersQuery.data ?? []).length === 0}
+											aria-label={t("dispatch.provider")}
+										/>
+									</div>
+								) : null}
+							</div>
+						) : null}
+
 						<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
-							<div className="space-y-1.5">
+							<div className={remoteHost ? "hidden" : "space-y-1.5"}>
 								<RequiredAgentField
 									id={agentId}
 									label={t("newTask.agent")}

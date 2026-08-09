@@ -176,7 +176,14 @@ func MaintainSkillRead(skillsDir, name, nonce string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() {
+		if entry.Type()&os.ModeSymlink != 0 {
+			relative, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			return fmt.Errorf("skill %s contains symbolic link %q", name, filepath.ToSlash(relative))
+		}
+		if !entry.IsDir() && entry.Type().IsRegular() {
 			paths = append(paths, path)
 		}
 		return nil

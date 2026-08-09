@@ -3,6 +3,7 @@ package paseo
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Logs returns Paseo's rendered transcript. Paseo 0.2.5 exposes no JSON or
@@ -26,8 +27,8 @@ func (c *Client) Send(ctx context.Context, agentID, message string) error {
 }
 
 func logsArgs(host, agentID string) ([]string, error) {
-	if agentID == "" {
-		return nil, fmt.Errorf("agent id is required")
+	if err := validatePositionalID("agent id", agentID); err != nil {
+		return nil, err
 	}
 	args, err := hostArgs([]string{"logs"}, host)
 	if err != nil {
@@ -37,12 +38,18 @@ func logsArgs(host, agentID string) ([]string, error) {
 }
 
 func sendArgs(host, agentID, message string) ([]string, error) {
-	if agentID == "" {
-		return nil, fmt.Errorf("agent id is required")
+	if err := validatePositionalID("agent id", agentID); err != nil {
+		return nil, err
+	}
+	if message == "" || strings.ContainsAny(message, "\x00\r\n") {
+		return nil, fmt.Errorf("message is empty or contains a line break")
 	}
 	args, err := hostArgs([]string{"send"}, host)
 	if err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(message, "-") {
+		args = append(args, "--")
 	}
 	return append(args, agentID, message), nil
 }

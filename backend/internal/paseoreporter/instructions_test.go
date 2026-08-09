@@ -210,6 +210,33 @@ func TestSkillPushRoundTripsThroughSkillRead(t *testing.T) {
 	}
 }
 
+func TestMaintainSkillReadRefusesSymlinkEscape(t *testing.T) {
+	skillsDir := t.TempDir()
+	skillDir := filepath.Join(skillsDir, "advisor")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("must-not-leave-root"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(skillDir, "linked-secret.txt")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := MaintainSkillRead(skillsDir, "advisor", testNonce, &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err == nil || !strings.Contains(result.Err.Message, "symbolic link") {
+		t.Fatalf("skill read result = %+v", result)
+	}
+	if strings.Contains(out.String(), "must-not-leave-root") {
+		t.Fatal("symlink target content escaped the skill directory")
+	}
+}
+
 func TestFileVerbsHonorTheAllowlist(t *testing.T) {
 	var out bytes.Buffer
 	if err := MaintainFileRead("etc-passwd", testNonce, &out); err != nil {

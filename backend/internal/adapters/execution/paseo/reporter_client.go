@@ -67,7 +67,10 @@ func terminalKillArgs(host, terminalID string) ([]string, error) {
 }
 
 func terminalSendKeysArgs(host, terminalID string, keys []string) ([]string, error) {
-	if strings.TrimSpace(terminalID) == "" || len(keys) == 0 {
+	if err := validatePositionalID("terminal id", terminalID); err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
 		return nil, fmt.Errorf("terminal send-keys requires terminal and keys")
 	}
 	for _, key := range keys {
@@ -78,6 +81,12 @@ func terminalSendKeysArgs(host, terminalID string, keys []string) ([]string, err
 	args, err := hostArgs([]string{"terminal", "send-keys"}, host)
 	if err != nil {
 		return nil, err
+	}
+	for _, key := range keys {
+		if strings.HasPrefix(key, "-") {
+			args = append(args, "--")
+			break
+		}
 	}
 	return append(append(args, terminalID), keys...), nil
 }

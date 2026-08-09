@@ -165,6 +165,43 @@ func TestStopAndDeleteBanAll(t *testing.T) {
 	}
 }
 
+func TestPositionalIDsRejectFlagInjection(t *testing.T) {
+	t.Parallel()
+	for name, build := range map[string]func() error{
+		"host":            func() error { _, err := listAgentsArgs("--all:6767", ""); return err },
+		"inspect":         func() error { _, err := inspectArgs("worker:6767", "--all"); return err },
+		"stop short flag": func() error { _, err := destructiveArgs("worker:6767", "stop", "-a"); return err },
+		"capture":         func() error { _, err := terminalCaptureArgs("worker:6767", "--all", 0, 1); return err },
+		"workspace": func() error {
+			_, err := workspaceCreateArgs("worker:6767", WorkspaceCreateRequest{
+				RepoPath: "/repo", Branch: "--help", BaseBranch: "main", WorktreeSlug: "task", Title: "task",
+			})
+			return err
+		},
+		"run provider": func() error {
+			_, err := runArgs("worker:6767", RunRequest{WorkspaceID: "w", Provider: "--help", Prompt: "work"})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := build(); err == nil {
+				t.Fatal("flag-shaped value was accepted")
+			}
+		})
+	}
+}
+
+func TestFreeFormPromptUsesOptionTerminatorWhenFlagShaped(t *testing.T) {
+	t.Parallel()
+	args, err := runArgs("worker:6767", RunRequest{WorkspaceID: "w", Provider: "claude", Prompt: "- review this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := args[len(args)-2:]; !reflect.DeepEqual(got, []string{"--", "- review this"}) {
+		t.Fatalf("argv tail = %v", got)
+	}
+}
+
 func TestScrubPaseoEnv(t *testing.T) {
 	t.Parallel()
 	got := scrubPaseoEnv([]string{

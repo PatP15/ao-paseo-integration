@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
@@ -123,6 +125,60 @@ func TestMaintainPrefsWriteConfirmsByRereadAndRefusesDrift(t *testing.T) {
 	onDisk, _ = os.ReadFile(prefsPath)
 	if !bytes.Equal(onDisk, replacement) {
 		t.Fatalf("drifted write mutated the file: %q", onDisk)
+	}
+}
+
+func TestMaintainPrefsWriteSerializesConcurrentPreconditions(t *testing.T) {
+	prefsPath := filepath.Join(t.TempDir(), "orchestration-preferences.json")
+	original := []byte(`{"version":0}`)
+	if err := os.WriteFile(prefsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const writers = 32
+	start := make(chan struct{})
+	results := make(chan string, writers)
+	var group sync.WaitGroup
+	for index := range writers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			replacement := []byte(fmt.Sprintf(`{"version":%d}`, index+1))
+			var out bytes.Buffer
+			<-start
+			if err := MaintainPrefsWrite(prefsPath, testNonce,
+				base64.StdEncoding.EncodeToString(replacement), sha256HexBytes(replacement),
+				sha256HexBytes(original), &out); err != nil {
+				results <- "function error: " + err.Error()
+				return
+			}
+			results <- out.String()
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+
+	succeeded := 0
+	refused := 0
+	for output := range results {
+		if strings.HasPrefix(output, "function error: ") {
+			t.Fatal(output)
+		}
+		var out bytes.Buffer
+		out.WriteString(output)
+		result := parseRun(t, &out)
+		switch {
+		case result.Err == nil && result.Done != nil:
+			succeeded++
+		case result.Err != nil && strings.Contains(result.Err.Message, "drift"):
+			refused++
+		default:
+			t.Fatalf("unexpected concurrent result: %+v", result)
+		}
+	}
+	if succeeded != 1 || refused != writers-1 {
+		t.Fatalf("concurrent results: succeeded=%d refused=%d, want 1/%d", succeeded, refused, writers-1)
 	}
 }
 

@@ -121,6 +121,19 @@ func MaintainPrefsWrite(prefsPath, nonce, contentB64, contentSHA256, expectSHA25
 		return emitMaintenanceError(out, nonce,
 			"content arrived corrupted: sha256 "+digest+" does not match the declared "+contentSHA256)
 	}
+	if err := os.MkdirAll(filepath.Dir(prefsPath), 0o700); err != nil {
+		return emitMaintenanceError(out, nonce, "create preferences directory: "+err.Error())
+	}
+	unlock, err := lockMaintenanceFile(prefsPath)
+	if err != nil {
+		return emitMaintenanceError(out, nonce, "lock preferences file: "+err.Error())
+	}
+	defer unlock()
+
+	// Hold the cross-process lock from the precondition read through the atomic
+	// rename. Maintenance commands run in separate reporter processes, so an
+	// in-process mutex would still allow two writes with the same base hash to
+	// both pass and silently overwrite one another.
 	current, _, err := readPrefs(prefsPath)
 	if err != nil {
 		return emitMaintenanceError(out, nonce, err.Error())
@@ -128,9 +141,6 @@ func MaintainPrefsWrite(prefsPath, nonce, contentB64, contentSHA256, expectSHA25
 	if digest := sha256Hex(current); digest != strings.ToLower(strings.TrimSpace(expectSHA256)) {
 		return emitMaintenanceError(out, nonce,
 			"drift: the file on disk hashes to "+digest+", not the expected "+expectSHA256+"; re-read before writing")
-	}
-	if err := os.MkdirAll(filepath.Dir(prefsPath), 0o700); err != nil {
-		return emitMaintenanceError(out, nonce, "create preferences directory: "+err.Error())
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(prefsPath), ".ao-prefs-*")
 	if err != nil {

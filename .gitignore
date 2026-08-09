@@ -17,6 +17,8 @@ bin/
 vendor/
 # compiled daemon binary
 /backend/backend
+# compiled maintenance reporter binary
+/backend/ao-paseo-reporter
 agent-orchestrator.yaml
 
 # Backend runtime data artifacts (SQLite store + WAL, CDC event log).

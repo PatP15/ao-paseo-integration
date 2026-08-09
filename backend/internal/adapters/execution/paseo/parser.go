@@ -111,6 +111,25 @@ type ProviderModel struct {
 	ThinkingOptions         string   `json:"thinkingOptions"`
 }
 
+// Schedule is Paseo 0.2.5's schedule-list JSON shape. Heartbeats are NOT in
+// it: the CLI has no heartbeat listing at all, so an empty schedule list
+// proves nothing about heartbeats.
+type Schedule struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Cadence   string     `json:"cadence"`
+	Target    string     `json:"target"`
+	Status    string     `json:"status"`
+	NextRunAt *time.Time `json:"nextRunAt"`
+	LastRunAt *time.Time `json:"lastRunAt"`
+}
+
+// ScheduleDeleteResult is Paseo 0.2.5's schedule-delete JSON shape.
+type ScheduleDeleteResult struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
 // TerminalCapture is a cursored slice of hard-wrapped terminal screen lines.
 type TerminalCapture struct {
 	TerminalID string   `json:"terminalId"`

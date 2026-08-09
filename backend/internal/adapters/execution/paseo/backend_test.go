@@ -76,6 +76,9 @@ type fakeExecutionClient struct {
 	providersErr      error
 	providerModels    map[string][]ProviderModel
 	providerModelsErr error
+	schedules         []Schedule
+	schedulesErr      error
+	scheduleDeleteErr error
 	agents            []Agent
 	listLabels        []string
 	listErr           error
@@ -143,6 +146,19 @@ func (c *fakeExecutionClient) ListProviders(context.Context) ([]Provider, error)
 func (c *fakeExecutionClient) ProviderModels(_ context.Context, provider string) ([]ProviderModel, error) {
 	c.record("provider-models:" + provider)
 	return append([]ProviderModel(nil), c.providerModels[provider]...), c.providerModelsErr
+}
+
+func (c *fakeExecutionClient) ListSchedules(context.Context) ([]Schedule, error) {
+	c.record("list-schedules")
+	return append([]Schedule(nil), c.schedules...), c.schedulesErr
+}
+
+func (c *fakeExecutionClient) DeleteSchedule(_ context.Context, scheduleID string) (ScheduleDeleteResult, error) {
+	c.record("delete-schedule:" + scheduleID)
+	if c.scheduleDeleteErr != nil {
+		return ScheduleDeleteResult{}, c.scheduleDeleteErr
+	}
+	return ScheduleDeleteResult{ID: scheduleID, Status: "deleted"}, nil
 }
 
 func (c *fakeExecutionClient) Run(context.Context, RunRequest) (RunResult, error) {

@@ -63,6 +63,14 @@ func (c *captureExecutionService) ListSessionEvents(context.Context, executionsv
 	return nil, nil
 }
 
+func (c *captureExecutionService) HostSchedules(context.Context, domain.ExecutionHostID) ([]executionsvc.HostSchedule, error) {
+	return nil, nil
+}
+
+func (c *captureExecutionService) DeleteHostSchedule(context.Context, domain.ExecutionHostID, string) error {
+	return nil
+}
+
 func (c *captureExecutionService) ListBindings(context.Context, executionsvc.BindingFilter) ([]domain.ProjectHostBinding, error) {
 	return nil, nil
 }

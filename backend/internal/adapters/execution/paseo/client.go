@@ -93,6 +93,20 @@ func (c *Client) ProviderModels(ctx context.Context, provider string) ([]Provide
 	return runJSON[[]ProviderModel](ctx, c, args, err)
 }
 
+// ListSchedules lists the host's recurring schedules. Heartbeats have no
+// listing in the pinned CLI, so this is deliberately not a statement about
+// them.
+func (c *Client) ListSchedules(ctx context.Context) ([]Schedule, error) {
+	args, err := scheduleListArgs(c.host)
+	return runJSON[[]Schedule](ctx, c, args, err)
+}
+
+// DeleteSchedule deletes one explicitly identified schedule.
+func (c *Client) DeleteSchedule(ctx context.Context, scheduleID string) (ScheduleDeleteResult, error) {
+	args, err := scheduleDeleteArgs(c.host, scheduleID)
+	return runJSON[ScheduleDeleteResult](ctx, c, args, err)
+}
+
 // Inspect returns strict, reconciliation-grade facts for one agent.
 func (c *Client) Inspect(ctx context.Context, agentID string) (AgentDetail, error) {
 	args, err := inspectArgs(c.host, agentID)

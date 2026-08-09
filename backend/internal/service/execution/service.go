@@ -71,6 +71,11 @@ type Service struct {
 	// a question once a human has answered or decided it. Failures stay inside
 	// the hook: a notification is never load-bearing for the decision itself.
 	questionResolved func(ctx context.Context, sessionID domain.SessionID, questionID string)
+	// scheduleReader and scheduleDeleter, when set, read and delete recurring
+	// schedules on one host's daemon. Injected like providerDiscovery: they
+	// talk to the network and this package does not.
+	scheduleReader  func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error)
+	scheduleDeleter func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error
 
 	providerCacheMu sync.Mutex
 	providerCache   map[domain.ExecutionHostID]providerCacheEntry
@@ -221,6 +226,78 @@ func modelIDs(models []domain.ExecutionProviderModel) []string {
 		ids = append(ids, model.ID)
 	}
 	return ids
+}
+
+// SetScheduleChannel installs the network-facing schedule read and delete used
+// by the per-host schedules endpoints.
+func (s *Service) SetScheduleChannel(
+	read func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error),
+	remove func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error,
+) {
+	s.scheduleReader, s.scheduleDeleter = read, remove
+}
+
+// HostSchedule is one schedule row with AO's policy judgement attached.
+type HostSchedule struct {
+	domain.ExecutionHostSchedule
+	// PolicyViolation is true for every row by decision D6: AO owns scheduling
+	// and offers no schedule create, so anything present on an AO-driven host
+	// was created outside AO and is surfaced as a violation to act on, not an
+	// inventory to browse. The flag exists per row so the judgement can narrow
+	// later without changing the shape.
+	PolicyViolation bool
+}
+
+// HostSchedules reads one host's recurring schedules live.
+//
+// The documented blind spot: heartbeats have no listing in the pinned CLI, so
+// an empty result is a statement about schedules only, never about heartbeats.
+func (s *Service) HostSchedules(ctx context.Context, id domain.ExecutionHostID) ([]HostSchedule, error) {
+	host, err := s.scheduleHost(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.scheduleReader(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	schedules := make([]HostSchedule, 0, len(rows))
+	for _, row := range rows {
+		schedules = append(schedules, HostSchedule{ExecutionHostSchedule: row, PolicyViolation: true})
+	}
+	return schedules, nil
+}
+
+// DeleteHostSchedule removes one schedule from one host.
+func (s *Service) DeleteHostSchedule(ctx context.Context, id domain.ExecutionHostID, scheduleID string) error {
+	scheduleID = strings.TrimSpace(scheduleID)
+	if scheduleID == "" {
+		return apierr.Invalid("SCHEDULE_ID_REQUIRED", "scheduleId is required", nil)
+	}
+	host, err := s.scheduleHost(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.scheduleDeleter(ctx, host, scheduleID)
+}
+
+func (s *Service) scheduleHost(ctx context.Context, id domain.ExecutionHostID) (domain.ExecutionHost, error) {
+	id = domain.ExecutionHostID(strings.TrimSpace(string(id)))
+	if id == "" {
+		return domain.ExecutionHost{}, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
+	}
+	host, _, found, err := s.store.GetExecutionHost(ctx, id)
+	if err != nil {
+		return domain.ExecutionHost{}, fmt.Errorf("get execution host %s: %w", id, err)
+	}
+	if !found {
+		return domain.ExecutionHost{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+	}
+	if s.scheduleReader == nil || s.scheduleDeleter == nil {
+		return domain.ExecutionHost{}, apierr.Internal("SCHEDULE_CHANNEL_UNAVAILABLE",
+			"this daemon was started without execution schedule wiring")
+	}
+	return host, nil
 }
 
 // ProbeHost probes one registered host now and returns the refreshed registry

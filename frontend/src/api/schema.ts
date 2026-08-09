@@ -242,6 +242,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/execution/hosts/{hostId}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one host's recurring schedules live; heartbeats have no listing and are not covered */
+        get: operations["listExecutionHostSchedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one schedule on one host */
+        delete: operations["deleteExecutionHostSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/execution/permissions/{questionId}/decision": {
         parameters: {
             query?: never;
@@ -1334,6 +1368,18 @@ export interface components {
             /** @description Provider availability as the host daemon reports it, e.g. available or unavailable. */
             status: string;
         };
+        ControllersExecutionScheduleResponse: {
+            cadence: string;
+            id: string;
+            /** Format: date-time */
+            lastRunAt?: string;
+            name?: string;
+            /** Format: date-time */
+            nextRunAt?: string;
+            policyViolation: boolean;
+            status: string;
+            target?: string;
+        };
         ControllersExecutionSecretEnvelope: {
             /** @description The stored ref, as passed to endpointSecretRef at host registration. */
             ref: string;
@@ -1347,6 +1393,9 @@ export interface components {
         };
         ControllersListExecutionProvidersResponse: {
             providers: components["schemas"]["ControllersExecutionProviderResponse"][];
+        };
+        ControllersListExecutionSchedulesResponse: {
+            schedules: components["schemas"]["ControllersExecutionScheduleResponse"][];
         };
         ControllersListExecutionSecretsResponse: {
             refs: string[];
@@ -2922,6 +2971,142 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ControllersListExecutionProvidersResponse"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listExecutionHostSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Execution host identifier. */
+                hostId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListExecutionSchedulesResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    deleteExecutionHostSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Registered execution host. */
+                hostId: string;
+                /** @description Schedule identifier as the host's daemon reports it. */
+                scheduleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {

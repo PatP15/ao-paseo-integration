@@ -120,6 +120,51 @@ func TestListSessionEventsChecksSessionAndClampsLimit(t *testing.T) {
 	}
 }
 
+func TestHostSchedulesFlagEveryRowAsAPolicyViolation(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+
+	if _, err := svc.HostSchedules(ctx, "ghost"); errCode(t, err) != "HOST_NOT_FOUND" {
+		t.Fatalf("unknown host error = %v", err)
+	}
+	if _, err := svc.RegisterHost(ctx, validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.HostSchedules(ctx, "worker-1"); errCode(t, err) != "SCHEDULE_CHANNEL_UNAVAILABLE" {
+		t.Fatalf("unwired channel error = %v", err)
+	}
+
+	var deleted string
+	svc.SetScheduleChannel(
+		func(_ context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error) {
+			return []domain.ExecutionHostSchedule{
+				{HostID: host.ID, ID: "sch-1", Cadence: "cron:0 3 * * *", Status: "active"},
+			}, nil
+		},
+		func(_ context.Context, _ domain.ExecutionHost, scheduleID string) error {
+			deleted = scheduleID
+			return nil
+		},
+	)
+	schedules, err := svc.HostSchedules(ctx, "worker-1")
+	if err != nil || len(schedules) != 1 {
+		t.Fatalf("HostSchedules = (%#v, %v)", schedules, err)
+	}
+	// D6: AO owns scheduling and offers no create, so anything present was
+	// made outside AO.
+	if !schedules[0].PolicyViolation {
+		t.Fatalf("schedule not flagged: %#v", schedules[0])
+	}
+
+	if err := svc.DeleteHostSchedule(ctx, "worker-1", " sch-1 "); err != nil || deleted != "sch-1" {
+		t.Fatalf("delete = %v, deleted = %q", err, deleted)
+	}
+	if err := svc.DeleteHostSchedule(ctx, "worker-1", " "); errCode(t, err) != "SCHEDULE_ID_REQUIRED" {
+		t.Fatalf("empty schedule id error = %v", err)
+	}
+}
+
 func TestValidateDispatchSettingsRefusesUndiscoveredIDs(t *testing.T) {
 	store := newFakeStore()
 	svc := newTestService(store)

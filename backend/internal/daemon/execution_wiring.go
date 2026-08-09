@@ -230,6 +230,53 @@ func newQuestionNotifier(
 	}
 }
 
+// newScheduleChannel builds the per-host schedule read and delete behind the
+// schedules endpoints, resolving through the shared backends cache and typing
+// failures the same way provider discovery does.
+func newScheduleChannel(backends *executionBackends) (
+	func(context.Context, domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error),
+	func(context.Context, domain.ExecutionHost, string) error,
+) {
+	resolve := func(ctx context.Context, host domain.ExecutionHost) (*paseoexec.Backend, error) {
+		client, ok := backends.client(ctx, host.ID)
+		if !ok {
+			return nil, apierr.Conflict("HOST_UNAVAILABLE",
+				"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
+				nil)
+		}
+		return paseoexec.NewBackend(client, backends.store), nil
+	}
+	typed := func(host domain.ExecutionHost, err error) error {
+		if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
+			return apierr.Conflict("HOST_UNREACHABLE",
+				"host "+string(host.ID)+" did not answer: "+paseoexec.Redact(err.Error()), nil)
+		}
+		return err
+	}
+	read := func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error) {
+		backend, err := resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		schedules, err := backend.Schedules(ctx, host.ID)
+		if err != nil {
+			return nil, typed(host, err)
+		}
+		return schedules, nil
+	}
+	remove := func(ctx context.Context, host domain.ExecutionHost, scheduleID string) error {
+		backend, err := resolve(ctx, host)
+		if err != nil {
+			return err
+		}
+		if err := backend.DeleteSchedule(ctx, host.ID, scheduleID); err != nil {
+			return typed(host, err)
+		}
+		return nil
+	}
+	return read, remove
+}
+
 // newQuestionResolvedHook closes the notification for one answered question.
 func newQuestionResolvedHook(
 	notifications *notify.Manager,

@@ -39,6 +39,23 @@ type fakeExecutionService struct {
 
 	events       []domain.ExecutionEventRecord
 	eventsFilter executionsvc.EventsFilter
+
+	schedules       []executionsvc.HostSchedule
+	deletedSchedule string
+}
+
+func (f *fakeExecutionService) HostSchedules(_ context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error) {
+	f.providersHostID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.schedules, nil
+}
+
+func (f *fakeExecutionService) DeleteHostSchedule(_ context.Context, id domain.ExecutionHostID, scheduleID string) error {
+	f.providersHostID = id
+	f.deletedSchedule = scheduleID
+	return f.err
 }
 
 func (f *fakeExecutionService) ListSessionEvents(_ context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error) {
@@ -213,6 +230,8 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/providers", ""},
 		{http.MethodGet, "/api/v1/sessions/project-1/execution-events", ""},
+		{http.MethodGet, "/api/v1/execution/hosts/worker-1/schedules", ""},
+		{http.MethodDelete, "/api/v1/execution/hosts/worker-1/schedules/sch-1", ""},
 		{http.MethodPost, "/api/v1/execution/dispatch", `{}`},
 		{http.MethodGet, "/api/v1/execution/questions", ""},
 		{http.MethodPost, "/api/v1/execution/questions/q-1/answer", `{}`},
@@ -501,6 +520,44 @@ func TestListSessionExecutionEventsPagesAndSignalsMore(t *testing.T) {
 	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/project-1/execution-events?limit=zero", "")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bad limit status = %d body = %s", resp.StatusCode, body)
+	}
+}
+
+func TestHostScheduleRoutesListAndDelete(t *testing.T) {
+	svc := &fakeExecutionService{schedules: []executionsvc.HostSchedule{{
+		ExecutionHostSchedule: domain.ExecutionHostSchedule{
+			HostID: "worker-1", ID: "sch-1", Name: "nightly",
+			Cadence: "cron:0 3 * * *", Target: "new-agent:claude", Status: "active",
+		},
+		PolicyViolation: true,
+	}}}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/schedules", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d body = %s", resp.StatusCode, body)
+	}
+	var out controllers.ListExecutionSchedulesResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if len(out.Schedules) != 1 || out.Schedules[0].ID != "sch-1" || !out.Schedules[0].PolicyViolation {
+		t.Fatalf("schedules = %#v", out.Schedules)
+	}
+
+	resp, body = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/execution/hosts/worker-1/schedules/sch-1", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d body = %s", resp.StatusCode, body)
+	}
+	if svc.deletedSchedule != "sch-1" {
+		t.Fatalf("service saw schedule %q", svc.deletedSchedule)
+	}
+
+	// An empty list is a valid answer, not an error, and stays [] over the wire.
+	svc.schedules = nil
+	resp, body = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/hosts/worker-1/schedules", "")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"schedules":[]`) {
+		t.Fatalf("empty list = %d %s", resp.StatusCode, body)
 	}
 }
 

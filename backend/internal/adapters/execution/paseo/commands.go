@@ -152,6 +152,26 @@ func providerModelsArgs(host, provider string) ([]string, error) {
 	return append(args, provider, "--json"), nil
 }
 
+func scheduleListArgs(host string) ([]string, error) {
+	args, err := hostArgs([]string{"schedule", "ls"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, "--json"), nil
+}
+
+func scheduleDeleteArgs(host, scheduleID string) ([]string, error) {
+	// The id becomes one argv element; the same argv rules as everywhere else.
+	if scheduleID == "" || strings.ContainsAny(scheduleID, " \t\r\n") || strings.HasPrefix(scheduleID, "-") {
+		return nil, fmt.Errorf("invalid schedule id %q", scheduleID)
+	}
+	args, err := hostArgs([]string{"schedule", "delete"}, host)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, scheduleID, "--json"), nil
+}
+
 func inspectArgs(host, agentID string) ([]string, error) {
 	if agentID == "" {
 		return nil, fmt.Errorf("agent id is required")

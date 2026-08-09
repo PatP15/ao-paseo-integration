@@ -32,6 +32,8 @@ type executionClient interface {
 	Run(context.Context, RunRequest) (RunResult, error)
 	ListProviders(context.Context) ([]Provider, error)
 	ProviderModels(context.Context, string) ([]ProviderModel, error)
+	ListSchedules(context.Context) ([]Schedule, error)
+	DeleteSchedule(context.Context, string) (ScheduleDeleteResult, error)
 	ListAgents(context.Context, string) ([]Agent, error)
 	Inspect(context.Context, string) (AgentDetail, error)
 	Stop(context.Context, string) error

@@ -607,6 +607,112 @@ paths:
       summary: 'List what one host can launch: providers, models, and thinking options'
       tags:
       - execution
+  /api/v1/execution/hosts/{hostId}/schedules:
+    get:
+      operationId: listExecutionHostSchedules
+      parameters:
+      - description: Execution host identifier.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Execution host identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListExecutionSchedulesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List one host's recurring schedules live; heartbeats have no listing
+        and are not covered
+      tags:
+      - execution
+  /api/v1/execution/hosts/{hostId}/schedules/{scheduleId}:
+    delete:
+      operationId: deleteExecutionHostSchedule
+      parameters:
+      - description: Registered execution host.
+        in: path
+        name: hostId
+        required: true
+        schema:
+          description: Registered execution host.
+          type: string
+      - description: Schedule identifier as the host's daemon reports it.
+        in: path
+        name: scheduleId
+        required: true
+        schema:
+          description: Schedule identifier as the host's daemon reports it.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Delete one schedule on one host
+      tags:
+      - execution
   /api/v1/execution/permissions/{questionId}/decision:
     post:
       operationId: decideExecutionPermission
@@ -3842,6 +3948,32 @@ components:
       - modeLabels
       - models
       type: object
+    ControllersExecutionScheduleResponse:
+      properties:
+        cadence:
+          type: string
+        id:
+          type: string
+        lastRunAt:
+          format: date-time
+          type: string
+        name:
+          type: string
+        nextRunAt:
+          format: date-time
+          type: string
+        policyViolation:
+          type: boolean
+        status:
+          type: string
+        target:
+          type: string
+      required:
+      - id
+      - cadence
+      - status
+      - policyViolation
+      type: object
     ControllersExecutionSecretEnvelope:
       properties:
         ref:
@@ -3878,6 +4010,15 @@ components:
           type: array
       required:
       - providers
+      type: object
+    ControllersListExecutionSchedulesResponse:
+      properties:
+        schedules:
+          items:
+            $ref: '#/components/schemas/ControllersExecutionScheduleResponse'
+          type: array
+      required:
+      - schedules
       type: object
     ControllersListExecutionSecretsResponse:
       properties:

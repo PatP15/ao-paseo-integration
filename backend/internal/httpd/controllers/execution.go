@@ -32,6 +32,8 @@ type ExecutionService interface {
 	GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error)
 	HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error)
 	ListSessionEvents(ctx context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error)
+	HostSchedules(ctx context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error)
+	DeleteHostSchedule(ctx context.Context, id domain.ExecutionHostID, scheduleID string) error
 }
 
 // ExecutionDispatcher enqueues one approved work-item attempt. It commits AO's
@@ -78,6 +80,76 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/secrets", c.listSecrets)
 	r.Get("/execution/commands/{commandId}", c.getCommand)
 	r.Get("/sessions/{sessionId}/execution-events", c.listSessionEvents)
+	r.Get("/execution/hosts/{hostId}/schedules", c.listHostSchedules)
+	r.Delete("/execution/hosts/{hostId}/schedules/{scheduleId}", c.deleteHostSchedule)
+}
+
+// ExecutionScheduleIDParams identifies one schedule on one host.
+type ExecutionScheduleIDParams struct {
+	HostID     string `path:"hostId" description:"Registered execution host."`
+	ScheduleID string `path:"scheduleId" description:"Schedule identifier as the host's daemon reports it."`
+}
+
+// ExecutionScheduleResponse is one recurring schedule as the host's daemon
+// reports it, live at request time.
+type ExecutionScheduleResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name,omitempty"`
+	Cadence   string    `json:"cadence"`
+	Target    string    `json:"target,omitempty"`
+	Status    string    `json:"status"`
+	NextRunAt time.Time `json:"nextRunAt,omitempty"`
+	LastRunAt time.Time `json:"lastRunAt,omitempty"`
+	// PolicyViolation is true on every row by decision D6: AO owns scheduling
+	// and offers no schedule create, so anything present on an AO-driven host
+	// was created outside AO.
+	PolicyViolation bool `json:"policyViolation"`
+}
+
+// ListExecutionSchedulesResponse is the body of GET
+// /api/v1/execution/hosts/{hostId}/schedules.
+//
+// The heartbeat blind spot is structural, not an omission: the pinned Paseo
+// CLI has no heartbeat listing, so an empty schedules list proves nothing
+// about heartbeats on the host.
+type ListExecutionSchedulesResponse struct {
+	Schedules []ExecutionScheduleResponse `json:"schedules"`
+}
+
+func (c *ExecutionController) listHostSchedules(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/execution/hosts/{hostId}/schedules")
+		return
+	}
+	schedules, err := c.Svc.HostSchedules(r.Context(), domain.ExecutionHostID(chi.URLParam(r, "hostId")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := make([]ExecutionScheduleResponse, 0, len(schedules))
+	for _, schedule := range schedules {
+		out = append(out, ExecutionScheduleResponse{
+			ID: schedule.ID, Name: schedule.Name, Cadence: schedule.Cadence,
+			Target: schedule.Target, Status: schedule.Status,
+			NextRunAt: schedule.NextRunAt, LastRunAt: schedule.LastRunAt,
+			PolicyViolation: schedule.PolicyViolation,
+		})
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListExecutionSchedulesResponse{Schedules: out})
+}
+
+func (c *ExecutionController) deleteHostSchedule(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodDelete, "/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}")
+		return
+	}
+	err := c.Svc.DeleteHostSchedule(r.Context(),
+		domain.ExecutionHostID(chi.URLParam(r, "hostId")), chi.URLParam(r, "scheduleId"))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ExecutionEventsQuery pages one session's ingested execution events.

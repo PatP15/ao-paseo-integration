@@ -17,9 +17,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -89,7 +91,12 @@ type executionBackends struct {
 	secrets  secretResolver
 	logger   *slog.Logger
 	mu       sync.Mutex
-	byHostID map[domain.ExecutionHostID]*paseoexec.Client
+	byHostID map[domain.ExecutionHostID]cachedExecutionClient
+}
+
+type cachedExecutionClient struct {
+	client      *paseoexec.Client
+	fingerprint [sha256.Size]byte
 }
 
 func newExecutionBackends(store *sqlite.Store, dataDir string, logger *slog.Logger) *executionBackends {
@@ -97,7 +104,7 @@ func newExecutionBackends(store *sqlite.Store, dataDir string, logger *slog.Logg
 		store:    store,
 		secrets:  newSecretResolver(dataDir),
 		logger:   logger,
-		byHostID: make(map[domain.ExecutionHostID]*paseoexec.Client),
+		byHostID: make(map[domain.ExecutionHostID]cachedExecutionClient),
 	}
 }
 
@@ -106,13 +113,6 @@ func newExecutionBackends(store *sqlite.Store, dataDir string, logger *slog.Logg
 // available" rather than cached, so a host that was merely down at startup
 // recovers on a later tick instead of staying broken until a restart.
 func (b *executionBackends) client(ctx context.Context, hostID domain.ExecutionHostID) (*paseoexec.Client, bool) {
-	b.mu.Lock()
-	cached, ok := b.byHostID[hostID]
-	b.mu.Unlock()
-	if ok {
-		return cached, true
-	}
-
 	host, _, found, err := b.store.GetExecutionHost(ctx, hostID)
 	if err != nil || !found {
 		return nil, false
@@ -131,13 +131,20 @@ func (b *executionBackends) client(ctx context.Context, hostID domain.ExecutionH
 		return nil, false
 	}
 
-	endpoint := host.Endpoint
-	if password != "" {
-		// Carry the credential in the endpoint URI rather than the process
-		// environment: PASEO_PASSWORD in AO's own env would be inherited by
-		// every child, and paseo-env.ts strips only five keys.
-		endpoint = fmt.Sprintf("tcp://%s?password=%s", host.Endpoint, password)
+	// A cached client is usable only while the live registry row and resolved
+	// credential still describe the same connection. In particular, disabling
+	// a host, editing its endpoint, or rotating the file behind its secret ref
+	// must take effect without restarting AO. Hashing keeps the credential out
+	// of cache metadata and diagnostics.
+	fingerprint := executionClientFingerprint(host.Endpoint, password)
+	b.mu.Lock()
+	cached, ok := b.byHostID[hostID]
+	b.mu.Unlock()
+	if ok && cached.fingerprint == fingerprint {
+		return cached.client, true
 	}
+
+	endpoint := executionClientEndpoint(host.Endpoint, password)
 
 	client, err := paseoexec.NewClient(ctx, endpoint, paseoexec.CLIRunner{Timeout: 30 * time.Second})
 	if err != nil {
@@ -147,9 +154,23 @@ func (b *executionBackends) client(ctx context.Context, hostID domain.ExecutionH
 	}
 
 	b.mu.Lock()
-	b.byHostID[hostID] = client
+	b.byHostID[hostID] = cachedExecutionClient{client: client, fingerprint: fingerprint}
 	b.mu.Unlock()
 	return client, true
+}
+
+func executionClientFingerprint(endpoint, password string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(endpoint + "\x00" + password))
+}
+
+func executionClientEndpoint(endpoint, password string) string {
+	if password == "" {
+		return endpoint
+	}
+	// Carry the credential in the endpoint URI rather than the process
+	// environment: PASEO_PASSWORD in AO's own env would be inherited by every
+	// child. Query encoding is required for passwords containing &, #, +, or %.
+	return "tcp://" + endpoint + "?" + url.Values{"password": {password}}.Encode()
 }
 
 // ResolveExecutionObserver implements paseoobserve.ObserverResolver.

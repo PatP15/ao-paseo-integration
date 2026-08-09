@@ -43,24 +43,35 @@ func DefaultPrefsPath() (string, error) {
 // frontmatter name (falling back to the directory name) and its description is
 // the frontmatter description.
 func MaintainInventory(skillsDir, nonce string, out io.Writer) error {
-	entries, err := os.ReadDir(skillsDir)
+	root, err := openDirectoryRoot(skillsDir)
 	if os.IsNotExist(err) {
-		entries = nil
-	} else if err != nil {
+		return paseoevent.WriteMaintenanceEvent(out, nonce, 1, paseoevent.MaintenanceDone,
+			paseoevent.MaintenanceDonePayload{Home: homeDir()})
+	}
+	if err != nil {
+		return emitMaintenanceError(out, nonce, fmt.Sprintf("read skills directory: %v", err))
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := root.Open(".")
+	if err != nil {
+		return emitMaintenanceError(out, nonce, fmt.Sprintf("read skills directory: %v", err))
+	}
+	dirEntries, err := entries.ReadDir(-1)
+	_ = entries.Close()
+	if err != nil {
 		return emitMaintenanceError(out, nonce, fmt.Sprintf("read skills directory: %v", err))
 	}
 	seq := 0
 	count := 0
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
+	names := make([]string, 0, len(dirEntries))
+	for _, entry := range dirEntries {
 		if entry.IsDir() {
 			names = append(names, entry.Name())
 		}
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		manifest := filepath.Join(skillsDir, name, "SKILL.md")
-		raw, err := os.ReadFile(manifest)
+		raw, err := readRegularRootFile(root, filepath.Join(name, "SKILL.md"), paseoevent.MaxPrefsFileBytes)
 		if err != nil {
 			continue // a directory without a manifest is not a skill
 		}
@@ -239,6 +250,74 @@ func readPrefs(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("preferences file is over the %d byte cap", paseoevent.MaxPrefsFileBytes)
 	}
 	return content, true, nil
+}
+
+// openDirectoryRoot pins a directory by handle without accepting a symlink at
+// the selected root. os.Root contains every later traversal, while the
+// lstat/open comparison prevents a path swap from silently selecting a
+// different directory between validation and use.
+func openDirectoryRoot(path string) (*os.Root, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", path)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := root.Stat(".")
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	if !openedInfo.IsDir() || !os.SameFile(info, openedInfo) {
+		_ = root.Close()
+		return nil, fmt.Errorf("%s changed while opening or is not a directory", path)
+	}
+	return root, nil
+}
+
+// readRegularRootFile refuses symlinks and pins the selected inode before any
+// bytes are read. The root prevents a concurrent replacement from escaping
+// the chosen directory even after a caller has completed a directory walk.
+func readRegularRootFile(root *os.Root, name string, maxBytes int64) ([]byte, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	if maxBytes > 0 && info.Size() > maxBytes {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d byte cap", name, info.Size(), maxBytes)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, fmt.Errorf("%s changed while opening or is not a regular file", name)
+	}
+	reader := io.Reader(file)
+	if maxBytes > 0 {
+		reader = io.LimitReader(file, maxBytes+1)
+	}
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes > 0 && int64(len(content)) > maxBytes {
+		return nil, fmt.Errorf("%s is over the %d byte cap", name, maxBytes)
+	}
+	return content, nil
 }
 
 func sha256Hex(content []byte) string {

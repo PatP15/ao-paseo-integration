@@ -79,6 +79,34 @@ func TestMaintainInventoryOnAMissingDirectoryIsEmptyNotAnError(t *testing.T) {
 	}
 }
 
+func TestMaintainInventoryDoesNotFollowSymlinkedManifest(t *testing.T) {
+	skillsDir := t.TempDir()
+	skillDir := filepath.Join(skillsDir, "linked")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	secret := "---\nname: leaked-secret\ndescription: must-not-leave-root\n---\n"
+	if err := os.WriteFile(outside, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := MaintainInventory(skillsDir, testNonce, &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err != nil || result.Done == nil || result.Done.Count != 0 || len(result.Skills) != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if strings.Contains(out.String(), "leaked-secret") || strings.Contains(out.String(), "must-not-leave-root") {
+		t.Fatal("symlinked manifest metadata escaped the skills directory")
+	}
+}
+
 func sha256HexBytes(content []byte) string {
 	digest := sha256.Sum256(content)
 	return hex.EncodeToString(digest[:])

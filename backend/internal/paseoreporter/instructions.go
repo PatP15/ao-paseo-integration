@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,18 +171,19 @@ func MaintainSkillRead(skillsDir, name, nonce string, out io.Writer) error {
 	if err := validateBareName(name); err != nil {
 		return emitMaintenanceError(out, nonce, err.Error())
 	}
-	root := filepath.Join(skillsDir, name)
+	rootPath := filepath.Join(skillsDir, name)
+	root, err := openDirectoryRoot(rootPath)
+	if err != nil {
+		return emitMaintenanceError(out, nonce, fmt.Sprintf("read skill %s: %v", name, err))
+	}
+	defer func() { _ = root.Close() }()
 	var paths []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			relative, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-			return fmt.Errorf("skill %s contains symbolic link %q", name, filepath.ToSlash(relative))
+			return fmt.Errorf("skill %s contains symbolic link %q", name, filepath.ToSlash(path))
 		}
 		if !entry.IsDir() && entry.Type().IsRegular() {
 			paths = append(paths, path)
@@ -195,16 +197,12 @@ func MaintainSkillRead(skillsDir, name, nonce string, out io.Writer) error {
 	seq := 1
 	count := 0
 	for _, path := range paths {
-		content, err := os.ReadFile(path)
+		content, err := readRegularRootFile(root, path, 0)
 		if err != nil {
 			return emitMaintenanceError(out, nonce, fmt.Sprintf("read skill file: %v", err))
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return emitMaintenanceError(out, nonce, err.Error())
-		}
 		lines, next, err := paseoevent.EncodeFileChunkEvents(nonce, paseoevent.MaintenanceSkillFile,
-			filepath.ToSlash(relative), content, seq)
+			filepath.ToSlash(path), content, seq)
 		if err != nil {
 			return err
 		}

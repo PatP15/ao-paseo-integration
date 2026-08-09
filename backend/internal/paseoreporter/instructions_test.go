@@ -237,6 +237,30 @@ func TestMaintainSkillReadRefusesSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestMaintainSkillReadRefusesSymlinkedSkillRoot(t *testing.T) {
+	skillsDir := t.TempDir()
+	outside := t.TempDir()
+	secret := []byte("must-not-leave-root")
+	if err := os.WriteFile(filepath.Join(outside, "SKILL.md"), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(skillsDir, "advisor")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := MaintainSkillRead(skillsDir, "advisor", testNonce, &out); err != nil {
+		t.Fatal(err)
+	}
+	result := parseRun(t, &out)
+	if result.Err == nil || !strings.Contains(result.Err.Message, "not a directory") {
+		t.Fatalf("skill read result = %+v", result)
+	}
+	if bytes.Contains(out.Bytes(), secret) {
+		t.Fatal("symlinked skill root content escaped the skills directory")
+	}
+}
+
 func TestMaintainSkillPushRefusesSymlinkedStage(t *testing.T) {
 	skillsDir := t.TempDir()
 	outside := t.TempDir()

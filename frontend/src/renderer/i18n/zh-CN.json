@@ -626,6 +626,7 @@
 	"settings.computers.sheet.endpointHint": "worker 上 Paseo 守护进程的主机和端口。切勿在此粘贴密码。",
 	"settings.computers.sheet.endpointPlaceholder": "worker.example.ts.net:6780",
 	"settings.computers.sheet.id": "计算机 ID",
+	"settings.computers.sheet.idTaken": "计算机 ID“{{id}}”已被注册。再次添加会替换该计算机的连接与凭据。请换一个 ID，或直接编辑已有的计算机。",
 	"settings.computers.sheet.maxSessions": "最大会话数",
 	"settings.computers.sheet.name": "显示名称",
 	"settings.computers.sheet.next": "下一步",

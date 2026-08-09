@@ -626,6 +626,7 @@
 	"settings.computers.sheet.endpointHint": "Host and port of the worker's Paseo daemon. Never paste a password here.",
 	"settings.computers.sheet.endpointPlaceholder": "worker.example.ts.net:6780",
 	"settings.computers.sheet.id": "Computer ID",
+	"settings.computers.sheet.idTaken": "The computer ID \"{{id}}\" is already registered. Adding it again would replace that computer's connection and credential. Choose a different ID, or edit the existing computer.",
 	"settings.computers.sheet.maxSessions": "Max sessions",
 	"settings.computers.sheet.name": "Display name",
 	"settings.computers.sheet.next": "Next",

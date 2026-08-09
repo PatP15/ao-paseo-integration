@@ -1,10 +1,14 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
-import { type ExecutionHost, executionHostsQueryKey } from "../../hooks/useExecutionHostsQuery";
+import {
+	type ExecutionHost,
+	executionHostsQueryKey,
+	executionHostsQueryOptions,
+} from "../../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { transportLabel, trustZoneLabel } from "./ComputersSection";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
@@ -86,6 +90,7 @@ export function ComputerSheet({
 	const [step, setStep] = useState<Step>("connection");
 	const [form, setForm] = useState<FormState>(emptyForm);
 	const [probeOutcome, setProbeOutcome] = useState<string | null>(null);
+	const hostsQuery = useQuery({ ...executionHostsQueryOptions, enabled: open });
 
 	useEffect(() => {
 		if (open) {
@@ -95,8 +100,18 @@ export function ComputerSheet({
 		}
 	}, [open, host]);
 
+	// Registration is an upsert on the id, and the id is derived from the
+	// endpoint's host part — so two daemons on one machine slug to the same id.
+	// Adding under a taken id would replace that computer's whole registration,
+	// rotate the credential every binding still uses, and silently repoint its
+	// sessions at a different endpoint. There is no host delete to undo it.
+	const idTaken = !editing && (hostsQuery.data ?? []).some((entry) => entry.id === form.id.trim());
+
 	const saveMutation = useMutation({
 		mutationFn: async () => {
+			// Rechecked here too: the review step is reached before this list can
+			// refresh, and the secret write below is not undoable.
+			if (idTaken) throw new Error(t("settings.computers.sheet.idTaken", { id: form.id.trim() }));
 			let secretRef = editing ? host.endpointSecretRef : "";
 			if (form.password !== "") {
 				const name = `host-${form.id}-password`;
@@ -151,7 +166,8 @@ export function ComputerSheet({
 	});
 
 	const isBusy = saveMutation.isPending;
-	const connectionValid = form.id.trim() !== "" && form.endpoint.includes(":") && !/\s/.test(form.endpoint.trim());
+	const connectionValid =
+		form.id.trim() !== "" && !idTaken && form.endpoint.includes(":") && !/\s/.test(form.endpoint.trim());
 	const maxSessionsValue = Number.parseInt(form.maxSessions, 10);
 	const detailsValid =
 		form.name.trim() !== "" &&
@@ -240,7 +256,13 @@ export function ComputerSheet({
 										value={form.id}
 										onChange={(e) => setForm((f) => ({ ...f, id: slugify(e.target.value), idTouched: true }))}
 										disabled={editing}
+										aria-invalid={idTaken || undefined}
 									/>
+									{idTaken ? (
+										<p className="text-xs text-error" role="alert">
+											{t("settings.computers.sheet.idTaken", { id: form.id.trim() })}
+										</p>
+									) : null}
 								</div>
 								<div className={field}>
 									<label className={labelClass} htmlFor="computerPassword">
@@ -284,9 +306,7 @@ export function ComputerSheet({
 												value,
 												label: transportLabel(value, t),
 											}))}
-											onChange={(value) =>
-												setForm((f) => ({ ...f, transport: value as FormState["transport"] }))
-											}
+											onChange={(value) => setForm((f) => ({ ...f, transport: value as FormState["transport"] }))}
 											aria-label={t("settings.computers.sheet.transportLabel")}
 										/>
 									</div>
@@ -298,9 +318,7 @@ export function ComputerSheet({
 												value,
 												label: trustZoneLabel(value, t),
 											}))}
-											onChange={(value) =>
-												setForm((f) => ({ ...f, trustZone: value as FormState["trustZone"] }))
-											}
+											onChange={(value) => setForm((f) => ({ ...f, trustZone: value as FormState["trustZone"] }))}
 											aria-label={t("settings.computers.sheet.trustZoneLabel")}
 										/>
 									</div>

@@ -73,6 +73,66 @@ func TestHostProvidersServesFromABriefCache(t *testing.T) {
 	}
 }
 
+func TestHostProvidersInvalidatesCacheWhenHostConnectionChanges(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	input := validHostInput()
+	if _, err := svc.RegisterHost(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	svc.SetProviderDiscovery(func(_ context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error) {
+		calls++
+		return []domain.ExecutionHostProvider{{Provider: host.Endpoint}}, nil
+	})
+
+	first, err := svc.HostProviders(context.Background(), "worker-1")
+	if err != nil || len(first) != 1 || first[0].Provider != input.Endpoint {
+		t.Fatalf("first discovery = (%#v, %v)", first, err)
+	}
+	input.Endpoint = "replacement.example:6807"
+	input.EndpointSecretRef = "rotated-ref"
+	// Simulate the durable host row after a registry edit. This test double
+	// appends upserts instead of replacing them, unlike SQLite.
+	store.hosts[0].Endpoint = input.Endpoint
+	store.hosts[0].EndpointSecretRef = input.EndpointSecretRef
+	second, err := svc.HostProviders(context.Background(), "worker-1")
+	if err != nil || len(second) != 1 || second[0].Provider != input.Endpoint {
+		t.Fatalf("discovery after host edit = (%#v, %v)", second, err)
+	}
+	if calls != 2 {
+		t.Fatalf("discovery calls after host edit = %d, want 2", calls)
+	}
+}
+
+func TestValidateDispatchSettingsBypassesProviderCache(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	if _, err := svc.RegisterHost(context.Background(), validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	svc.SetProviderDiscovery(func(context.Context, domain.ExecutionHost) ([]domain.ExecutionHostProvider, error) {
+		calls++
+		providers := discoveredProviders()
+		if calls > 1 {
+			providers[0].Models[0].ThinkingOptionIDs = []string{"off"}
+		}
+		return providers, nil
+	})
+	ctx := context.Background()
+	if _, err := svc.HostProviders(ctx, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	err := svc.ValidateDispatchSettings(ctx, "worker-1", "claude", "claude-opus-5", "high")
+	if errCode(t, err) != "THINKING_OPTION_UNKNOWN" {
+		t.Fatalf("validation against changed live vocabulary = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("discovery calls = %d, want cached read plus live validation", calls)
+	}
+}
+
 func TestHostProvidersPassesDiscoveryErrorsThroughTyped(t *testing.T) {
 	store := newFakeStore()
 	svc := newTestService(store)

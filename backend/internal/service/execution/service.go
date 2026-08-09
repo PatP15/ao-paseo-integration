@@ -99,6 +99,21 @@ type Service struct {
 type providerCacheEntry struct {
 	providers []domain.ExecutionHostProvider
 	fetchedAt time.Time
+	host      providerCacheHost
+}
+
+// providerCacheHost is the registry identity whose discovery result was
+// cached. Host IDs are stable across edits, so keying by ID alone can serve a
+// result learned from a different endpoint (or before the host was disabled).
+// Probe timestamps are deliberately excluded: a routine health tick must not
+// evict otherwise valid discovery data.
+type providerCacheHost struct {
+	backendType       domain.ExecutionBackendType
+	endpoint          string
+	endpointSecretRef string
+	enabled           bool
+	serverID          string
+	paseoVersion      string
 }
 
 // providerCacheTTL bounds how stale a served discovery result can be. Each
@@ -145,6 +160,12 @@ func (s *Service) SetProviderDiscovery(discovery func(ctx context.Context, host 
 // brief cache. The discovery function's own errors pass through typed: an
 // unreachable host is a fact the caller can present, not a server fault.
 func (s *Service) HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
+	return s.hostProviders(ctx, id, true)
+}
+
+func (s *Service) hostProviders(
+	ctx context.Context, id domain.ExecutionHostID, allowCache bool,
+) ([]domain.ExecutionHostProvider, error) {
 	id = domain.ExecutionHostID(strings.TrimSpace(string(id)))
 	if id == "" {
 		return nil, apierr.Invalid("HOST_ID_REQUIRED", "hostId is required", nil)
@@ -161,11 +182,14 @@ func (s *Service) HostProviders(ctx context.Context, id domain.ExecutionHostID) 
 			"this daemon was started without execution provider discovery wiring")
 	}
 
-	s.providerCacheMu.Lock()
-	entry, cached := s.providerCache[id]
-	s.providerCacheMu.Unlock()
-	if cached && s.now().Sub(entry.fetchedAt) < providerCacheTTL {
-		return entry.providers, nil
+	cacheHost := providerCacheIdentity(host)
+	if allowCache {
+		s.providerCacheMu.Lock()
+		entry, cached := s.providerCache[id]
+		s.providerCacheMu.Unlock()
+		if cached && entry.host == cacheHost && s.now().Sub(entry.fetchedAt) < providerCacheTTL {
+			return entry.providers, nil
+		}
 	}
 
 	providers, err := s.providerDiscovery(ctx, host)
@@ -176,9 +200,17 @@ func (s *Service) HostProviders(ctx context.Context, id domain.ExecutionHostID) 
 	if s.providerCache == nil {
 		s.providerCache = map[domain.ExecutionHostID]providerCacheEntry{}
 	}
-	s.providerCache[id] = providerCacheEntry{providers: providers, fetchedAt: s.now()}
+	s.providerCache[id] = providerCacheEntry{providers: providers, fetchedAt: s.now(), host: cacheHost}
 	s.providerCacheMu.Unlock()
 	return providers, nil
+}
+
+func providerCacheIdentity(host domain.ExecutionHost) providerCacheHost {
+	return providerCacheHost{
+		backendType: host.BackendType, endpoint: host.Endpoint,
+		endpointSecretRef: host.EndpointSecretRef, enabled: host.Enabled,
+		serverID: host.ServerID, paseoVersion: host.PaseoVersion,
+	}
 }
 
 // ValidateDispatchSettings checks a thinking-option id against what discovery
@@ -186,7 +218,10 @@ func (s *Service) HostProviders(ctx context.Context, id domain.ExecutionHostID) 
 // discovery did not return, naming the valid set so the caller can correct the
 // request rather than guess.
 func (s *Service) ValidateDispatchSettings(ctx context.Context, hostID domain.ExecutionHostID, provider, model, thinkingOptionID string) error {
-	providers, err := s.HostProviders(ctx, hostID)
+	// Dispatch is a write boundary, so its validation must be live. The brief
+	// UI cache is intentionally insufficient here: provider availability,
+	// models, and mode vocabularies can change while a dialog is open.
+	providers, err := s.hostProviders(ctx, hostID, false)
 	if err != nil {
 		return err
 	}

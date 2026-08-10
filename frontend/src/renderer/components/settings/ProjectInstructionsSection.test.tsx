@@ -18,6 +18,8 @@ vi.mock("../../lib/api-client", () => ({
 		GET: (...args: unknown[]) => getMock(...args),
 		POST: (...args: unknown[]) => postMock(...args),
 	},
+	apiErrorWithoutCode: (message: string, code: string | undefined) =>
+		code && message.endsWith(`(${code})`) ? message.slice(0, -(code.length + 2)).trim() : message,
 	apiErrorCode: (error: unknown) =>
 		typeof error === "object" && error !== null ? ((error as { code?: string }).code ?? undefined) : undefined,
 	apiErrorMessage: (error: unknown) => {

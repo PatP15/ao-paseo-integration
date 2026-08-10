@@ -4,7 +4,7 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
 import { useExecutionHostName } from "../../hooks/useExecutionHostsQuery";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage, apiErrorWithoutCode } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import { PendingLine } from "../PendingLine";
 import { SettingsDetailRow } from "./SettingsRow";
@@ -190,9 +190,9 @@ function SyncFailureNote({ failure }: { failure: { hostId: string; code?: string
 	const { t } = useTranslation();
 	const hostName = useExecutionHostName(failure.hostId);
 	const { code, detail } = failure;
-	// `apiErrorMessage` staples "(CODE)" on for surfaces with nowhere else to put
-	// it; here the code has already chosen the sentence above.
-	const transcript = code && detail.endsWith(`(${code})`) ? detail.slice(0, -(code.length + 2)).trim() : detail;
+	// The code has already chosen the sentence above, so it does not also belong
+	// on the end of the transcript below.
+	const transcript = apiErrorWithoutCode(detail, code);
 	return (
 		<div className="flex flex-col gap-1 px-1 text-xs" role="alert">
 			<p className="break-words text-error">

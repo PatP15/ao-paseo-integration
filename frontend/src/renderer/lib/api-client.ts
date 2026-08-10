@@ -280,6 +280,20 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+/**
+ * The message with the "(CODE)" suffix `apiErrorMessage` appends taken back off.
+ *
+ * A surface that keeps the daemon's own words as a transcript under a sentence
+ * the code already chose does not want that code repeated at the end of the
+ * transcript: the user gets one plain-language line, then exactly what the other
+ * machine said.
+ */
+export function apiErrorWithoutCode(message: string, code: string | undefined): string {
+	if (!code) return message;
+	const suffix = `(${code})`;
+	return message.endsWith(suffix) ? message.slice(0, -suffix.length).trim() : message;
+}
+
 export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;

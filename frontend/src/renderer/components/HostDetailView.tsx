@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../api/schema";
-import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { executionHostsQueryOptions, useExecutionHostName } from "../hooks/useExecutionHostsQuery";
+import { apiClient, apiErrorCode, apiErrorMessage, apiErrorWithoutCode } from "../lib/api-client";
 import {
 	parseExecutionPreferences,
 	serializeExecutionPreferences,
@@ -454,7 +454,9 @@ export function PreferencesTab({ hostId }: { hostId: string }) {
 	const [loadedHash, setLoadedHash] = useState<string | null>(null);
 	const [parsedPrefs, setParsedPrefs] = useState<ParsedExecutionPreferences | null>(null);
 	const [parseError, setParseError] = useState<string | null>(null);
-	const [saveError, setSaveError] = useState<string | null>(null);
+	// Same typed shape as the Instructions tab: this write carries a base digest
+	// too, so it meets the same drift refusal.
+	const [saveError, setSaveError] = useState<{ code?: string; detail: string } | null>(null);
 	const [savedAt, setSavedAt] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -487,7 +489,11 @@ export function PreferencesTab({ hostId }: { hostId: string }) {
 				params: { path: { hostId } },
 				body: { content, baseSha256: prefs.sha256 },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				throw failure;
+			}
 			return data.prefs;
 		},
 		onSuccess: (confirmed) => {
@@ -499,7 +505,10 @@ export function PreferencesTab({ hostId }: { hostId: string }) {
 		},
 		onError: (error: unknown) => {
 			setSavedAt(null);
-			setSaveError(error instanceof Error ? error.message : t("hostDetail.saveFailed"));
+			setSaveError({
+				code: (error as { code?: string })?.code,
+				detail: error instanceof Error ? error.message : t("hostDetail.saveFailed"),
+			});
 		},
 	});
 
@@ -581,15 +590,72 @@ export function PreferencesTab({ hostId }: { hostId: string }) {
 				{savedAt ? <span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span> : null}
 			</div>
 			{saveError ? (
-				<p className="text-xs text-error" role="alert">
-					{saveError}
-				</p>
+				<HostWriteFailure
+					hostId={hostId}
+					failure={saveError}
+					rereading={inventoryQuery.isFetching}
+					onReread={() => {
+						setSaveError(null);
+						// Same reset as the Instructions tab: the file's values are what the
+						// re-read is for, so let them land even on a digest seen before.
+						setLoadedHash(null);
+						void inventoryQuery.refetch();
+					}}
+				/>
 			) : null}
 		</>
 	);
 }
 
-function InstructionsTab({ hostId }: { hostId: string }) {
+/**
+ * A refused write to a file on another computer, with the re-read it demands.
+ *
+ * Both write tabs send the digest they read (`baseSha256`), so both can be
+ * refused because someone edited that file on the computer in between — which is
+ * the guard working. What reached the user was the channel's own line: `drift:
+ * the file on disk hashes to <64 hex>, not the expected <64 hex>; re-read before
+ * writing (MAINTENANCE_REFUSED)`. Two digests nobody can act on, and an
+ * instruction to do something the tab offered no way to do. The sentence names
+ * the computer and what AO declined to do, the button performs the re-read, and
+ * the digests stay as the transcript underneath.
+ */
+function HostWriteFailure({
+	hostId,
+	failure,
+	rereading,
+	onReread,
+}: {
+	hostId: string;
+	failure: { code?: string; detail: string };
+	rereading: boolean;
+	onReread: () => void;
+}) {
+	const { t } = useTranslation();
+	const hostName = useExecutionHostName(hostId);
+	if (failure.code !== "MAINTENANCE_REFUSED") {
+		// Every other refusal already arrives as an operator-facing sentence.
+		return (
+			<p className="break-words text-xs text-error" role="alert">
+				{failure.detail}
+			</p>
+		);
+	}
+	return (
+		<div className="flex flex-col items-start gap-1.5 text-xs" role="alert">
+			<p className="break-words text-error">{t("hostDetail.saveRefusedDrift", { host: hostName })}</p>
+			<p className="text-caption text-settings-muted">{t("hostDetail.rereadWarning")}</p>
+			<button type="button" className="settings-option-trigger" disabled={rereading} onClick={onReread}>
+				<RefreshCw className={rereading ? "size-icon-base animate-spin" : "size-icon-base"} aria-hidden="true" />
+				{rereading ? t("hostDetail.rereading") : t("hostDetail.reread")}
+			</button>
+			<p className="whitespace-pre-wrap break-words font-mono text-settings-muted">
+				{apiErrorWithoutCode(failure.detail, failure.code)}
+			</p>
+		</div>
+	);
+}
+
+export function InstructionsTab({ hostId }: { hostId: string }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const queryKey = ["execution-instructions", hostId] as const;
@@ -607,7 +673,10 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 	const stored = instructionsQuery.data?.instructions;
 	const [content, setContent] = useState("");
 	const [loadedHash, setLoadedHash] = useState<string | null>(null);
-	const [saveError, setSaveError] = useState<string | null>(null);
+	// The refusal code is kept, not flattened into the message: a save refused
+	// because the file moved under AO needs a different sentence — and a control —
+	// from a save the channel could not deliver at all.
+	const [saveError, setSaveError] = useState<{ code?: string; detail: string } | null>(null);
 	const [savedAt, setSavedAt] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -623,7 +692,11 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 				params: { path: { hostId } },
 				body: { content, baseSha256: stored.sha256 },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				throw failure;
+			}
 			return data;
 		},
 		onSuccess: (data) => {
@@ -633,7 +706,10 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 		},
 		onError: (error: unknown) => {
 			setSavedAt(null);
-			setSaveError(error instanceof Error ? error.message : t("hostDetail.saveFailed"));
+			setSaveError({
+				code: (error as { code?: string })?.code,
+				detail: error instanceof Error ? error.message : t("hostDetail.saveFailed"),
+			});
 		},
 	});
 
@@ -669,10 +745,25 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 				</button>
 				{savedAt ? <span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span> : null}
 			</div>
+			{/* The primary disables itself on an empty file, so it says why rather
+			    than going quiet: the write would be refused, and removing the file
+			    is not something AO does from here. */}
+			{content.trim() === "" ? (
+				<p className="text-caption text-settings-muted">{t("hostDetail.saveBlockedEmpty")}</p>
+			) : null}
 			{saveError ? (
-				<p className="text-xs text-error" role="alert">
-					{saveError}
-				</p>
+				<HostWriteFailure
+					hostId={hostId}
+					failure={saveError}
+					rereading={instructionsQuery.isFetching}
+					onReread={() => {
+						setSaveError(null);
+						// Clearing the loaded digest lets the read that comes back replace
+						// the editor even if this tab has shown that digest before.
+						setLoadedHash(null);
+						void instructionsQuery.refetch();
+					}}
+				/>
 			) : null}
 		</>
 	);

@@ -18,6 +18,7 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { CenterPanelShell } from "./CenterPanelShell";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
+import { Badge } from "./ui/badge";
 
 type Inventory = components["schemas"]["ControllersExecutionHostInventoryResponse"];
 type Providers = components["schemas"]["ControllersListExecutionProvidersResponse"];
@@ -75,9 +76,7 @@ export function HostDetailView({ hostId }: { hostId: string }) {
 							key={candidate}
 							type="button"
 							className={
-								candidate === tab
-									? "settings-option-trigger bg-settings-menu-selected"
-									: "settings-option-trigger"
+								candidate === tab ? "settings-option-trigger bg-settings-menu-selected" : "settings-option-trigger"
 							}
 							aria-current={candidate === tab ? "page" : undefined}
 							onClick={() => setTab(candidate)}
@@ -154,9 +153,7 @@ function OverviewTab({ hostId }: { hostId: string }) {
 				</button>
 				{probeMutation.isError ? (
 					<span className="text-xs text-error">
-						{probeMutation.error instanceof Error
-							? probeMutation.error.message
-							: t("settings.computers.probeFailed")}
+						{probeMutation.error instanceof Error ? probeMutation.error.message : t("settings.computers.probeFailed")}
 					</span>
 				) : null}
 			</div>
@@ -267,18 +264,13 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 					disabled={refreshing}
 					onClick={() => refreshMutation.mutate()}
 				>
-					<RefreshCw
-						className={refreshing ? "size-icon-base animate-spin" : "size-icon-base"}
-						aria-hidden="true"
-					/>
+					<RefreshCw className={refreshing ? "size-icon-base animate-spin" : "size-icon-base"} aria-hidden="true" />
 					{refreshing ? t("hostDetail.refreshing") : t("hostDetail.refresh")}
 				</button>
 			</div>
 			{refreshMutation.isError ? (
 				<p className="text-xs text-error" role="alert">
-					{refreshMutation.error instanceof Error
-						? refreshMutation.error.message
-						: t("hostDetail.refreshFailed")}
+					{refreshMutation.error instanceof Error ? refreshMutation.error.message : t("hostDetail.refreshFailed")}
 				</p>
 			) : null}
 			{inventoryQuery.isLoading ? (
@@ -295,17 +287,12 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 						<div className="flex items-center gap-2">
 							<span className="text-sm font-medium text-settings-label">{skill.name}</span>
 							{skill.policyGated ? (
-								<span
-									className="rounded-full border border-(--color-border-settings-input) px-2 py-0.5 text-[11px] text-warning"
-									title={t("hostDetail.gatedTooltip")}
-								>
+								<Badge variant="warning" className="text-caption" title={t("hostDetail.gatedTooltip")}>
 									{t("hostDetail.gatedBadge")}
-								</span>
+								</Badge>
 							) : null}
 						</div>
-						{skill.description ? (
-							<p className="mt-0.5 text-xs text-settings-muted">{skill.description}</p>
-						) : null}
+						{skill.description ? <p className="mt-0.5 text-xs text-settings-muted">{skill.description}</p> : null}
 					</div>
 				))
 			)}
@@ -504,9 +491,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 								label: catalog.includes(entry) ? entry : t("hostDetail.roleStale", { value: entry }),
 							}))}
 							onChange={(value) => setRoles((existing) => ({ ...existing, [role]: value }))}
-							placeholder={
-								providersQuery.isFetching ? t("dispatch.discovering") : t("hostDetail.roleUnset")
-							}
+							placeholder={providersQuery.isFetching ? t("dispatch.discovering") : t("hostDetail.roleUnset")}
 							disabled={catalog.length === 0}
 							aria-label={role}
 						/>
@@ -534,9 +519,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 				>
 					{saveMutation.isPending ? t("hostDetail.saving") : t("hostDetail.save")}
 				</button>
-				{savedAt ? (
-					<span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span>
-				) : null}
+				{savedAt ? <span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span> : null}
 			</div>
 			{saveError ? (
 				<p className="text-xs text-error" role="alert">
@@ -601,9 +584,7 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 	if (instructionsQuery.isError) {
 		return (
 			<p className="text-sm text-error">
-				{instructionsQuery.error instanceof Error
-					? instructionsQuery.error.message
-					: t("hostDetail.loadFailed")}
+				{instructionsQuery.error instanceof Error ? instructionsQuery.error.message : t("hostDetail.loadFailed")}
 			</p>
 		);
 	}
@@ -627,9 +608,7 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 				>
 					{saveMutation.isPending ? t("hostDetail.saving") : t("hostDetail.save")}
 				</button>
-				{savedAt ? (
-					<span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span>
-				) : null}
+				{savedAt ? <span className="text-xs text-(--color-success)">{t("hostDetail.savedConfirmed")}</span> : null}
 			</div>
 			{saveError ? (
 				<p className="text-xs text-error" role="alert">
@@ -687,16 +666,11 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 					<div key={schedule.id} className={`${rowClass} flex items-center justify-between gap-3`}>
 						<div className="min-w-0">
 							<div className="flex items-center gap-2">
-								<span className="truncate text-sm font-medium text-settings-label">
-									{schedule.name || schedule.id}
-								</span>
+								<span className="truncate text-sm font-medium text-settings-label">{schedule.name || schedule.id}</span>
 								{schedule.policyViolation ? (
-									<span
-										className="rounded-full border border-(--color-error)/40 px-2 py-0.5 text-[11px] text-error"
-										title={t("hostDetail.violationTooltip")}
-									>
+									<Badge variant="error" className="text-caption" title={t("hostDetail.violationTooltip")}>
 										{t("hostDetail.violationBadge")}
-									</span>
+									</Badge>
 								) : null}
 							</div>
 							<p className="mt-0.5 truncate font-mono text-xs text-settings-muted">

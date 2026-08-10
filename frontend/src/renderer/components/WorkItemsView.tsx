@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { ArrowLeft, Check, Plus, Rocket, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ComponentProps, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../api/schema";
@@ -9,6 +9,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { CenterPanelShell } from "./CenterPanelShell";
 import { DispatchWorkItemDialog } from "./DispatchWorkItemDialog";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
+import { Badge } from "./ui/badge";
 import {
 	Dialog,
 	DialogContent,
@@ -25,7 +26,6 @@ type WorkItem = components["schemas"]["WorkItemResponse"];
 export function workItemsQueryKey(projectId: string) {
 	return ["work-items", projectId] as const;
 }
-
 
 function approvalLabel(item: WorkItem, t: TFunction): string {
 	switch (item.approvalState) {
@@ -57,14 +57,16 @@ function lifecycleLabel(item: WorkItem, t: TFunction): string {
 	}
 }
 
-function approvalTone(state: WorkItem["approvalState"]): string {
+// Badge already owns these tones (success/error/outline); the pill only has to
+// pick one, not restate the border and text colours.
+function approvalVariant(state: WorkItem["approvalState"]): ComponentProps<typeof Badge>["variant"] {
 	switch (state) {
 		case "approved":
-			return "text-(--color-success) border-(--color-success)/40";
+			return "success";
 		case "rejected":
-			return "text-error border-(--color-error)/40";
+			return "error";
 		default:
-			return "text-settings-muted border-(--color-border-settings-input)";
+			return "outline";
 	}
 }
 
@@ -154,16 +156,14 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 												<p className="mt-0.5 line-clamp-2 text-xs text-settings-muted">{item.body}</p>
 											) : null}
 											<div className="mt-1.5 flex items-center gap-1.5">
-												<span
-													className={`rounded-full border px-2 py-0.5 text-[11px] ${approvalTone(item.approvalState)}`}
-												>
+												<Badge variant={approvalVariant(item.approvalState)} className="text-caption">
 													{approvalLabel(item, t)}
-												</span>
-												<span className="rounded-full border border-(--color-border-settings-input) px-2 py-0.5 text-[11px] text-settings-muted">
+												</Badge>
+												<Badge variant="outline" className="text-caption text-settings-muted">
 													{lifecycleLabel(item, t)}
-												</span>
+												</Badge>
 												{item.approvedBy ? (
-													<span className="text-[11px] text-settings-muted">
+													<span className="text-caption text-settings-muted">
 														{t("workItems.decidedBy", { name: item.approvedBy })}
 													</span>
 												) : null}
@@ -298,9 +298,7 @@ function CreateWorkItemDialog({
 					</div>
 					{createMutation.isError ? (
 						<p className="text-xs text-error" role="alert">
-							{createMutation.error instanceof Error
-								? createMutation.error.message
-								: t("workItems.createFailed")}
+							{createMutation.error instanceof Error ? createMutation.error.message : t("workItems.createFailed")}
 						</p>
 					) : null}
 					<div className={settingsDialogFooterClass}>

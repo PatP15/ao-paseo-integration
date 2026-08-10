@@ -32,6 +32,32 @@ describe("ExecutionQuestionActions", () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
 	});
 
+	// The two answer chips are the quickest way to settle a question, and they
+	// used to render as bare muted words in the middle of the notification body —
+	// indistinguishable from the question text above them.
+	it("renders the answer options as pressable chips", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				questions: [
+					{
+						id: "q-1",
+						sessionId: "sess-1",
+						source: "agent_event",
+						externalId: "evt-1",
+						question: "Rebase or merge?",
+						recommendation: "rebase",
+						options: ["rebase", "merge"],
+						createdAt: "2026-08-09T00:00:00Z",
+					},
+				],
+			},
+			error: undefined,
+		});
+		renderActions("q-1");
+		const chip = await screen.findByRole("button", { name: /merge/ });
+		expect(chip.className).toContain("settings-chip-button");
+	});
+
 	it("answers an agent question with a clicked option", async () => {
 		getMock.mockResolvedValue({
 			data: {

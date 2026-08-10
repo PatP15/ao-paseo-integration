@@ -498,7 +498,9 @@ export function DispatchWorkItemDialog({
 										<button
 											key={skill.name}
 											type="button"
-											className="settings-option-trigger"
+											// Same reasoning as the question chips: a set of values
+											// offered in a body area has to read as pressable.
+											className="settings-chip-button"
 											title={skill.description || skill.name}
 											onClick={() => insertSkill(skill)}
 										>
@@ -514,7 +516,9 @@ export function DispatchWorkItemDialog({
 										<div className="flex items-center gap-2">
 											<button
 												type="button"
-												className="settings-option-trigger"
+												// A decision pair inside a warning box: pressable, and
+												// neither one dressed as the recommended way out.
+												className="settings-chip-button"
 												onClick={() => {
 													setOverrides((current) => [...current, pendingGate]);
 													const skill = skills.find((entry) => entry.name === pendingGate);
@@ -523,7 +527,7 @@ export function DispatchWorkItemDialog({
 											>
 												{t("dispatch.gateEnable")}
 											</button>
-											<button type="button" className="settings-option-trigger" onClick={() => setPendingGate(null)}>
+											<button type="button" className="settings-chip-button" onClick={() => setPendingGate(null)}>
 												{t("dispatch.gateCancel")}
 											</button>
 										</div>

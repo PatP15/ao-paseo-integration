@@ -114,7 +114,9 @@ export function ExecutionQuestionActions({ questionId }: { questionId: string })
 								<button
 									key={option}
 									type="button"
-									className="settings-option-trigger"
+									// A choice, not a row action: it needs to look pressable where
+									// it sits, in the middle of the notification's body.
+									className="settings-chip-button"
 									disabled={busy}
 									onClick={() => answerMutation.mutate(option)}
 								>

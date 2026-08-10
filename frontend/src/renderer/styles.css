@@ -720,6 +720,51 @@ button.settings-row-bar {
 	color: var(--color-text-settings-muted);
 }
 
+/*
+ * One value out of a set, offered inside a body area: an answer to an agent's
+ * question, a skill to insert into a dispatch prompt.
+ *
+ * These are not row actions. `settings-option-trigger` carries the app's
+ * borderless inline actions — Edit, Refresh, Test connection — which read as
+ * pressable because they sit right-aligned in a row with an icon. A row of bare
+ * muted words in the middle of a card has none of that context, so a
+ * notification's two answer chips read as metadata next to the question, and the
+ * quickest way to answer looked like text. It borrows the footer button's border
+ * and surface at chip scale so the same set reads as a set of choices.
+ */
+@utility settings-chip-button {
+	display: inline-flex;
+	align-items: center;
+	gap: calc(var(--spacing) * 1.5);
+	max-width: 100%;
+	border-radius: var(--radius-settings-row);
+	border: 1px solid var(--color-border-settings-input);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: var(--space-2);
+	padding-block: var(--space-0_5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-row);
+	outline: none;
+	transition-property: color, background-color, border-color, opacity;
+	transition-duration: var(--duration-fast);
+
+	&:hover:not(:disabled) {
+		background-color: var(--color-bg-settings-menu-selected);
+		color: var(--color-text-settings-title);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	&:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+}
+
 @utility settings-footer-button {
 	display: inline-flex;
 	height: var(--size-settings-action-height);

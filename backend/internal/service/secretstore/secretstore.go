@@ -12,6 +12,7 @@
 package secretstore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,17 +89,53 @@ func (s *Store) Save(in SaveInput) (string, error) {
 		// silently rotate the same ref. The stage and destination share a
 		// directory, so the hard link is on one filesystem. The deferred remove
 		// drops the staging name after the destination is durable.
-		if err := os.Link(tmpPath, path); err != nil {
+		if err := linkFile(tmpPath, path); err != nil {
 			if os.IsExist(err) {
 				return "", apierr.Conflict("SECRET_EXISTS",
 					"secret ref "+name+" already exists; pass replace to rotate it", nil)
 			}
-			return "", fmt.Errorf("commit secret ref %q: %w", name, err)
+			// Not every filesystem implements hard links — exFAT, FAT32 and
+			// several network mounts refuse Link outright — and AO_DATA_DIR may
+			// legitimately point at one. Fall back to the portable exclusive
+			// create, which keeps the property that matters (exactly one create
+			// wins) and only gives up the staged file's crash durability.
+			if fallbackErr := exclusiveCreate(path, value); fallbackErr != nil {
+				if os.IsExist(fallbackErr) {
+					return "", apierr.Conflict("SECRET_EXISTS",
+						"secret ref "+name+" already exists; pass replace to rotate it", nil)
+				}
+				return "", fmt.Errorf("commit secret ref %q: %w", name, errors.Join(err, fallbackErr))
+			}
 		}
 	} else if err := os.Rename(tmpPath, path); err != nil {
 		return "", fmt.Errorf("commit secret ref %q: %w", name, err)
 	}
 	return name, nil
+}
+
+// linkFile is os.Link, indirected so a test can stand in for a filesystem
+// that does not implement hard links.
+var linkFile = os.Link
+
+// exclusiveCreate commits value at path with O_EXCL: the portable no-overwrite
+// create, for filesystems Link is unavailable on. A losing racer gets an
+// os.IsExist error exactly as it would from Link, and a failed write leaves no
+// half-written credential behind the ref.
+func exclusiveCreate(path, value string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(value); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
 }
 
 // List returns the stored ref names, sorted. Never the values.

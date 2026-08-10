@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -114,6 +115,106 @@ func TestSaveConcurrentCreateHasOneWinner(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(filepath.Join(store.dir, "shared")); err != nil || !strings.HasPrefix(string(raw), "value-") {
 		t.Fatalf("winning value = %q, err=%v", raw, err)
+	}
+}
+
+// withoutHardLinks stands in for exFAT, FAT32 and the network mounts that
+// answer link(2) with ENOTSUP. AO_DATA_DIR can point at one of those, and
+// before the fallback existed every secret write there failed with a 500.
+func withoutHardLinks(t *testing.T) {
+	t.Helper()
+	previous := linkFile
+	linkFile = func(string, string) error {
+		return &os.LinkError{Op: "link", Err: syscall.ENOTSUP}
+	}
+	t.Cleanup(func() { linkFile = previous })
+}
+
+func TestSaveCommitsWhereHardLinksAreUnsupported(t *testing.T) {
+	withoutHardLinks(t)
+	dataDir := t.TempDir()
+	store := New(dataDir)
+
+	if _, err := store.Save(SaveInput{Name: "worker-pw", Value: "hunter2"}); err != nil {
+		t.Fatalf("Save without hard links: %v", err)
+	}
+	path := filepath.Join(dataDir, "secrets", "worker-pw")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(raw) != "hunter2" {
+		t.Fatalf("stored %q, want hunter2", raw)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+	// The staging file must not survive the fallback either.
+	entries, err := os.ReadDir(filepath.Join(dataDir, "secrets"))
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("secrets dir holds %d entries, want just the ref", len(entries))
+	}
+}
+
+func TestSaveStillRefusesOverwriteWhereHardLinksAreUnsupported(t *testing.T) {
+	withoutHardLinks(t)
+	store := New(t.TempDir())
+	if _, err := store.Save(SaveInput{Name: "pw", Value: "one"}); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	_, err := store.Save(SaveInput{Name: "pw", Value: "two"})
+	if code := apierrCode(t, err); code != "SECRET_EXISTS" {
+		t.Fatalf("code = %q, want SECRET_EXISTS", code)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(store.dir, "pw"))
+	if readErr != nil {
+		t.Fatalf("read back: %v", readErr)
+	}
+	if string(raw) != "one" {
+		t.Fatalf("refused create rotated the credential to %q", raw)
+	}
+}
+
+func TestSaveConcurrentCreateHasOneWinnerWhereHardLinksAreUnsupported(t *testing.T) {
+	withoutHardLinks(t)
+	store := New(t.TempDir())
+	const writers = 32
+	start := make(chan struct{})
+	results := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(value string) {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(SaveInput{Name: "shared", Value: value})
+			results <- err
+		}(fmt.Sprintf("value-%d", i))
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	succeeded, conflicted := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case apierrCodeValue(err) == "SECRET_EXISTS":
+			conflicted++
+		default:
+			t.Fatalf("concurrent Save returned unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != writers-1 {
+		t.Fatalf("concurrent creates: succeeded=%d conflicted=%d, want 1/%d", succeeded, conflicted, writers-1)
 	}
 }
 

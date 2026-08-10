@@ -199,6 +199,7 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
+	lcStack.autoResumeDone = startAutoResumeWatcher(ctx, store, runtimeAdapter, sessionSvc, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, notificationWriter, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})

@@ -23,6 +23,20 @@ type AuditEvent struct {
 	CreatedAt   string
 }
 
+type AutoResumeSchedule struct {
+	ID         string
+	SessionID  string
+	LaunchID   string
+	Attempt    int64
+	State      string
+	ResumeAt   string
+	ExactReset int64
+	Notice     string
+	Detail     string
+	DetectedAt string
+	UpdatedAt  string
+}
+
 type AutoResumeSetting struct {
 	ID           int64
 	Enabled      int64

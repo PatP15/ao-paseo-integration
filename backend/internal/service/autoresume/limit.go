@@ -47,6 +47,40 @@ func ParseUsageLimit(text string, now time.Time) (UsageLimit, bool) {
 	return UsageLimit{ResetAt: now.Add(domain.AutoResumeFallbackDelay)}, true
 }
 
+// FindUsageLimit scans captured terminal output for a usage-limit notice and
+// returns the limit it read together with the line it read it from.
+//
+// It works line by line, from the bottom, rather than handing the whole capture
+// to ParseUsageLimit: a pane holds forty-odd lines of unrelated text, and any
+// clock in any of them would be read as the reset time. Scanning from the
+// bottom also picks the most recent notice when an agent hit the limit twice.
+//
+// A PTY hard-wraps, so a notice can arrive split across two lines ("Try again
+// at" / "10:46 PM"). When a matched line carries no readable reset time, the
+// next line is appended and the pair re-read; the joined reading is used only
+// when it actually produces one.
+func FindUsageLimit(output string, now time.Time) (UsageLimit, string, bool) {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		notice := normalizeNotice(lines[i])
+		if notice == "" {
+			continue
+		}
+		limit, ok := ParseUsageLimit(notice, now)
+		if !ok {
+			continue
+		}
+		if !limit.Exact && i+1 < len(lines) {
+			joined := normalizeNotice(lines[i] + " " + lines[i+1])
+			if rejoined, ok := ParseUsageLimit(joined, now); ok && rejoined.Exact {
+				return rejoined, joined, true
+			}
+		}
+		return limit, notice, true
+	}
+	return UsageLimit{}, "", false
+}
+
 // ansiRE matches the escape sequences a TUI agent leaves in captured output.
 // The notice usually arrives as a scraped terminal line, coloured red.
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)

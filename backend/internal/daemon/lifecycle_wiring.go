@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	autoresumesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/autoresume"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -39,14 +40,15 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	executionDone <-chan struct{}
-	dispatchDone  <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoResumeDone <-chan struct{}
+	scmDone        <-chan struct{}
+	executionDone  <-chan struct{}
+	dispatchDone   <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -102,6 +104,9 @@ func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
+	}
+	if l.autoResumeDone != nil {
+		<-l.autoResumeDone
 	}
 	if l.dispatchDone != nil {
 		<-l.dispatchDone
@@ -223,6 +228,52 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	return sessionSvc, reviewSvc, mgr, nil
+}
+
+// startAutoResumeWatcher starts the loop that restarts sessions killed by a
+// provider usage limit. It is inert until the operator turns the app-wide
+// toggle on: the first thing every pass does is read the policy.
+//
+// It runs over the routed runtime, so it reads a local pane and a remote
+// terminal through the same call, and delivers through the same two paths a
+// human does — the session runtime locally, the execution outbox remotely.
+func startAutoResumeWatcher(
+	ctx context.Context,
+	store *sqlite.Store,
+	runtime ports.Runtime,
+	sessions *sessionsvc.Service,
+	logger *slog.Logger,
+) <-chan struct{} {
+	watcher := autoresumesvc.NewWatcher(store, store, runtime,
+		autoResumeLocalSender{sessions: sessions, logger: logger},
+		autoresumesvc.WatcherConfig{Logger: logger})
+	return watcher.Start(ctx)
+}
+
+// autoResumeLocalSender delivers an auto-resume to a session running on this
+// machine: relaunch the exited agent, then send the prompt. Those are the two
+// steps a human takes in the UI, in that order and through the same service.
+type autoResumeLocalSender struct {
+	sessions *sessionsvc.Service
+	logger   *slog.Logger
+}
+
+var _ autoresumesvc.LocalResumer = autoResumeLocalSender{}
+
+// Resume relaunches the session's persisted harness session and sends it the
+// resume prompt.
+//
+// The relaunch is best effort by design. Its only consequential failure is one
+// that leaves no agent to type at, and Send reports exactly that; meanwhile a
+// resume that raced a human's own relaunch would be refused here with
+// AGENT_NOT_EXITED even though the session is sitting there ready for the
+// prompt. So the relaunch error is logged and Send decides the outcome.
+func (a autoResumeLocalSender) Resume(ctx context.Context, id domain.SessionID, prompt string) error {
+	if _, err := a.sessions.ResumeAgent(ctx, id); err != nil {
+		a.logger.Debug("auto-resume: agent relaunch declined; sending anyway",
+			"session", id, "err", err)
+	}
+	return a.sessions.Send(ctx, id, prompt)
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

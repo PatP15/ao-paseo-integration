@@ -9,6 +9,40 @@ import (
 	"context"
 )
 
+const cancelPendingAutoResumes = `-- name: CancelPendingAutoResumes :execrows
+UPDATE auto_resume_schedule
+SET state = 'cancelled', detail = ?, updated_at = ?
+WHERE session_id = ? AND state = 'pending'
+`
+
+type CancelPendingAutoResumesParams struct {
+	Detail    string
+	UpdatedAt string
+	SessionID string
+}
+
+func (q *Queries) CancelPendingAutoResumes(ctx context.Context, arg CancelPendingAutoResumesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelPendingAutoResumes, arg.Detail, arg.UpdatedAt, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const countAutoResumes = `-- name: CountAutoResumes :one
+SELECT CAST(COUNT(*) AS INTEGER) AS attempts
+FROM auto_resume_schedule WHERE session_id = ?
+`
+
+// Every row counts against the cap, settled or not: the cap bounds how many
+// times AO acted on one session, and a delivery that failed still spent an act.
+func (q *Queries) CountAutoResumes(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAutoResumes, sessionID)
+	var attempts int64
+	err := row.Scan(&attempts)
+	return attempts, err
+}
+
 const getAutoResumeSettings = `-- name: GetAutoResumeSettings :one
 SELECT enabled, resume_prompt, updated_at FROM auto_resume_settings WHERE id = 1
 `
@@ -24,6 +58,170 @@ func (q *Queries) GetAutoResumeSettings(ctx context.Context) (GetAutoResumeSetti
 	var i GetAutoResumeSettingsRow
 	err := row.Scan(&i.Enabled, &i.ResumePrompt, &i.UpdatedAt)
 	return i, err
+}
+
+const getPendingAutoResume = `-- name: GetPendingAutoResume :one
+SELECT id, session_id, launch_id, attempt, state, resume_at, exact_reset,
+       notice, detail, detected_at, updated_at
+FROM auto_resume_schedule
+WHERE session_id = ? AND state = 'pending'
+`
+
+func (q *Queries) GetPendingAutoResume(ctx context.Context, sessionID string) (AutoResumeSchedule, error) {
+	row := q.db.QueryRowContext(ctx, getPendingAutoResume, sessionID)
+	var i AutoResumeSchedule
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.LaunchID,
+		&i.Attempt,
+		&i.State,
+		&i.ResumeAt,
+		&i.ExactReset,
+		&i.Notice,
+		&i.Detail,
+		&i.DetectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertAutoResume = `-- name: InsertAutoResume :exec
+INSERT INTO auto_resume_schedule (
+    id, session_id, launch_id, attempt, state, resume_at, exact_reset,
+    notice, detail, detected_at, updated_at
+) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?)
+`
+
+type InsertAutoResumeParams struct {
+	ID         string
+	SessionID  string
+	LaunchID   string
+	Attempt    int64
+	ResumeAt   string
+	ExactReset int64
+	Notice     string
+	DetectedAt string
+	UpdatedAt  string
+}
+
+func (q *Queries) InsertAutoResume(ctx context.Context, arg InsertAutoResumeParams) error {
+	_, err := q.db.ExecContext(ctx, insertAutoResume,
+		arg.ID,
+		arg.SessionID,
+		arg.LaunchID,
+		arg.Attempt,
+		arg.ResumeAt,
+		arg.ExactReset,
+		arg.Notice,
+		arg.DetectedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const lastAutoResumeDetectedAt = `-- name: LastAutoResumeDetectedAt :one
+SELECT CAST(COALESCE(MAX(detected_at), '') AS TEXT) AS detected_at
+FROM auto_resume_schedule WHERE session_id = ?
+`
+
+func (q *Queries) LastAutoResumeDetectedAt(ctx context.Context, sessionID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, lastAutoResumeDetectedAt, sessionID)
+	var detected_at string
+	err := row.Scan(&detected_at)
+	return detected_at, err
+}
+
+const listDueAutoResumes = `-- name: ListDueAutoResumes :many
+SELECT id, session_id, launch_id, attempt, state, resume_at, exact_reset,
+       notice, detail, detected_at, updated_at
+FROM auto_resume_schedule
+WHERE state = 'pending' AND resume_at <= ?
+ORDER BY resume_at, id
+LIMIT ?
+`
+
+type ListDueAutoResumesParams struct {
+	ResumeAt string
+	Limit    int64
+}
+
+func (q *Queries) ListDueAutoResumes(ctx context.Context, arg ListDueAutoResumesParams) ([]AutoResumeSchedule, error) {
+	rows, err := q.db.QueryContext(ctx, listDueAutoResumes, arg.ResumeAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AutoResumeSchedule{}
+	for rows.Next() {
+		var i AutoResumeSchedule
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.LaunchID,
+			&i.Attempt,
+			&i.State,
+			&i.ResumeAt,
+			&i.ExactReset,
+			&i.Notice,
+			&i.Detail,
+			&i.DetectedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingAutoResumes = `-- name: ListPendingAutoResumes :many
+SELECT id, session_id, launch_id, attempt, state, resume_at, exact_reset,
+       notice, detail, detected_at, updated_at
+FROM auto_resume_schedule
+WHERE state = 'pending'
+ORDER BY resume_at, id
+`
+
+func (q *Queries) ListPendingAutoResumes(ctx context.Context) ([]AutoResumeSchedule, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingAutoResumes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AutoResumeSchedule{}
+	for rows.Next() {
+		var i AutoResumeSchedule
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.LaunchID,
+			&i.Attempt,
+			&i.State,
+			&i.ResumeAt,
+			&i.ExactReset,
+			&i.Notice,
+			&i.Detail,
+			&i.DetectedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const putAutoResumeSettings = `-- name: PutAutoResumeSettings :execrows
@@ -42,6 +240,34 @@ type PutAutoResumeSettingsParams struct {
 // INSERT ... ON CONFLICT here would be dead code that hid a missing row.
 func (q *Queries) PutAutoResumeSettings(ctx context.Context, arg PutAutoResumeSettingsParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, putAutoResumeSettings, arg.Enabled, arg.ResumePrompt, arg.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const settleAutoResume = `-- name: SettleAutoResume :execrows
+UPDATE auto_resume_schedule
+SET state = ?, detail = ?, updated_at = ?
+WHERE id = ? AND state = 'pending'
+`
+
+type SettleAutoResumeParams struct {
+	State     string
+	Detail    string
+	UpdatedAt string
+	ID        string
+}
+
+// The state guard is what makes settling idempotent: a row another tick already
+// resolved is left alone rather than overwritten with a second verdict.
+func (q *Queries) SettleAutoResume(ctx context.Context, arg SettleAutoResumeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, settleAutoResume,
+		arg.State,
+		arg.Detail,
+		arg.UpdatedAt,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}

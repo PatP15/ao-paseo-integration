@@ -1,6 +1,6 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Monitor } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
@@ -29,6 +29,27 @@ export async function fetchExecutionEvents(sessionId: string, known: ExecutionEv
 		if (!data.nextAfter) return events;
 		after = data.nextAfter;
 	}
+}
+
+// One message the composer has queued but has not yet seen come back on the
+// timeline. It is held in component state rather than written into the events
+// cache because that cache's last id is the polling cursor: a synthetic id
+// there would be sent to the daemon as `after` and rejected as unknown.
+type PendingMessage = { key: string; message: string; commandId?: string };
+
+// commandIdOf reads the command a timeline event announces, which is what tells
+// an optimistic row that the durable one has arrived.
+function commandIdOf(raw: string): string | undefined {
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (parsed !== null && typeof parsed === "object" && "commandId" in parsed) {
+			const { commandId } = parsed as { commandId?: unknown };
+			return typeof commandId === "string" ? commandId : undefined;
+		}
+	} catch {
+		return undefined;
+	}
+	return undefined;
 }
 
 // The center pane for a session that runs on another machine. There is no
@@ -60,6 +81,52 @@ export function RemoteSessionPane({
 		retry: 1,
 	});
 	const events = eventsQuery.data ?? [];
+
+	const [draft, setDraft] = useState("");
+	const [pending, setPending] = useState<PendingMessage[]>([]);
+	const [sendError, setSendError] = useState<string | null>(null);
+	const sendMutation = useMutation({
+		mutationFn: async ({ key, message }: PendingMessage) => {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/execution-messages", {
+				params: { path: { sessionId: session.id } },
+				body: { message },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+			return { key, commandId: data.commandId };
+		},
+		onSuccess: ({ key, commandId }) => {
+			setPending((queued) => queued.map((entry) => (entry.key === key ? { ...entry, commandId } : entry)));
+			void queryClient.invalidateQueries({ queryKey: executionEventsQueryKey(session.id) });
+		},
+		onError: (error: unknown, variables) => {
+			// The message never became durable, so the optimistic row is a lie:
+			// drop it and put the text back where the human can retry or edit it.
+			setPending((queued) => queued.filter((entry) => entry.key !== variables.key));
+			setDraft((current) => (current === "" ? variables.message : current));
+			setSendError(error instanceof Error ? error.message : t("remoteSession.sendFailed"));
+		},
+	});
+
+	// An optimistic row retires the moment its own durable event is on the
+	// timeline; until then the human sees exactly one copy of what they sent.
+	const unconfirmed = pending.filter(
+		(entry) =>
+			entry.commandId === undefined ||
+			!events.some(
+				(event) => event.kind === "session_message_sent" && commandIdOf(event.payloadJson) === entry.commandId,
+			),
+	);
+	const composerDisabled = unreachable || sendMutation.isPending;
+
+	const submitDraft = () => {
+		const message = draft.trim();
+		if (message === "" || composerDisabled) return;
+		const entry: PendingMessage = { key: `${session.id}:${Date.now()}:${pending.length}`, message };
+		setSendError(null);
+		setPending((queued) => [...queued, entry]);
+		setDraft("");
+		sendMutation.mutate(entry);
+	};
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -94,7 +161,7 @@ export function RemoteSessionPane({
 					<p className="text-sm text-error">
 						{eventsQuery.error instanceof Error ? eventsQuery.error.message : t("remoteSession.loadFailed")}
 					</p>
-				) : events.length === 0 ? (
+				) : events.length === 0 && unconfirmed.length === 0 ? (
 					<p className="text-sm text-muted-foreground">{t("remoteSession.empty")}</p>
 				) : (
 					<ol className="mx-auto flex w-full max-w-3xl flex-col gap-2">
@@ -116,8 +183,54 @@ export function RemoteSessionPane({
 								</pre>
 							</li>
 						))}
+						{unconfirmed.map((entry) => (
+							<li
+								key={entry.key}
+								className="rounded-md border border-border bg-surface px-3 py-2 font-mono text-2xs opacity-70"
+							>
+								<div className="flex items-center justify-between gap-2">
+									<span className="font-medium text-foreground">{t("remoteSession.messageQueued")}</span>
+									<span className="shrink-0 text-passive">{t("remoteSession.sending")}</span>
+								</div>
+								<pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-muted-foreground">
+									{entry.message}
+								</pre>
+							</li>
+						))}
 					</ol>
 				)}
+			</div>
+			<div className="shrink-0 border-t border-border-strong px-4 py-3">
+				<form
+					className="mx-auto flex w-full max-w-3xl items-center gap-1.5"
+					onSubmit={(event) => {
+						event.preventDefault();
+						submitDraft();
+					}}
+				>
+					<input
+						className="settings-inline-input settings-field min-w-0 flex-1"
+						value={draft}
+						onChange={(event) => setDraft(event.target.value)}
+						placeholder={
+							unreachable ? t("remoteSession.composerUnreachable") : t("remoteSession.composerPlaceholder")
+						}
+						aria-label={t("remoteSession.composerLabel")}
+						disabled={composerDisabled}
+					/>
+					<button
+						type="submit"
+						className="settings-option-trigger shrink-0"
+						disabled={composerDisabled || draft.trim() === ""}
+					>
+						{sendMutation.isPending ? t("remoteSession.sending") : t("remoteSession.send")}
+					</button>
+				</form>
+				{sendError ? (
+					<p className="mx-auto mt-1.5 w-full max-w-3xl text-caption text-error" role="alert">
+						{sendError}
+					</p>
+				) : null}
 			</div>
 		</div>
 	);

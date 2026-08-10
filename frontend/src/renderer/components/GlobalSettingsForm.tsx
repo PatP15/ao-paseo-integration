@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
 import type { ExecutionHost } from "../hooks/useExecutionHostsQuery";
 import { ConnectMobileModal } from "./ConnectMobileModal";
+import { AutoResumeSection } from "./settings/AutoResumeSection";
 import { ComputerSheet } from "./settings/ComputerSheet";
 import { ComputersSection } from "./settings/ComputersSection";
 import { DeveloperModeSection } from "./settings/DeveloperModeSection";
@@ -47,6 +48,7 @@ export function GlobalSettingsForm() {
 							setComputerSheetOpen(true);
 						}}
 					/>
+					<AutoResumeSection />
 					<UpdatesSection />
 					<DeveloperModeSection />
 					<SettingsSection title={t("settings.getHelp")}>

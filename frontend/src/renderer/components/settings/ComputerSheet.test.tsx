@@ -86,4 +86,42 @@ describe("ComputerSheet", () => {
 		await user.click(screen.getByRole("button", { name: "Next" }));
 		expect(await screen.findByLabelText("Display name")).toBeInTheDocument();
 	});
+
+	// The empty step opened with Next already disabled and nothing on screen
+	// naming the field that was holding it.
+	it("names the field that is blocking Next on each step", async () => {
+		renderSheet();
+		const user = userEvent.setup();
+
+		expect(screen.getByText("Enter the worker's endpoint to continue.")).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Endpoint"), "builder");
+		expect(await screen.findByText(/endpoint needs a port/)).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Endpoint"), ":6807");
+		await waitFor(() => expect(screen.queryByText(/endpoint needs a port/)).not.toBeInTheDocument());
+		await user.click(screen.getByRole("button", { name: "Next" }));
+
+		expect(await screen.findByText("Give this computer a display name to continue.")).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Display name"), "Builder");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
+	});
+
+	// The --no-mcp posture is a precondition AO enforces, so it starts confirmed;
+	// unticking it still blocks the step, but now says so.
+	it("starts with the --no-mcp confirmation checked and explains unticking it", async () => {
+		renderSheet();
+		const user = userEvent.setup();
+
+		await user.type(screen.getByLabelText("Endpoint"), "builder:6807");
+		await user.click(screen.getByRole("button", { name: "Next" }));
+		await user.type(await screen.findByLabelText("Display name"), "Builder");
+
+		const noMcp = screen.getByRole("checkbox");
+		expect(noMcp).toBeChecked();
+		expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+
+		await user.click(noMcp);
+		expect(await screen.findByText(/only dispatches to a worker started with --no-mcp/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+	});
 });

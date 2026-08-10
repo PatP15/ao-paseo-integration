@@ -45,7 +45,12 @@ function emptyForm(): FormState {
 		trustZone: "hobby",
 		maxSessions: "2",
 		capabilities: "",
-		requiresNoMcp: false,
+		// Checked from the start, like requiresNoRelay: both are preconditions AO
+		// enforces, not choices. Unchecked-by-default opened step 2 with Next
+		// already disabled, which read as a broken dialog rather than as a posture
+		// the operator has to confirm. Unticking it still blocks the step — now
+		// with the reason spelled out next to the button.
+		requiresNoMcp: true,
 		requiresNoRelay: true,
 	};
 }
@@ -180,6 +185,26 @@ export function ComputerSheet({
 			? saveMutation.error.message
 			: t("settings.computers.sheet.saveFailed")
 		: probeOutcome;
+	// Why Next is refusing, in the order the fields appear. The id-taken and
+	// endpoint cases already carry their own inline message, so they are not
+	// repeated here.
+	const blockedReason = ((): string | null => {
+		if (isBusy) return null;
+		if (step === "connection") {
+			if (idTaken) return null;
+			if (form.endpoint.trim() === "") return t("settings.computers.sheet.blockedEndpoint");
+			if (!connectionValid) return t("settings.computers.sheet.blockedEndpointPort");
+			return null;
+		}
+		if (step === "details") {
+			if (form.name.trim() === "") return t("settings.computers.sheet.blockedName");
+			if (!form.requiresNoMcp) return t("settings.computers.sheet.blockedNoMcp");
+			if (!Number.isInteger(maxSessionsValue) || maxSessionsValue < 1 || maxSessionsValue > 64) {
+				return t("settings.computers.sheet.blockedMaxSessions");
+			}
+		}
+		return null;
+	})();
 
 	const field = "flex flex-col gap-1.5";
 	const labelClass = "text-xs font-medium text-settings-label";
@@ -397,6 +422,11 @@ export function ComputerSheet({
 								<span>{error}</span>
 							</div>
 						) : null}
+
+						{/* A disabled Next with no reason is the hardest control in the
+						    dialog to recover from: nothing on screen says which field is
+						    holding it. Name the blocker instead. */}
+						{blockedReason ? <p className="text-xs text-settings-muted">{blockedReason}</p> : null}
 
 						<div className="flex items-center justify-between pt-1">
 							{step !== "connection" ? (

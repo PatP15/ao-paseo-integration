@@ -553,6 +553,16 @@ button.settings-row-bar {
 	color: var(--color-text-settings-row);
 }
 
+/*
+ * The right-hand trigger of a settings row — and, across the remote-execution
+ * surfaces, every inline action (Test connection, Refresh, Sync here, Approve,
+ * Dispatch, Delete schedule, an answer option, Send). Those are real buttons, so
+ * they carry the same three states `settings-segment-item` gives its triggers:
+ * hover raises the label and tints the row, focus-visible draws the accent ring
+ * a keyboard user needs to see, and :disabled dims — without which a refusal
+ * (an unreachable host, an empty field, a write in flight) looked identical to
+ * a control that simply does nothing when clicked.
+ */
 @utility settings-option-trigger {
 	display: inline-flex;
 	align-items: center;
@@ -564,8 +574,22 @@ button.settings-row-bar {
 	color: var(--color-text-settings-muted);
 	outline: none;
 	box-shadow: none;
-	transition-property: color;
+	transition-property: color, background-color, opacity;
 	transition-duration: var(--duration-fast);
+
+	&:hover:not(:disabled) {
+		background-color: var(--color-bg-settings-menu-selected);
+		color: var(--color-text-settings-title);
+	}
+
+	&:focus-visible {
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	&:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
 }
 
 /*

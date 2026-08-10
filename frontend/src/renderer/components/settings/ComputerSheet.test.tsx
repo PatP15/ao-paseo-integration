@@ -106,6 +106,43 @@ describe("ComputerSheet", () => {
 		await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
 	});
 
+	// Clearing the auto-filled id is easy, and the blocked reason used to blame
+	// the endpoint — which was perfectly well formed.
+	it("blames the empty computer ID rather than the endpoint", async () => {
+		renderSheet();
+		const user = userEvent.setup();
+
+		await user.type(screen.getByLabelText("Endpoint"), "builder:6807");
+		await waitFor(() => expect(screen.getByLabelText("Computer ID")).toHaveValue("builder"));
+		await user.clear(screen.getByLabelText("Computer ID"));
+
+		expect(await screen.findByText(/computer ID cannot be empty/)).toBeInTheDocument();
+		expect(screen.queryByText(/endpoint needs a port/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+	});
+
+	// The review step is the last screen before a registration that cannot be
+	// undone, and it silently dropped a field the operator had typed.
+	it("shows every entered field on the review step, capabilities included", async () => {
+		renderSheet();
+		const user = userEvent.setup();
+
+		await user.type(screen.getByLabelText("Endpoint"), "builder:6807");
+		await user.click(screen.getByRole("button", { name: "Next" }));
+		await user.type(await screen.findByLabelText("Display name"), "Builder");
+		await user.type(screen.getByLabelText("Capabilities"), "gpu, linux");
+		await user.click(screen.getByRole("button", { name: "Next" }));
+
+		expect(await screen.findByText("Step 3 of 3 — review and test")).toBeInTheDocument();
+		expect(screen.getByText("Capabilities")).toBeInTheDocument();
+		expect(screen.getByText("gpu, linux")).toBeInTheDocument();
+	});
+
+	it("says what the computer ID is for, since it is required and auto-filled", async () => {
+		renderSheet();
+		expect(screen.getByText(/Filled in from the endpoint/)).toBeInTheDocument();
+	});
+
 	// The --no-mcp posture is a precondition AO enforces, so it starts confirmed;
 	// unticking it still blocks the step, but now says so.
 	it("starts with the --no-mcp confirmation checked and explains unticking it", async () => {

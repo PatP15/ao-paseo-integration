@@ -193,6 +193,9 @@ export function ComputerSheet({
 		if (step === "connection") {
 			if (idTaken) return null;
 			if (form.endpoint.trim() === "") return t("settings.computers.sheet.blockedEndpoint");
+			// The id is required and auto-derived, so clearing it is easy to do by
+			// accident — and it used to be reported as a malformed endpoint.
+			if (form.id.trim() === "") return t("settings.computers.sheet.blockedId");
 			if (!connectionValid) return t("settings.computers.sheet.blockedEndpointPort");
 			return null;
 		}
@@ -288,6 +291,14 @@ export function ComputerSheet({
 											{t("settings.computers.sheet.idTaken", { id: form.id.trim() })}
 										</p>
 									) : null}
+									{/* The only field on this step with no account of itself, and
+									    the one nobody can guess: it is filled in from the endpoint,
+									    it is required, it is the key registration upserts on — and
+									    when editing it is disabled, which needs a reason on screen
+									    rather than a dead control. */}
+									<p className="text-xs text-settings-muted">
+										{editing ? t("settings.computers.sheet.idHintEditing") : t("settings.computers.sheet.idHint")}
+									</p>
 								</div>
 								<div className={field}>
 									<label className={labelClass} htmlFor="computerPassword">
@@ -346,6 +357,9 @@ export function ComputerSheet({
 											onChange={(value) => setForm((f) => ({ ...f, trustZone: value as FormState["trustZone"] }))}
 											aria-label={t("settings.computers.sheet.trustZoneLabel")}
 										/>
+										{/* A routing constraint, not a label: a dispatch can ask for a
+										    zone, and only this zone or Mixed will take that work. */}
+										<p className="text-xs text-settings-muted">{t("settings.computers.sheet.trustZoneHint")}</p>
 									</div>
 								</div>
 								<div className="grid gap-4 sm:grid-cols-2">
@@ -360,6 +374,7 @@ export function ComputerSheet({
 											value={form.maxSessions}
 											onChange={(e) => setForm((f) => ({ ...f, maxSessions: e.target.value }))}
 										/>
+										<p className="text-xs text-settings-muted">{t("settings.computers.sheet.maxSessionsHint")}</p>
 									</div>
 									<div className={field}>
 										<label className={labelClass} htmlFor="computerCapabilities">
@@ -396,13 +411,21 @@ export function ComputerSheet({
 									[t("settings.computers.sheet.transportLabel"), transportLabel(form.transport, t)],
 									[t("settings.computers.sheet.trustZoneLabel"), trustZoneLabel(form.trustZone, t)],
 									[t("settings.computers.sheet.maxSessions"), form.maxSessions],
+									// Capabilities are submitted, so a step that calls itself a
+									// review has to show them: leaving the row out meant the last
+									// screen before an unreversible registration silently dropped a
+									// field the operator had typed.
+									[
+										t("settings.computers.sheet.capabilities"),
+										form.capabilities.trim() === "" ? t("settings.computers.sheet.none") : form.capabilities.trim(),
+									],
 									[
 										t("settings.computers.sheet.password"),
 										form.password
 											? t("settings.computers.sheet.passwordSet")
 											: editing && host.endpointSecretRef
 												? t("settings.computers.sheet.passwordKeep")
-												: t("settings.computers.sheet.passwordNone"),
+												: t("settings.computers.sheet.none"),
 									],
 								].map(([label, value]) => (
 									<div key={label} className="flex items-baseline justify-between gap-4">

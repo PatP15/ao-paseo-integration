@@ -31,6 +31,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	autoresumesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/autoresume"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
@@ -324,6 +325,7 @@ func Run() error {
 		Execution:         execSvc,
 		ExecutionDispatch: dispatchSvc,
 		ExecutionSecrets:  secretstore.New(cfg.DataDir),
+		AutoResume:        autoresumesvc.New(store),
 		WorkItems:         workItemSvc,
 	})
 	if err != nil {

@@ -1207,6 +1207,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/auto-resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the app-wide policy for resuming sessions killed by a provider usage limit */
+        get: operations["getAutoResumeSettings"];
+        /** Replace the app-wide usage-limit auto-resume policy */
+        put: operations["putAutoResumeSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shell-terminals": {
         parameters: {
             query?: never;
@@ -1341,6 +1359,14 @@ export interface components {
              * @enum {string}
              */
             decision?: "approved" | "rejected";
+        };
+        AutoResumeSettingsResponse: {
+            /** @description What an empty resumePrompt resolves to. */
+            defaultResumePrompt: string;
+            enabled: boolean;
+            /** @description Automatic resumes AO will perform for one session before it stops. */
+            maxResumesPerSession: number;
+            resumePrompt: string;
         };
         BrowserCommandRequest: {
             action: string;
@@ -2030,6 +2056,11 @@ export interface components {
             lastSeenAt: string;
             platform?: string;
             token: string;
+        };
+        PutAutoResumeSettingsRequest: {
+            enabled: boolean;
+            /** @description Single-line text. Empty means use the daemon's default. */
+            resumePrompt: string;
         };
         RegisterExecutionHostRequest: {
             /** @description Routable capabilities, matched exactly during host selection. */
@@ -7044,6 +7075,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupSessionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAutoResumeSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResumeSettingsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putAutoResumeSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutAutoResumeSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResumeSettingsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

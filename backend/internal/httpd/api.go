@@ -42,6 +42,7 @@ type APIDeps struct {
 	Execution           controllers.ExecutionService
 	ExecutionDispatch   controllers.ExecutionDispatcher
 	ExecutionSecrets    controllers.ExecutionSecretStore
+	AutoResume          controllers.AutoResumeSettingsService
 	WorkItems           controllers.WorkItemService
 }
 
@@ -61,6 +62,7 @@ type API struct {
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
 	execution     *controllers.ExecutionController
+	autoResume    *controllers.AutoResumeController
 	workItems     *controllers.WorkItemsController
 	events        *EventsController
 }
@@ -93,6 +95,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		execution:     &controllers.ExecutionController{Svc: deps.Execution, Dispatch: deps.ExecutionDispatch, Secrets: deps.ExecutionSecrets},
+		autoResume:    &controllers.AutoResumeController{Svc: deps.AutoResume},
 		workItems:     &controllers.WorkItemsController{Svc: deps.WorkItems},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
@@ -124,6 +127,7 @@ func (a *API) Register(root chi.Router) {
 			a.dev.Register(r)
 			a.browser.Register(r)
 			a.execution.Register(r)
+			a.autoResume.Register(r)
 			a.workItems.Register(r)
 			// Sibling REST controllers plug in here.
 		})

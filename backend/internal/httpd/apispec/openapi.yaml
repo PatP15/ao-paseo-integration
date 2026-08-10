@@ -3631,6 +3631,68 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/settings/auto-resume:
+    get:
+      operationId: getAutoResumeSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResumeSettingsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the app-wide policy for resuming sessions killed by a provider
+        usage limit
+      tags:
+      - settings
+    put:
+      operationId: putAutoResumeSettings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutAutoResumeSettingsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoResumeSettingsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Replace the app-wide usage-limit auto-resume policy
+      tags:
+      - settings
   /api/v1/shell-terminals:
     get:
       operationId: listShellTerminals
@@ -4052,6 +4114,25 @@ components:
           - approved
           - rejected
           type: string
+      type: object
+    AutoResumeSettingsResponse:
+      properties:
+        defaultResumePrompt:
+          description: What an empty resumePrompt resolves to.
+          type: string
+        enabled:
+          type: boolean
+        maxResumesPerSession:
+          description: Automatic resumes AO will perform for one session before it
+            stops.
+          type: integer
+        resumePrompt:
+          type: string
+      required:
+      - enabled
+      - resumePrompt
+      - defaultResumePrompt
+      - maxResumesPerSession
       type: object
     BrowserCommandRequest:
       properties:
@@ -5809,6 +5890,17 @@ components:
       - token
       - createdAt
       - lastSeenAt
+      type: object
+    PutAutoResumeSettingsRequest:
+      properties:
+        enabled:
+          type: boolean
+        resumePrompt:
+          description: Single-line text. Empty means use the daemon's default.
+          type: string
+      required:
+      - enabled
+      - resumePrompt
       type: object
     RegisterExecutionHostRequest:
       properties:

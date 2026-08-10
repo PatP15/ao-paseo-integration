@@ -23,6 +23,13 @@ type AuditEvent struct {
 	CreatedAt   string
 }
 
+type AutoResumeSetting struct {
+	ID           int64
+	Enabled      int64
+	ResumePrompt string
+	UpdatedAt    string
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID

@@ -240,6 +240,8 @@ var schemaNames = map[string]string{
 	"ControllersExecutionSessionMessagePathParams": "ExecutionSessionMessagePathParams",
 	"ControllersSendExecutionMessageRequest":       "SendExecutionMessageRequest",
 	"ControllersExecutionSessionMessageResponse":   "ExecutionSessionMessageResponse",
+	"ControllersAutoResumeSettingsResponse":        "AutoResumeSettingsResponse",
+	"ControllersPutAutoResumeSettingsRequest":      "PutAutoResumeSettingsRequest",
 	// httpd/controllers — work-item wire envelopes
 	"ControllersApproveWorkItemRequest": "ApproveWorkItemRequest",
 	"ControllersWorkItemResponse":       "WorkItemResponse",
@@ -581,6 +583,26 @@ func executionOperations() []operation {
 				{http.StatusOK, controllers.ListExecutionEventsResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/settings/auto-resume", id: "getAutoResumeSettings", tag: "settings",
+			summary: "Read the app-wide policy for resuming sessions killed by a provider usage limit",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AutoResumeSettingsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/settings/auto-resume", id: "putAutoResumeSettings", tag: "settings",
+			summary: "Replace the app-wide usage-limit auto-resume policy",
+			reqBody: controllers.PutAutoResumeSettingsRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AutoResumeSettingsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

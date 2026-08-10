@@ -99,8 +99,11 @@ export function HostDetailView({ hostId }: { hostId: string }) {
 	);
 }
 
-const rowClass =
-	"rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3";
+// Host detail is a center-panel surface, so its rows wear the same card chrome
+// as the board's session cards — rounded-lg, --border, --color-bg-surface —
+// rather than the settings tokens, whose 16px radius, transparent fill and 3%
+// hairline make an otherwise identical card read as a different app.
+const rowClass = "rounded-lg border border-border bg-surface px-3.5 py-3";
 
 function OverviewTab({ hostId }: { hostId: string }) {
 	const { t } = useTranslation();

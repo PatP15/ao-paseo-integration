@@ -145,10 +145,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 							const decidable = item.approvalState === "draft" || item.approvalState === "proposed";
 							const dispatchable = item.approvalState === "approved" && item.lifecycleFact === "open";
 							return (
-								<div
-									key={item.id}
-									className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-4 py-3"
-								>
+								<div key={item.id} className="rounded-lg border border-border bg-surface px-4 py-3">
 									<div className="flex items-start justify-between gap-3">
 										<div className="min-w-0">
 											<p className="truncate text-sm font-medium text-settings-label">{item.title}</p>

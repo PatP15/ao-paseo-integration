@@ -12,6 +12,7 @@ import {
 } from "../../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { Switch } from "../ui/switch";
+import { SettingsDetailRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
 type RegisterBody = components["schemas"]["RegisterExecutionHostRequest"];
@@ -58,11 +59,7 @@ function registerBodyFromHost(host: ExecutionHost): RegisterBody {
 function HostStatusDot({ host }: { host: ExecutionHost }) {
 	const { t } = useTranslation();
 	const probed = Boolean(host.lastSuccessfulProbeAt || host.lastFailedProbeAt);
-	const tone = !probed
-		? "bg-(--color-text-passive)"
-		: host.reachable
-			? "bg-(--color-success)"
-			: "bg-(--color-error)";
+	const tone = !probed ? "bg-(--color-text-passive)" : host.reachable ? "bg-(--color-success)" : "bg-(--color-error)";
 	const label = !probed
 		? t("settings.computers.statusUnprobed")
 		: host.reachable
@@ -76,13 +73,7 @@ function HostStatusDot({ host }: { host: ExecutionHost }) {
 	);
 }
 
-export function ComputersSection({
-	onAdd,
-	onEdit,
-}: {
-	onAdd: () => void;
-	onEdit: (host: ExecutionHost) => void;
-}) {
+export function ComputersSection({ onAdd, onEdit }: { onAdd: () => void; onEdit: (host: ExecutionHost) => void }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -140,53 +131,50 @@ export function ComputersSection({
 			) : hosts.length === 0 ? (
 				<p className="px-1 text-xs text-settings-muted">{t("settings.computers.empty")}</p>
 			) : (
-				<div className="flex flex-col gap-2">
+				<div className="flex flex-col gap-1.5">
 					{hosts.map((host) => {
 						const blocked = host.activeSessions > 0;
 						return (
-							<div
+							<SettingsDetailRow
 								key={host.id}
-								className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3"
-							>
-								<div className="flex items-center justify-between gap-3">
-									<div className="min-w-0">
-										<div className="flex items-center gap-2">
-											<Monitor className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
-											<button
-												type="button"
-												className="truncate text-sm font-medium text-settings-label underline-offset-2 hover:underline"
-												onClick={() =>
-													void navigate({ to: "/computers/$hostId", params: { hostId: host.id } })
-												}
-											>
-												{host.name}
-											</button>
-											<HostStatusDot host={host} />
-										</div>
-										<p className="mt-0.5 truncate text-xs text-settings-muted">
-											{host.endpoint} · {transportLabel(host.transport, t)} · {trustZoneLabel(host.trustZone, t)}{" "}
-											·{" "}
+								icon={Monitor}
+								title={
+									<>
+										<button
+											type="button"
+											className="truncate underline-offset-2 hover:underline"
+											onClick={() => void navigate({ to: "/computers/$hostId", params: { hostId: host.id } })}
+										>
+											{host.name}
+										</button>
+										<HostStatusDot host={host} />
+									</>
+								}
+								meta={
+									<>
+										<p className="truncate">
+											{host.endpoint} · {transportLabel(host.transport, t)} · {trustZoneLabel(host.trustZone, t)} ·{" "}
 											{t("settings.computers.sessions", {
 												active: host.activeSessions,
 												max: host.maxConcurrentSessions,
 											})}
 										</p>
 										{host.lastProbeError ? (
-											<p className="mt-1 text-xs text-error" role="alert">
+											<p className="mt-0.5 text-error" role="alert">
 												{host.lastProbeError}
 											</p>
 										) : null}
-									</div>
-									<div className="flex shrink-0 items-center gap-2.5">
+									</>
+								}
+								actions={
+									<>
 										<button
 											type="button"
 											className="settings-option-trigger"
 											onClick={() => probeMutation.mutate(host)}
 											disabled={busy}
 										>
-											{probing === host.id
-												? t("settings.computers.testing")
-												: t("settings.computers.testConnection")}
+											{probing === host.id ? t("settings.computers.testing") : t("settings.computers.testConnection")}
 										</button>
 										<button
 											type="button"
@@ -196,11 +184,7 @@ export function ComputersSection({
 										>
 											{t("settings.computers.edit")}
 										</button>
-										<span
-											title={
-												blocked && host.enabled ? t("settings.computers.disableBlockedTooltip") : undefined
-											}
-										>
+										<span title={blocked && host.enabled ? t("settings.computers.disableBlockedTooltip") : undefined}>
 											<Switch
 												checked={host.enabled}
 												onCheckedChange={() => toggleMutation.mutate(host)}
@@ -208,9 +192,9 @@ export function ComputersSection({
 												aria-label={t("settings.computers.enabledSwitch", { name: host.name })}
 											/>
 										</span>
-									</div>
-								</div>
-							</div>
+									</>
+								}
+							/>
 						);
 					})}
 				</div>
@@ -220,11 +204,13 @@ export function ComputersSection({
 					{rowError}
 				</p>
 			) : null}
-			<button type="button" className="settings-row-bar w-full text-sm text-settings-label" onClick={onAdd}>
-				<span className="flex items-center gap-2">
-					<Plus className="size-icon-base text-settings-muted" aria-hidden="true" />
-					{t("settings.computers.add")}
-				</span>
+			<button
+				type="button"
+				className="settings-row-bar w-full justify-start text-left text-sm leading-5 text-settings-label transition-colors hover:bg-settings-menu-selected"
+				onClick={onAdd}
+			>
+				<Plus className="size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" />
+				{t("settings.computers.add")}
 			</button>
 		</SettingsSection>
 	);

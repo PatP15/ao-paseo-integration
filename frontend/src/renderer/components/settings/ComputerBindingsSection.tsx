@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Monitor, PencilLine } from "lucide-react";
+import { Monitor, PencilLine, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
@@ -16,6 +16,7 @@ import {
 	settingsDialogHeaderClass,
 } from "../ui/dialog";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
+import { SettingsDetailRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
 type Binding = components["schemas"]["ControllersExecutionBindingResponse"];
@@ -61,35 +62,35 @@ export function ComputerBindingsSection({ projectId }: { projectId: string }) {
 			) : bindings.length === 0 ? (
 				<p className="px-1 text-xs text-warning">{t("settings.bindings.empty")}</p>
 			) : (
-				<div className="flex flex-col gap-2">
+				<div className="flex flex-col gap-1.5">
 					{bindings.map((binding) => (
-						<div
+						<SettingsDetailRow
 							key={binding.hostId}
-							className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3"
-						>
-							<div className="flex items-start justify-between gap-3">
-								<div className="min-w-0">
-									<div className="flex items-center gap-2">
-										<Monitor className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
-										<span className="truncate text-sm font-medium text-settings-label">{hostName(binding.hostId)}</span>
-										{!binding.enabled ? (
-											<span className="text-xs text-settings-muted">{t("settings.bindings.disabled")}</span>
-										) : null}
-									</div>
-									<p className="mt-0.5 truncate text-xs text-settings-muted">
-										{binding.hostRepoPath} ·{" "}
-										{t("settings.bindings.baseBranch", {
-											branch: binding.baseBranch,
-										})}{" "}
-										·{" "}
-										{t("settings.bindings.priority", {
-											priority: binding.priority,
-										})}
-									</p>
-								</div>
+							icon={Monitor}
+							title={
+								<>
+									<span className="truncate">{hostName(binding.hostId)}</span>
+									{!binding.enabled ? (
+										<span className="text-xs text-settings-muted">{t("settings.bindings.disabled")}</span>
+									) : null}
+								</>
+							}
+							meta={
+								<p className="truncate">
+									{binding.hostRepoPath} ·{" "}
+									{t("settings.bindings.baseBranch", {
+										branch: binding.baseBranch,
+									})}{" "}
+									·{" "}
+									{t("settings.bindings.priority", {
+										priority: binding.priority,
+									})}
+								</p>
+							}
+							actions={
 								<button
 									type="button"
-									className="settings-option-trigger inline-flex shrink-0 items-center gap-1.5"
+									className="settings-option-trigger"
 									onClick={() => {
 										setEditingBinding(binding);
 										setDialogOpen(true);
@@ -98,20 +99,21 @@ export function ComputerBindingsSection({ projectId }: { projectId: string }) {
 									<PencilLine className="size-icon-base" aria-hidden="true" />
 									{t("settings.bindings.edit")}
 								</button>
-							</div>
-						</div>
+							}
+						/>
 					))}
 				</div>
 			)}
 			<button
 				type="button"
-				className="settings-row-bar w-full text-sm text-settings-label"
+				className="settings-row-bar w-full justify-start text-left text-sm leading-5 text-settings-label transition-colors hover:bg-settings-menu-selected"
 				onClick={() => {
 					setEditingBinding(null);
 					setDialogOpen(true);
 				}}
 			>
-				<span>{t("settings.bindings.bind")}</span>
+				<Plus className="size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" />
+				{t("settings.bindings.bind")}
 			</button>
 			<BindComputerDialog
 				projectId={projectId}

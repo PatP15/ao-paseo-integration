@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
+import { SettingsDetailRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
 type ProjectInstructions = components["schemas"]["ControllersProjectInstructionsResponse"];
@@ -55,8 +56,7 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 			setSyncError(null);
 			void queryClient.invalidateQueries({ queryKey: projectInstructionsQueryKey(projectId) });
 		},
-		onError: (error: unknown) =>
-			setSyncError(error instanceof Error ? error.message : t("instructions.syncFailed")),
+		onError: (error: unknown) => setSyncError(error instanceof Error ? error.message : t("instructions.syncFailed")),
 	});
 
 	const view = instructionsQuery.data;
@@ -67,29 +67,24 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 				<p className="px-1 text-xs text-settings-muted">{t("instructions.loading")}</p>
 			) : instructionsQuery.isError ? (
 				<p className="px-1 text-xs text-error">
-					{instructionsQuery.error instanceof Error
-						? instructionsQuery.error.message
-						: t("instructions.loadFailed")}
+					{instructionsQuery.error instanceof Error ? instructionsQuery.error.message : t("instructions.loadFailed")}
 				</p>
 			) : view ? (
 				<>
 					{view.files.length === 0 ? (
-						<p className="px-1 text-xs text-settings-muted">
-							{t("instructions.empty", { branch: view.branch })}
-						</p>
+						<p className="px-1 text-xs text-settings-muted">{t("instructions.empty", { branch: view.branch })}</p>
 					) : (
-						<div className="flex flex-col gap-2">
+						<div className="flex flex-col gap-1.5">
 							{view.files.map((file) => {
 								const expanded = openFile === file.path;
 								return (
-									<div
+									<SettingsDetailRow
 										key={file.path}
-										className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3"
-									>
-										<div className="flex items-center justify-between gap-3">
+										icon={FileText}
+										title={
 											<button
 												type="button"
-												className="flex min-w-0 items-center gap-2 text-sm font-medium text-settings-label"
+												className="flex min-w-0 items-center gap-2"
 												onClick={() => setOpenFile(expanded ? null : file.path)}
 												aria-expanded={expanded}
 											>
@@ -98,12 +93,20 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 												) : (
 													<ChevronRight className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
 												)}
-												<FileText className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
 												<span className="truncate font-mono text-xs">{file.path}</span>
 											</button>
+										}
+										meta={
+											expanded ? (
+												<pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-(--color-bg-settings-input) px-3 py-2 font-mono text-xs text-settings-muted">
+													{file.content}
+												</pre>
+											) : null
+										}
+										actions={
 											<button
 												type="button"
-												className="settings-option-trigger inline-flex shrink-0 items-center gap-1.5"
+												className="settings-option-trigger"
 												onClick={() =>
 													requestNewTask(projectId, {
 														title: t("instructions.editTaskTitle", { path: file.path }),
@@ -117,61 +120,52 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 												<PencilLine className="size-icon-base" aria-hidden="true" />
 												{t("instructions.editViaTask")}
 											</button>
-										</div>
-										{expanded ? (
-											<pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-(--color-border-settings-input) px-3 py-2 font-mono text-xs text-settings-muted">
-												{file.content}
-											</pre>
-										) : null}
-									</div>
+										}
+									/>
 								);
 							})}
 						</div>
 					)}
 					{view.bindings.length > 0 ? (
-						<div className="flex flex-col gap-2">
+						<div className="flex flex-col gap-1.5">
 							{view.bindings.map((binding) => (
-								<div
+								<SettingsDetailRow
 									key={binding.hostId}
-									className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3"
-								>
-									<div className="flex items-center justify-between gap-3">
-										<div className="min-w-0">
-											<div className="flex items-center gap-2">
-												<Monitor className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
-												<span className="truncate text-sm font-medium text-settings-label">{binding.hostId}</span>
-												{binding.error ? (
-													<span className="text-xs text-error">{t("instructions.bindingError")}</span>
-												) : binding.inSync ? (
-													<span className="text-xs text-(--color-success)">{t("instructions.inSync")}</span>
-												) : (
-													<span className="text-xs text-warning">
-														{t("instructions.drifted", { count: binding.driftedPaths.length })}
-													</span>
-												)}
-											</div>
+									icon={Monitor}
+									title={
+										<>
+											<span className="truncate">{binding.hostId}</span>
 											{binding.error ? (
-												<p className="mt-0.5 break-words text-xs text-error">{binding.error}</p>
-											) : !binding.inSync ? (
-												<p className="mt-0.5 truncate font-mono text-xs text-settings-muted">
-													{binding.driftedPaths.join(", ")}
-												</p>
-											) : null}
-										</div>
-										{!binding.error && !binding.inSync ? (
+												<span className="text-xs text-error">{t("instructions.bindingError")}</span>
+											) : binding.inSync ? (
+												<span className="text-xs text-(--color-success)">{t("instructions.inSync")}</span>
+											) : (
+												<span className="text-xs text-warning">
+													{t("instructions.drifted", { count: binding.driftedPaths.length })}
+												</span>
+											)}
+										</>
+									}
+									meta={
+										binding.error ? (
+											<p className="break-words text-error">{binding.error}</p>
+										) : !binding.inSync ? (
+											<p className="truncate font-mono">{binding.driftedPaths.join(", ")}</p>
+										) : null
+									}
+									actions={
+										!binding.error && !binding.inSync ? (
 											<button
 												type="button"
-												className="settings-option-trigger shrink-0"
+												className="settings-option-trigger"
 												disabled={syncMutation.isPending}
 												onClick={() => syncMutation.mutate(binding.hostId)}
 											>
-												{syncingHost === binding.hostId
-													? t("instructions.syncing")
-													: t("instructions.sync")}
+												{syncingHost === binding.hostId ? t("instructions.syncing") : t("instructions.sync")}
 											</button>
-										) : null}
-									</div>
-								</div>
+										) : null
+									}
+								/>
 							))}
 						</div>
 					) : null}

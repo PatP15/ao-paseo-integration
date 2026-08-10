@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ func TestDispatchStillRefusesCreatedDraftWorkItem(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not approved") {
 		t.Fatalf("Dispatch error = %v, want unapproved refusal", err)
 	}
+	// The sentinel is what keeps this refusal a 409 with its reason instead of
+	// an opaque 500, so it belongs in the assertion, not just in the message.
+	if !errors.Is(err, domain.ErrDispatchRefused) {
+		t.Fatalf("Dispatch error = %v, want it to wrap domain.ErrDispatchRefused", err)
+	}
 }
 
 func TestDispatchRefusesRejectedWorkItem(t *testing.T) {
@@ -41,5 +47,8 @@ func TestDispatchRefusesRejectedWorkItem(t *testing.T) {
 	_, err := New(store).Dispatch(context.Background(), testDispatchRequest())
 	if err == nil || !strings.Contains(err.Error(), "is not approved") {
 		t.Fatalf("Dispatch error = %v, want rejected refusal", err)
+	}
+	if !errors.Is(err, domain.ErrDispatchRefused) {
+		t.Fatalf("Dispatch error = %v, want it to wrap domain.ErrDispatchRefused", err)
 	}
 }

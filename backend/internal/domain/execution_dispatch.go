@@ -1,6 +1,18 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrDispatchRefused marks the dispatch preconditions that a caller can act
+// on: an unapproved or already-finished work item, a work item belonging to
+// another project, a host that is disabled or no longer matches the requested
+// policy. They are rechecked inside the dispatch transaction, so they are the
+// authoritative refusal — but they are the caller's mistake or a race with an
+// operator edit, never a fault in AO, and reporting them as a server error
+// buries the one sentence that says what to fix.
+var ErrDispatchRefused = errors.New("dispatch refused")
 
 // ExecutionCommandType identifies one durable operation for an execution
 // backend. Commands are ordered per session and delivered from the outbox.

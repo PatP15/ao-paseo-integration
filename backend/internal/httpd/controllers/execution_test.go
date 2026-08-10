@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -490,6 +491,56 @@ func TestDispatchValidatesBeforeCommitting(t *testing.T) {
 	}
 	if dispatcher.request.Harness != domain.HarnessCodex {
 		t.Fatalf("dispatched request = %#v", dispatcher.request)
+	}
+}
+
+// TestDispatchReportsTransactionRefusalsAsConflicts pins the answer a caller
+// gets when the dispatch transaction's own preconditions refuse. Every one of
+// them is actionable — approve the item, pick another project, re-probe the
+// host — and each used to arrive as a 500 whose body said only "Internal
+// server error", which reads as "AO is broken" rather than "approve it first".
+func TestDispatchReportsTransactionRefusalsAsConflicts(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		err        error
+		wantReason string
+	}{
+		{
+			name:       "unapproved work item",
+			err:        fmt.Errorf("create execution dispatch: %w: work item work-1 is not approved", domain.ErrDispatchRefused),
+			wantReason: "work item work-1 is not approved",
+		},
+		{
+			name: "host moved out of the requested zone",
+			err: fmt.Errorf("create execution dispatch: %w: execution host worker-1 no longer matches trust zone work",
+				domain.ErrDispatchRefused),
+			wantReason: "execution host worker-1 no longer matches trust zone work",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := executionServer(t, httpd.APIDeps{ExecutionDispatch: &fakeDispatcher{err: test.err}})
+			resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/execution/dispatch", `{
+				"workItemId":"work-1","projectId":"project","trustZone":"work","harness":"codex",
+				"branch":"ao/work-1","provider":"codex","prompt":"Implement the approved task."
+			}`)
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+			}
+			var out struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatalf("decode %q: %v", body, err)
+			}
+			if out.Code != "DISPATCH_REFUSED" {
+				t.Fatalf("code = %q, want DISPATCH_REFUSED", out.Code)
+			}
+			// The reason survives, without the wrapped call context around it.
+			if out.Message != test.wantReason {
+				t.Fatalf("message = %q, want %q", out.Message, test.wantReason)
+			}
+		})
 	}
 }
 

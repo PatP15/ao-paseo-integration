@@ -868,6 +868,18 @@ func (c *ExecutionController) listBindings(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, http.StatusOK, ListExecutionBindingsResponse{Bindings: out})
 }
 
+// dispatchRefusalReason is the refusal sentence without the layered call
+// context wrapped around it ("create execution dispatch: dispatch refused:
+// …"). The remaining text names only ids the caller already sent, never a
+// credential or an endpoint.
+func dispatchRefusalReason(err error) string {
+	message := err.Error()
+	if _, reason, found := strings.Cut(message, domain.ErrDispatchRefused.Error()+": "); found {
+		return reason
+	}
+	return message
+}
+
 func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 	if c.Dispatch == nil {
 		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/execution/dispatch")
@@ -915,6 +927,15 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 					"the requested trust zone, that the host is enabled and online, and that it "+
 					"has free capacity.",
 				nil))
+			return
+		}
+		// The dispatch transaction's own preconditions are the same class of
+		// answer: the work item is not approved, it is already finished, it
+		// belongs to another project, or the chosen host changed under the
+		// request. Each is a caller-actionable refusal with a precise reason,
+		// and a 500 with "Internal server error" threw that reason away.
+		if errors.Is(err, domain.ErrDispatchRefused) {
+			envelope.WriteError(w, r, apierr.Conflict("DISPATCH_REFUSED", dispatchRefusalReason(err), nil))
 			return
 		}
 		envelope.WriteError(w, r, err)

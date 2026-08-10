@@ -27,13 +27,14 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 			return fmt.Errorf("get work item %s: %w", seed.WorkItemID, err)
 		}
 		if item.ApprovalState != string(domain.WorkItemApproved) {
-			return fmt.Errorf("work item %s is not approved", seed.WorkItemID)
+			return fmt.Errorf("%w: work item %s is not approved", domain.ErrDispatchRefused, seed.WorkItemID)
 		}
 		if item.LifecycleFact != string(domain.WorkItemOpen) && item.LifecycleFact != string(domain.WorkItemInProgress) {
-			return fmt.Errorf("work item %s is not dispatchable", seed.WorkItemID)
+			return fmt.Errorf("%w: work item %s is not dispatchable", domain.ErrDispatchRefused, seed.WorkItemID)
 		}
 		if seed.Session.ProjectID != domain.ProjectID(item.ProjectID) {
-			return fmt.Errorf("work item %s belongs to project %s, not %s", seed.WorkItemID, item.ProjectID, seed.Session.ProjectID)
+			return fmt.Errorf("%w: work item %s belongs to project %s, not %s",
+				domain.ErrDispatchRefused, seed.WorkItemID, item.ProjectID, seed.Session.ProjectID)
 		}
 
 		host, err := q.GetExecutionHost(ctx, string(seed.HostID))
@@ -41,7 +42,7 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 			return fmt.Errorf("get execution host %s: %w", seed.HostID, err)
 		}
 		if host.Enabled == 0 || host.BackendType != string(domain.ExecutionBackendPaseo) || host.MaxConcurrentSessions <= 0 {
-			return fmt.Errorf("execution host %s is not dispatchable", seed.HostID)
+			return fmt.Errorf("%w: execution host %s is not dispatchable", domain.ErrDispatchRefused, seed.HostID)
 		}
 		// Routing is a read-only choice made before this transaction. Recheck all
 		// policy facts here so a concurrent registry/probe update cannot move the
@@ -49,7 +50,8 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 		// unreachable between selection and the durable claim.
 		if seed.RequestedTrustZone != "" {
 			if host.TrustZone != string(seed.RequestedTrustZone) && host.TrustZone != string(domain.ExecutionTrustZoneMixed) {
-				return fmt.Errorf("execution host %s no longer matches trust zone %s", seed.HostID, seed.RequestedTrustZone)
+				return fmt.Errorf("%w: execution host %s no longer matches trust zone %s",
+					domain.ErrDispatchRefused, seed.HostID, seed.RequestedTrustZone)
 			}
 			lastSuccessful, err := decodeExecutionTime(host.LastSuccessfulProbeAt)
 			if err != nil {
@@ -60,7 +62,7 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 				return fmt.Errorf("decode execution host %s failed probe: %w", seed.HostID, err)
 			}
 			if lastSuccessful.IsZero() || (!lastFailed.IsZero() && !lastSuccessful.After(lastFailed)) {
-				return fmt.Errorf("execution host %s is no longer reachable", seed.HostID)
+				return fmt.Errorf("%w: execution host %s is no longer reachable", domain.ErrDispatchRefused, seed.HostID)
 			}
 			capabilities, err := q.ListExecutionHostCapabilities(ctx, string(seed.HostID))
 			if err != nil {
@@ -72,7 +74,8 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 			}
 			for _, required := range seed.RequiredCapabilities {
 				if _, ok := available[strings.TrimSpace(required)]; !ok {
-					return fmt.Errorf("execution host %s no longer has required capability %s", seed.HostID, required)
+					return fmt.Errorf("%w: execution host %s no longer has required capability %s",
+						domain.ErrDispatchRefused, seed.HostID, required)
 				}
 			}
 		}
@@ -84,14 +87,15 @@ func (s *Store) CreateExecutionDispatch(ctx context.Context, seed domain.Executi
 		}
 		if bindingRow.Enabled == 0 || bindingRow.HostRepoPath == "" || bindingRow.HostRepoPath != seed.HostRepoPath ||
 			bindingRow.BaseBranch != seed.BaseBranch {
-			return fmt.Errorf("project %s is not enabled at execution host %s", item.ProjectID, seed.HostID)
+			return fmt.Errorf("%w: project %s is not enabled at execution host %s",
+				domain.ErrDispatchRefused, item.ProjectID, seed.HostID)
 		}
 		active, err := q.CountActiveSessionExecutionBindingsByHost(ctx, string(seed.HostID))
 		if err != nil {
 			return fmt.Errorf("count active host sessions: %w", err)
 		}
 		if active >= host.MaxConcurrentSessions {
-			return fmt.Errorf("execution host %s is at capacity", seed.HostID)
+			return fmt.Errorf("%w: execution host %s is at capacity", domain.ErrDispatchRefused, seed.HostID)
 		}
 
 		num, err := q.NextSessionNum(ctx, seed.Session.ProjectID)

@@ -70,9 +70,16 @@ describe("HostDetailView skills", () => {
 		});
 	});
 
+	it("names the computer that has the missing skill, not its registry id", async () => {
+		renderSkills();
+		// The row is the only place a comparison names another computer; every
+		// other surface prints the display name, so this one has to as well.
+		expect(await screen.findByText("demo-skill is not installed here — Source has it.")).toBeInTheDocument();
+	});
+
 	it("uses the clicked comparison row rather than stale manual-form state", async () => {
 		renderSkills();
-		expect(await screen.findByText(/lacks demo-skill/)).toBeInTheDocument();
+		expect(await screen.findByText(/demo-skill is not installed here/)).toBeInTheDocument();
 		await userEvent.click(screen.getAllByRole("button", { name: "Sync to this computer" })[0]);
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));

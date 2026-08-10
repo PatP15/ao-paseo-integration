@@ -135,7 +135,10 @@ export function RemoteSessionPane({
 				<span className="inline-flex min-w-0 items-center gap-1.5 pl-3 font-mono text-2xs text-passive">
 					<Monitor className="size-icon-2xs shrink-0" aria-hidden="true" />
 					<span className="truncate">
-						{t("remoteSession.runningOn", { host: host?.name ?? hostId })}
+						{/* Host attribution, not a status: the pill beside it owns the
+						    session's state, and this reads the same on an exited session
+						    as on a live one. Same string as the board card's tooltip. */}
+						{t("shell.remoteHost", { host: host?.name ?? hostId })}
 						{session.executionAttempt !== undefined && session.executionAttempt > 1
 							? ` · ${t("remoteSession.attempt", { attempt: session.executionAttempt })}`
 							: ""}
@@ -215,7 +218,9 @@ export function RemoteSessionPane({
 						value={draft}
 						onChange={(event) => setDraft(event.target.value)}
 						placeholder={
-							unreachable ? t("remoteSession.composerUnreachable") : t("remoteSession.composerPlaceholder")
+							unreachable
+									? t("remoteSession.composerUnreachable", { host: host?.name ?? hostId })
+									: t("remoteSession.composerPlaceholder")
 						}
 						aria-label={t("remoteSession.composerLabel")}
 						disabled={composerDisabled}

@@ -63,7 +63,7 @@ describe("RemoteSessionPane composer", () => {
 		getMock.mockImplementation((path: string) => {
 			if (path === "/api/v1/execution/hosts") {
 				return Promise.resolve({
-					data: { hosts: [{ id: "worker-1", name: "worker", reachable }] },
+					data: { hosts: [{ id: "worker-1", name: "office mac", reachable }] },
 					error: undefined,
 				});
 			}
@@ -110,15 +110,25 @@ describe("RemoteSessionPane composer", () => {
 		expect(input).toHaveValue("rerun the failing test");
 	});
 
-	it("disables the composer while the host is not answering", async () => {
+	it("disables the composer while the computer is not answering", async () => {
 		reachable = false;
 		renderPane();
 		const input = await screen.findByLabelText("Message the remote agent");
 		await waitFor(() => expect(input).toBeDisabled());
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+		// The banner above names the computer; the composer has to name the same
+		// thing the same way, and by display name rather than registry id.
 		expect(input).toHaveAttribute(
 			"placeholder",
-			"The host is not answering — messages cannot be queued right now.",
+			"office mac is not answering — messages cannot be queued right now.",
 		);
+	});
+
+	it("attributes the session to its computer without claiming it is running", async () => {
+		renderPane();
+		// "Runs on X" is the board card's wording too: an attribution that stays
+		// true after the session exits, next to the pill that owns the status.
+		expect(await screen.findByText("Runs on office mac")).toBeInTheDocument();
+		expect(screen.queryByText(/Running on/)).not.toBeInTheDocument();
 	});
 });

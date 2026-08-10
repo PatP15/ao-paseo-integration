@@ -93,7 +93,7 @@ describe("ComputerSheet", () => {
 		renderSheet();
 		const user = userEvent.setup();
 
-		expect(screen.getByText("Enter the worker's endpoint to continue.")).toBeInTheDocument();
+		expect(screen.getByText("Enter the computer's endpoint to continue.")).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Endpoint"), "builder");
 		expect(await screen.findByText(/endpoint needs a port/)).toBeInTheDocument();
 
@@ -121,7 +121,7 @@ describe("ComputerSheet", () => {
 		expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 
 		await user.click(noMcp);
-		expect(await screen.findByText(/only dispatches to a worker started with --no-mcp/)).toBeInTheDocument();
+		expect(await screen.findByText(/only dispatches to a computer whose daemon was started with --no-mcp/)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 	});
 });

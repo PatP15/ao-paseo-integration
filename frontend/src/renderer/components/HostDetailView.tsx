@@ -241,16 +241,20 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 	const skills = inventory?.skills ?? [];
 	const names = new Set(skills.map((skill) => skill.name));
 	const missingElsewhere = useMemo(() => {
-		const rows: Array<{ name: string; source: string }> = [];
+		// source is the registry id the sync route wants; sourceName is what the
+		// row shows, because every other surface names a computer by its display
+		// name and this row was the last one printing a raw id.
+		const rows: Array<{ name: string; source: string; sourceName: string }> = [];
 		for (const [otherId, otherSkills] of otherInventories.data ?? new Map()) {
+			const sourceName = otherHosts.find((candidate) => candidate.id === otherId)?.name ?? otherId;
 			for (const skill of otherSkills) {
 				if (!names.has(skill.name) && !rows.some((row) => row.name === skill.name)) {
-					rows.push({ name: skill.name, source: otherId });
+					rows.push({ name: skill.name, source: otherId, sourceName });
 				}
 			}
 		}
 		return rows;
-	}, [otherInventories.data, names]);
+	}, [otherInventories.data, otherHosts, names]);
 
 	return (
 		<>
@@ -305,7 +309,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 					<span className="min-w-0 truncate text-xs text-settings-muted">
 						{t("hostDetail.missingSkill", {
 							name: row.name,
-							source: row.source,
+							source: row.sourceName,
 						})}
 					</span>
 					<button

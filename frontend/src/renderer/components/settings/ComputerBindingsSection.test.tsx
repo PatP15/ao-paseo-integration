@@ -76,7 +76,7 @@ describe("ComputerBindingsSection", () => {
 		fireEvent.change(screen.getByLabelText("Routing priority"), {
 			target: { value: "7" },
 		});
-		await user.click(screen.getByLabelText("Use this computer for remote task routing"));
+		await user.click(screen.getByLabelText("Route remote work to this computer"));
 		await user.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));

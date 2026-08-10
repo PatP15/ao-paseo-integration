@@ -77,6 +77,40 @@ describe("HostDetailView skills", () => {
 		expect(await screen.findByText("demo-skill is not installed here — Source has it.")).toBeInTheDocument();
 	});
 
+	// The gate badge used to explain itself only in a `title` tooltip, which is
+	// unreachable by touch or keyboard and was the sole account of a warning.
+	it("explains the policy gate on screen when a gated skill is listed", async () => {
+		getMock.mockImplementation((path: string) => {
+			if (path === "/api/v1/execution/hosts") return Promise.resolve({ data: { hosts: [{ id: "target", enabled: true }] } });
+			return Promise.resolve({
+				data: {
+					refreshed: false,
+					skillsAsOf: "2026-08-09T00:00:00Z",
+					skills: [{ name: "paseo-advisor", description: "Spin up a single agent", policyGated: true }],
+				},
+			});
+		});
+		renderSkills();
+		expect(await screen.findByText("Policy-gated")).toBeInTheDocument();
+		expect(screen.getByText(/A policy-gated skill orchestrates through Paseo/)).toBeInTheDocument();
+	});
+
+	it("says nothing about the gate when no skill is gated", async () => {
+		getMock.mockImplementation((path: string) => {
+			if (path === "/api/v1/execution/hosts") return Promise.resolve({ data: { hosts: [{ id: "target", enabled: true }] } });
+			return Promise.resolve({
+				data: {
+					refreshed: false,
+					skillsAsOf: "2026-08-09T00:00:00Z",
+					skills: [{ name: "demo-skill", description: "Demo", policyGated: false }],
+				},
+			});
+		});
+		renderSkills();
+		expect(await screen.findByText("demo-skill")).toBeInTheDocument();
+		expect(screen.queryByText(/A policy-gated skill orchestrates/)).not.toBeInTheDocument();
+	});
+
 	it("uses the clicked comparison row rather than stale manual-form state", async () => {
 		renderSkills();
 		expect(await screen.findByText(/demo-skill is not installed here/)).toBeInTheDocument();
@@ -108,6 +142,18 @@ describe("HostDetailView schedules", () => {
 			error: undefined,
 		});
 		deleteMock.mockReset().mockResolvedValue({ data: {}, error: undefined });
+	});
+
+	it("says what the tab lists and why a schedule is flagged", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		render(
+			<QueryClientProvider client={queryClient}>
+				<SchedulesTab hostId="target" />
+			</QueryClientProvider>,
+		);
+		expect(await screen.findByText("Nightly cleanup")).toBeInTheDocument();
+		expect(screen.getByText(/Recurring jobs the Paseo daemon runs on this computer/)).toBeInTheDocument();
+		expect(screen.getByText(/AO never creates schedules/)).toBeInTheDocument();
 	});
 
 	it("requires confirmation before deleting a worker schedule", async () => {

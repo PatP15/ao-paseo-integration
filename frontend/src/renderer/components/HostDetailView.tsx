@@ -331,7 +331,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 						<div className="flex items-center gap-2">
 							<span className="text-sm font-medium text-settings-label">{skill.name}</span>
 							{skill.policyGated ? (
-								<Badge variant="warning" className="text-caption" title={t("hostDetail.gatedTooltip")}>
+								<Badge variant="warning" className="text-caption">
 									{t("hostDetail.gatedBadge")}
 								</Badge>
 							) : null}
@@ -340,6 +340,12 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 					</div>
 				))
 			)}
+			{/* A badge that flags a refusal has to say so on screen. This lived in a
+			    `title` tooltip, which no touch or keyboard user ever reads — and it
+			    was the only explanation of the warning. */}
+			{skills.some((skill) => skill.policyGated) ? (
+				<p className="text-xs text-settings-muted">{t("hostDetail.gatedExplanation")}</p>
+			) : null}
 			{missingElsewhere.map((row) => (
 				<div key={row.name} className={`${rowClass} flex items-center justify-between gap-3`}>
 					<span className="min-w-0 truncate text-xs text-settings-muted">
@@ -703,6 +709,9 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 	const schedules = schedulesQuery.data ?? [];
 	return (
 		<>
+			{/* What this tab is, before a list of red badges: the schedules belong
+			    to the computer, not to AO. */}
+			<p className="text-xs text-settings-muted">{t("hostDetail.schedulesExplanation")}</p>
 			{/* The blind spot is structural: the pinned CLI has no heartbeat
 			    listing, so an empty list proves nothing about heartbeats. */}
 			<p className="text-xs text-settings-muted">{t("hostDetail.heartbeatBlindSpot")}</p>
@@ -721,7 +730,7 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 							<div className="flex items-center gap-2">
 								<span className="truncate text-sm font-medium text-settings-label">{schedule.name || schedule.id}</span>
 								{schedule.policyViolation ? (
-									<Badge variant="error" className="text-caption" title={t("hostDetail.violationTooltip")}>
+									<Badge variant="error" className="text-caption">
 										{t("hostDetail.violationBadge")}
 									</Badge>
 								) : null}
@@ -742,6 +751,11 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 					</div>
 				))
 			)}
+			{/* Same rule as the Skills tab's gate badge: the reason is on screen,
+			    not in a tooltip only a mouse can find. */}
+			{schedules.some((schedule) => schedule.policyViolation) ? (
+				<p className="text-xs text-settings-muted">{t("hostDetail.violationExplanation")}</p>
+			) : null}
 			<ConfirmDialog
 				open={pendingDelete !== null}
 				title={t("hostDetail.deleteScheduleTitle")}

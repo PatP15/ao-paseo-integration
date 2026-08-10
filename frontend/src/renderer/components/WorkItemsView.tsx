@@ -239,7 +239,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 	);
 }
 
-function CreateWorkItemDialog({
+export function CreateWorkItemDialog({
 	projectId,
 	open,
 	onOpenChange,
@@ -317,13 +317,24 @@ function CreateWorkItemDialog({
 							{createMutation.error instanceof Error ? createMutation.error.message : t("workItems.createFailed")}
 						</p>
 					) : null}
+					{/* Cancel + primary, the shape every sibling dialog uses; and the
+					    primary names the action rather than repeating the dialog's
+					    own title, the way Dispatch / Bind computer / Start task do. */}
 					<div className={settingsDialogFooterClass}>
+						<button
+							type="button"
+							className="settings-footer-button"
+							disabled={createMutation.isPending}
+							onClick={() => onOpenChange(false)}
+						>
+							{t("workItems.cancel")}
+						</button>
 						<button
 							type="submit"
 							className="settings-footer-button settings-footer-button-primary"
 							disabled={!canSubmit}
 						>
-							{createMutation.isPending ? t("workItems.creating") : t("workItems.create")}
+							{createMutation.isPending ? t("workItems.creating") : t("workItems.createSubmit")}
 						</button>
 					</div>
 				</form>

@@ -38,6 +38,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/paseoevent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	dispatchsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/dispatch"
+	executionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/execution"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -271,8 +272,9 @@ func newScheduleChannel(backends *executionBackends) (
 	}
 	typed := func(host domain.ExecutionHost, err error) error {
 		if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
-			return apierr.Conflict("HOST_UNREACHABLE",
-				"host "+string(host.ID)+" did not answer: "+paseoexec.Redact(err.Error()), nil)
+			return executionsvc.HostChannelError(host, apierr.KindConflict, "HOST_UNREACHABLE",
+				"%s is not answering. Test the connection on that computer, then try again.",
+				errors.New(paseoexec.Redact(err.Error())))
 		}
 		return err
 	}
@@ -325,8 +327,9 @@ func (m maintenanceChannel) typed(host domain.ExecutionHost, err error) error {
 		return apierr.Conflict("MAINTENANCE_REFUSED", refused.Message, nil)
 	}
 	if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
-		return apierr.Conflict("HOST_UNREACHABLE",
-			"host "+string(host.ID)+" did not answer: "+paseoexec.Redact(err.Error()), nil)
+		return executionsvc.HostChannelError(host, apierr.KindConflict, "HOST_UNREACHABLE",
+			"%s is not answering. Test the connection on that computer, then try again.",
+			errors.New(paseoexec.Redact(err.Error())))
 	}
 	return err
 }
@@ -496,8 +499,9 @@ func newProviderDiscovery(backends *executionBackends) func(context.Context, dom
 		providers, err := paseoexec.NewBackend(client, backends.store).Providers(ctx, host.ID)
 		if err != nil {
 			if paseoexec.IsKind(err, paseoexec.ErrorNetwork) {
-				return nil, apierr.Conflict("HOST_UNREACHABLE",
-					"host "+string(host.ID)+" did not answer provider discovery: "+paseoexec.Redact(err.Error()), nil)
+				return nil, executionsvc.HostChannelError(host, apierr.KindConflict, "HOST_UNREACHABLE",
+					"%s is not answering, so AO cannot list what it can launch. Test the connection on that computer, then try again.",
+					errors.New(paseoexec.Redact(err.Error())))
 			}
 			return nil, fmt.Errorf("discover providers on host %s: %w", host.ID, err)
 		}

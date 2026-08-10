@@ -48,7 +48,8 @@ func (s *Service) Instructions(ctx context.Context, id domain.ExecutionHostID, r
 	if refresh {
 		live, err := s.instructions.ReadInstructions(ctx, host)
 		if err != nil {
-			return domain.ExecutionHostPrefs{}, false, err
+			return domain.ExecutionHostPrefs{}, false, HostChannelError(host, apierr.KindInternal, "HOST_INSTRUCTIONS_UNAVAILABLE",
+				"%s did not answer the instructions read. Test the connection on that computer, then reopen this tab.", err)
 		}
 		live.ConfirmedAt = s.now().UTC()
 		if err := s.store.UpsertExecutionHostInstructions(ctx, live); err != nil {
@@ -75,7 +76,8 @@ func (s *Service) PutInstructions(ctx context.Context, id domain.ExecutionHostID
 	}
 	confirmed, err := s.instructions.WriteInstructions(ctx, host, []byte(content), baseSHA256)
 	if err != nil {
-		return domain.ExecutionHostPrefs{}, err
+		return domain.ExecutionHostPrefs{}, HostChannelError(host, apierr.KindInternal, "HOST_INSTRUCTIONS_WRITE_FAILED",
+			"%s did not accept the instructions. Nothing was written there; reopen this tab to see what the file says now.", err)
 	}
 	confirmed.ConfirmedAt = s.now().UTC()
 	if err := s.store.UpsertExecutionHostInstructions(ctx, confirmed); err != nil {

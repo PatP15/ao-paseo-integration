@@ -27,6 +27,42 @@ import (
 // an answer is delivered as a message, so a longer one could not be sent anyway.
 const MaxAnswerLen = 4096
 
+// maxHostChannelDetail bounds the host's own words in an error's details. The
+// worker answers a refused command with a whole JSON document; a few lines of it
+// identify the failure, and the rest only bloats the envelope.
+const maxHostChannelDetail = 512
+
+// HostChannelError types a failure of a live host channel — inventory, prefs,
+// instructions, schedules, provider discovery — so the surface can say which
+// computer did not answer and what to do next. Exported for the daemon's
+// composition root, which classifies the network and refusal cases of the same
+// channels before they reach this package and has to phrase them identically.
+//
+// Every one of these calls used to return the adapter's raw error, which is not
+// an *apierr.Error, so the envelope collapsed it to the generic
+// "Internal server error". The renderer prints that string verbatim next to a
+// host's name, telling an operator their computer is fine and AO is broken when
+// the truth was an unreachable worker or a read that outran its deadline. The
+// host's own words survive in details, where support can still read them, and
+// an error that is already typed (a drift refusal the channel classified) is
+// passed through untouched so its code is not overwritten.
+func HostChannelError(host domain.ExecutionHost, kind apierr.Kind, code, message string, err error) error {
+	var typed *apierr.Error
+	if errors.As(err, &typed) {
+		return err
+	}
+	name := host.Name
+	if strings.TrimSpace(name) == "" {
+		name = string(host.ID)
+	}
+	detail := strings.TrimSpace(err.Error())
+	if len(detail) > maxHostChannelDetail {
+		detail = detail[:maxHostChannelDetail] + "…"
+	}
+	return apierr.New(kind, code, fmt.Sprintf(message, name),
+		map[string]any{"host": string(host.ID), "hostError": detail})
+}
+
 // maxHostConcurrency caps sessions per host. The ceiling is an observation
 // budget, not a resource one: each poll of the Paseo CLI costs roughly a second
 // because the binary re-execs a helper, so a host tracking many sessions cannot
@@ -317,7 +353,8 @@ func (s *Service) Inventory(ctx context.Context, id domain.ExecutionHostID, refr
 	if refresh {
 		skills, err := s.maintenance.Inventory(ctx, host)
 		if err != nil {
-			return HostInventory{}, err
+			return HostInventory{}, HostChannelError(host, apierr.KindInternal, "HOST_INVENTORY_UNAVAILABLE",
+				"%s did not answer the skill inventory read. Test the connection on that computer, then refresh again.", err)
 		}
 		now := s.now().UTC()
 		if err := s.store.ReplaceExecutionHostSkills(ctx, host.ID, skills, now); err != nil {
@@ -325,7 +362,8 @@ func (s *Service) Inventory(ctx context.Context, id domain.ExecutionHostID, refr
 		}
 		prefs, err := s.maintenance.ReadPrefs(ctx, host)
 		if err != nil {
-			return HostInventory{}, err
+			return HostInventory{}, HostChannelError(host, apierr.KindInternal, "HOST_PREFS_READ_FAILED",
+				"%s did not answer the orchestration-preferences read. Test the connection on that computer, then refresh again.", err)
 		}
 		prefs.ConfirmedAt = now
 		if err := s.store.UpsertExecutionHostPrefs(ctx, prefs); err != nil {
@@ -377,7 +415,8 @@ func (s *Service) PutPreferences(ctx context.Context, id domain.ExecutionHostID,
 	}
 	prefs, err := s.maintenance.WritePrefs(ctx, host, []byte(content), baseSHA256)
 	if err != nil {
-		return domain.ExecutionHostPrefs{}, err
+		return domain.ExecutionHostPrefs{}, HostChannelError(host, apierr.KindInternal, "HOST_PREFS_WRITE_FAILED",
+			"%s did not accept the orchestration preferences. Nothing was written there; refresh to see what the file says now.", err)
 	}
 	prefs.ConfirmedAt = s.now().UTC()
 	if err := s.store.UpsertExecutionHostPrefs(ctx, prefs); err != nil {
@@ -436,7 +475,8 @@ func (s *Service) HostSchedules(ctx context.Context, id domain.ExecutionHostID) 
 	}
 	rows, err := s.scheduleReader(ctx, host)
 	if err != nil {
-		return nil, err
+		return nil, HostChannelError(host, apierr.KindInternal, "HOST_SCHEDULES_UNAVAILABLE",
+			"%s did not answer the schedule listing. Test the connection on that computer, then reopen this tab.", err)
 	}
 	schedules := make([]HostSchedule, 0, len(rows))
 	for _, row := range rows {
@@ -455,7 +495,11 @@ func (s *Service) DeleteHostSchedule(ctx context.Context, id domain.ExecutionHos
 	if err != nil {
 		return err
 	}
-	return s.scheduleDeleter(ctx, host, scheduleID)
+	if err := s.scheduleDeleter(ctx, host, scheduleID); err != nil {
+		return HostChannelError(host, apierr.KindInternal, "HOST_SCHEDULE_DELETE_FAILED",
+			"%s did not confirm the schedule was deleted, so it may still be there. Reopen this tab to see the current list.", err)
+	}
+	return nil
 }
 
 func (s *Service) scheduleHost(ctx context.Context, id domain.ExecutionHostID) (domain.ExecutionHost, error) {

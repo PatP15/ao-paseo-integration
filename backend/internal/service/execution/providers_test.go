@@ -3,10 +3,12 @@ package execution
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 func discoveredProviders() []domain.ExecutionHostProvider {
@@ -437,5 +439,66 @@ func TestDiffInstructionHashesFlagsBothDirections(t *testing.T) {
 		{Path: "CLAUDE.md", SHA256: "aaa"}, {Path: "AGENTS.md", SHA256: "bbb"},
 	}); !inSync || len(drifted) != 0 {
 		t.Fatalf("in-sync drift = (%v, %v)", drifted, inSync)
+	}
+}
+
+// A live host channel that fails is a fact about the computer, not an AO bug.
+// Untyped, these errors reached the envelope's catch-all and every surface told
+// the operator "Internal server error" next to their host's name.
+func TestHostChannelFailuresAreTypedAndNameTheComputer(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+	if _, err := svc.RegisterHost(ctx, validHostInput()); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.SetScheduleChannel(
+		func(_ context.Context, _ domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error) {
+			return nil, errors.New("list schedules on execution host worker-1: Paseo command failed: {\"error\":{\"code\":\"schedule_request_failed\"}}")
+		},
+		func(_ context.Context, _ domain.ExecutionHost, _ string) error {
+			return errors.New("delete schedule sch-1 on execution host worker-1: context deadline exceeded")
+		},
+	)
+
+	_, err := svc.HostSchedules(ctx, "worker-1")
+	if errCode(t, err) != "HOST_SCHEDULES_UNAVAILABLE" {
+		t.Fatalf("schedule read error = %v", err)
+	}
+	var typed *apierr.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("err = %v, want an apierr.Error", err)
+	}
+	// The operator is told which computer, by the name they gave it, and what
+	// to do next — never the adapter's sentence.
+	if !strings.Contains(typed.Message, "Linux worker") {
+		t.Fatalf("message does not name the computer: %q", typed.Message)
+	}
+	if strings.Contains(typed.Message, "Paseo command failed") {
+		t.Fatalf("message leaks the channel's words: %q", typed.Message)
+	}
+	// They survive in details, which is where support reads them.
+	if detail, _ := typed.Details["hostError"].(string); !strings.Contains(detail, "schedule_request_failed") {
+		t.Fatalf("details lost the host's own error: %#v", typed.Details)
+	}
+	if host, _ := typed.Details["host"].(string); host != "worker-1" {
+		t.Fatalf("details host = %#v", typed.Details)
+	}
+
+	if err := svc.DeleteHostSchedule(ctx, "worker-1", "sch-1"); errCode(t, err) != "HOST_SCHEDULE_DELETE_FAILED" {
+		t.Fatalf("schedule delete error = %v", err)
+	}
+
+	// A refusal the channel already classified keeps its own code: this layer
+	// only names the failures that arrive untyped.
+	svc.SetScheduleChannel(
+		func(_ context.Context, _ domain.ExecutionHost) ([]domain.ExecutionHostSchedule, error) {
+			return nil, apierr.Conflict("SCHEDULE_DRIFT", "the host's schedule list moved under the read", nil)
+		},
+		func(_ context.Context, _ domain.ExecutionHost, _ string) error { return nil },
+	)
+	if _, err := svc.HostSchedules(ctx, "worker-1"); errCode(t, err) != "SCHEDULE_DRIFT" {
+		t.Fatalf("typed channel refusal was overwritten: %v", err)
 	}
 }

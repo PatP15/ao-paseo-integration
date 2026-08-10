@@ -131,13 +131,50 @@ func (s *Store) ListActiveSessionExecutionBindingsByHost(ctx context.Context, ho
 	return bindings, nil
 }
 
-// ListActiveSessionExecutionBindings returns every live binding across all
-// hosts, for read models that annotate sessions with their execution facts in
-// one query rather than one per session.
-func (s *Store) ListActiveSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error) {
-	rows, err := s.qr.ListActiveSessionExecutionBindings(ctx)
+// ListSessionExecutionBindings returns every binding across all hosts, archived
+// ones included, for read models that annotate sessions with their execution
+// facts in one query rather than one per session. Display must not lose a
+// session's remote identity the moment the session ends: archiving withdraws a
+// binding from host capacity, not from the record.
+func (s *Store) ListSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error) {
+	rows, err := s.qr.ListSessionExecutionBindings(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list active session execution bindings: %w", err)
+		return nil, fmt.Errorf("list session execution bindings: %w", err)
+	}
+	bindings := make([]domain.SessionExecutionBinding, 0, len(rows))
+	for _, row := range rows {
+		binding, err := sessionExecutionBindingFromGen(row)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
+// ArchiveSessionExecutionBinding withdraws a session's binding from host
+// capacity, reporting whether this call is the one that did it. Idempotent: a
+// second call answers false rather than rewriting the archive time, so a
+// terminate that races the boot reconcile cannot double-count.
+func (s *Store) ArchiveSessionExecutionBinding(ctx context.Context, sessionID domain.SessionID, at time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ArchiveSessionExecutionBinding(ctx, gen.ArchiveSessionExecutionBindingParams{
+		ArchivedAt: encodeExecutionTime(at), SessionID: string(sessionID),
+	})
+	if err != nil {
+		return false, fmt.Errorf("archive session execution binding %s: %w", sessionID, err)
+	}
+	return rows > 0, nil
+}
+
+// ListActiveSessionExecutionBindingsForTerminatedSessions returns the live
+// bindings whose sessions have already ended — the leak a boot reconcile
+// repairs. See the query for why the set exists at all.
+func (s *Store) ListActiveSessionExecutionBindingsForTerminatedSessions(ctx context.Context) ([]domain.SessionExecutionBinding, error) {
+	rows, err := s.qr.ListActiveSessionExecutionBindingsForTerminatedSessions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active bindings for terminated sessions: %w", err)
 	}
 	bindings := make([]domain.SessionExecutionBinding, 0, len(rows))
 	for _, row := range rows {

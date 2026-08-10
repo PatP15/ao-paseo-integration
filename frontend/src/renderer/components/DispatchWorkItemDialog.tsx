@@ -112,6 +112,23 @@ export function DispatchWorkItemDialog({
 	}, [hostsQuery.data, bindingsQuery.data]);
 	const host = boundHosts.find((candidate) => candidate.id === hostId);
 
+	// Why a computer cannot take this work right now, in the router's own terms
+	// (service/dispatch/router.go): it skips a host that is not online and one
+	// whose live bindings already fill MaxConcurrentSessions. Both facts are in
+	// the hosts read, so the picker can say so up front instead of letting the
+	// dispatch fail with a refusal that names no computer.
+	const unavailableReason = (candidate: (typeof boundHosts)[number]): string | null => {
+		if (!candidate.reachable) return t("dispatch.computerOffline");
+		if (candidate.activeSessions >= candidate.maxConcurrentSessions) {
+			return t("dispatch.computerBusy", {
+				active: candidate.activeSessions,
+				max: candidate.maxConcurrentSessions,
+			});
+		}
+		return null;
+	};
+	const availableHosts = boundHosts.filter((candidate) => unavailableReason(candidate) === null);
+
 	const providersQuery = useQuery({
 		queryKey: ["execution-providers", hostId],
 		queryFn: async (): Promise<Provider[]> => {
@@ -230,6 +247,9 @@ export function DispatchWorkItemDialog({
 		!progress &&
 		workItem !== null &&
 		host !== undefined &&
+		// A computer that went offline or filled up while the dialog was open
+		// would refuse this dispatch; do not offer to send it there.
+		unavailableReason(host) === null &&
 		provider !== "" &&
 		harness !== null &&
 		branch.trim() !== "" &&
@@ -245,6 +265,10 @@ export function DispatchWorkItemDialog({
 		// select, with the fix in it; do not say it twice.
 		if (boundHosts.length === 0) return null;
 		if (host === undefined) return t("dispatch.blockedHost");
+		const unavailable = unavailableReason(host);
+		if (unavailable !== null) {
+			return t("dispatch.blockedComputerUnavailable", { name: host.name, reason: unavailable });
+		}
 		if (provider === "") {
 			return providersQuery.isFetching ? null : t("dispatch.blockedProvider");
 		}
@@ -406,10 +430,14 @@ export function DispatchWorkItemDialog({
 							<span className="text-xs font-medium text-settings-label">{t("dispatch.computer")}</span>
 							<SettingsOptionMenu
 								value={hostId}
-								options={boundHosts.map((entry) => ({
-									value: entry.id,
-									label: entry.name,
-								}))}
+								options={boundHosts.map((entry) => {
+									const reason = unavailableReason(entry);
+									return {
+										value: entry.id,
+										label: reason === null ? entry.name : `${entry.name} — ${reason}`,
+										disabled: reason !== null,
+									};
+								})}
 								onChange={(value) => {
 									setHostId(value);
 									setProvider("");
@@ -424,8 +452,21 @@ export function DispatchWorkItemDialog({
 							{boundHosts.length === 0 && !hostsQuery.isFetching && !bindingsQuery.isFetching ? (
 								<p className="text-xs text-warning">{t("dispatch.bindHint")}</p>
 							) : null}
+							{boundHosts.length > 0 && availableHosts.length === 0 ? (
+								<p className="text-xs text-warning">{t("dispatch.noAvailableComputers")}</p>
+							) : null}
 							{host ? (
-								<p className="text-xs text-settings-muted">{t("dispatch.trustZoneLine", { zone: host.trustZone })}</p>
+								<>
+									<p className="text-xs text-settings-muted">
+										{t("dispatch.trustZoneLine", { zone: host.trustZone })}
+									</p>
+									<p className="text-xs text-settings-muted">
+										{t("dispatch.capacityLine", {
+											active: host.activeSessions,
+											max: host.maxConcurrentSessions,
+										})}
+									</p>
+								</>
 							) : null}
 						</div>
 						<div className="grid gap-4 sm:grid-cols-2">

@@ -145,13 +145,24 @@ WHERE session_id = sqlc.arg(session_id)
 SELECT * FROM session_execution_bindings
 WHERE host_id = ? AND archived_at = '' ORDER BY session_id;
 
--- name: ListActiveSessionExecutionBindings :many
-SELECT * FROM session_execution_bindings
-WHERE archived_at = '' ORDER BY session_id;
+-- Archived rows are included on purpose: this feeds the board's remote badge,
+-- which must keep reading on a session that has ended. archived_at withdraws a
+-- binding from CAPACITY, not from history.
+-- name: ListSessionExecutionBindings :many
+SELECT * FROM session_execution_bindings ORDER BY session_id;
 
 -- name: ArchiveSessionExecutionBinding :execrows
 UPDATE session_execution_bindings SET archived_at = ?
 WHERE session_id = ? AND archived_at = '';
+
+-- Every live binding whose session has ended, which is the set a boot reconcile
+-- has to archive: a daemon that died between MarkTerminated and the archive
+-- hook would otherwise leak that session's slot on the host forever.
+-- name: ListActiveSessionExecutionBindingsForTerminatedSessions :many
+SELECT b.* FROM session_execution_bindings AS b
+JOIN sessions AS s ON s.id = b.session_id
+WHERE b.archived_at = '' AND s.is_terminated = TRUE
+ORDER BY b.session_id;
 
 -- name: InsertSessionBrief :exec
 INSERT INTO session_briefs (

@@ -1040,7 +1040,7 @@ type fakeBindingReader struct {
 	bindings map[domain.SessionID]domain.SessionExecutionBinding
 }
 
-func (f *fakeBindingReader) ListActiveSessionExecutionBindings(context.Context) ([]domain.SessionExecutionBinding, error) {
+func (f *fakeBindingReader) ListSessionExecutionBindings(context.Context) ([]domain.SessionExecutionBinding, error) {
 	out := make([]domain.SessionExecutionBinding, 0, len(f.bindings))
 	for _, binding := range f.bindings {
 		out = append(out, binding)

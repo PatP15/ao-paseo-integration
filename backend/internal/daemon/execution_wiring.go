@@ -225,6 +225,45 @@ func startExecutionObserver(
 	return observer.Start(ctx), startDispatchWorker(ctx, store, backends, logger)
 }
 
+// reconcileExecutionCapacityOnBoot releases the remote slots of sessions that
+// ended while AO was not running.
+//
+// MarkTerminated releases a slot as the session ends, but a daemon that dies
+// between the durable terminate and that hook — or one upgraded from a build
+// that had no hook at all — leaves the binding live forever. The host then
+// counts a dead session against MaxConcurrentSessions, and dispatch answers
+// "no eligible computer" with nothing in any UI able to clear it. Boot is the
+// one moment AO can see the whole set at once, so it repairs it here.
+//
+// Best-effort by the same rule as the other boot reconciles: logged, never
+// fatal. It only ever archives bindings whose session is already terminated, so
+// it cannot disturb a live remote agent.
+func reconcileExecutionCapacityOnBoot(ctx context.Context, store *sqlite.Store, logger *slog.Logger) error {
+	stale, err := store.ListActiveSessionExecutionBindingsForTerminatedSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("list leaked execution bindings: %w", err)
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	released := 0
+	for _, binding := range stale {
+		archived, err := store.ArchiveSessionExecutionBinding(ctx, binding.SessionID, now)
+		if err != nil {
+			logger.Warn("execution: releasing a leaked remote slot failed",
+				"session", binding.SessionID, "host", binding.HostID, "err", err)
+			continue
+		}
+		if archived {
+			released++
+		}
+	}
+	logger.Info("execution: released remote slots held by ended sessions",
+		"released", released, "found", len(stale))
+	return nil
+}
+
 // newQuestionNotifier turns a newly opened execution question into a
 // needs_input notification carrying the question id for deep-linking.
 //

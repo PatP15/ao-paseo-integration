@@ -835,13 +835,13 @@ func (q *Queries) InsertSessionCheckpoint(ctx context.Context, arg InsertSession
 	return result.RowsAffected()
 }
 
-const listActiveSessionExecutionBindings = `-- name: ListActiveSessionExecutionBindings :many
+const listActiveSessionExecutionBindingsByHost = `-- name: ListActiveSessionExecutionBindingsByHost :many
 SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings
-WHERE archived_at = '' ORDER BY session_id
+WHERE host_id = ? AND archived_at = '' ORDER BY session_id
 `
 
-func (q *Queries) ListActiveSessionExecutionBindings(ctx context.Context) ([]SessionExecutionBinding, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveSessionExecutionBindings)
+func (q *Queries) ListActiveSessionExecutionBindingsByHost(ctx context.Context, hostID string) ([]SessionExecutionBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveSessionExecutionBindingsByHost, hostID)
 	if err != nil {
 		return nil, err
 	}
@@ -890,13 +890,18 @@ func (q *Queries) ListActiveSessionExecutionBindings(ctx context.Context) ([]Ses
 	return items, nil
 }
 
-const listActiveSessionExecutionBindingsByHost = `-- name: ListActiveSessionExecutionBindingsByHost :many
-SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings
-WHERE host_id = ? AND archived_at = '' ORDER BY session_id
+const listActiveSessionExecutionBindingsForTerminatedSessions = `-- name: ListActiveSessionExecutionBindingsForTerminatedSessions :many
+SELECT b.session_id, b.work_item_id, b.backend_type, b.host_id, b.external_workspace_id, b.external_agent_id, b.external_parent_agent_id, b.bound_server_id, b.workspace_title, b.intent_id, b.attempt, b.labels_written_json, b.branch_name, b.host_workspace_path, b.provider, b.model, b.mode, b.dispatch_generation, b.launch_id, b.transcript_bytes, b.transcript_prefix_sha256, b.terminal_id, b.terminal_lines_consumed, b.last_observed_at, b.created_at, b.archived_at FROM session_execution_bindings AS b
+JOIN sessions AS s ON s.id = b.session_id
+WHERE b.archived_at = '' AND s.is_terminated = TRUE
+ORDER BY b.session_id
 `
 
-func (q *Queries) ListActiveSessionExecutionBindingsByHost(ctx context.Context, hostID string) ([]SessionExecutionBinding, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveSessionExecutionBindingsByHost, hostID)
+// Every live binding whose session has ended, which is the set a boot reconcile
+// has to archive: a daemon that died between MarkTerminated and the archive
+// hook would otherwise leak that session's slot on the host forever.
+func (q *Queries) ListActiveSessionExecutionBindingsForTerminatedSessions(ctx context.Context) ([]SessionExecutionBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveSessionExecutionBindingsForTerminatedSessions)
 	if err != nil {
 		return nil, err
 	}
@@ -1396,6 +1401,63 @@ func (q *Queries) ListSessionCheckpoints(ctx context.Context, sessionID string) 
 			&i.CommitSha,
 			&i.BranchPushed,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionExecutionBindings = `-- name: ListSessionExecutionBindings :many
+SELECT session_id, work_item_id, backend_type, host_id, external_workspace_id, external_agent_id, external_parent_agent_id, bound_server_id, workspace_title, intent_id, attempt, labels_written_json, branch_name, host_workspace_path, provider, model, mode, dispatch_generation, launch_id, transcript_bytes, transcript_prefix_sha256, terminal_id, terminal_lines_consumed, last_observed_at, created_at, archived_at FROM session_execution_bindings ORDER BY session_id
+`
+
+// Archived rows are included on purpose: this feeds the board's remote badge,
+// which must keep reading on a session that has ended. archived_at withdraws a
+// binding from CAPACITY, not from history.
+func (q *Queries) ListSessionExecutionBindings(ctx context.Context) ([]SessionExecutionBinding, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionExecutionBindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SessionExecutionBinding{}
+	for rows.Next() {
+		var i SessionExecutionBinding
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.WorkItemID,
+			&i.BackendType,
+			&i.HostID,
+			&i.ExternalWorkspaceID,
+			&i.ExternalAgentID,
+			&i.ExternalParentAgentID,
+			&i.BoundServerID,
+			&i.WorkspaceTitle,
+			&i.IntentID,
+			&i.Attempt,
+			&i.LabelsWrittenJson,
+			&i.BranchName,
+			&i.HostWorkspacePath,
+			&i.Provider,
+			&i.Model,
+			&i.Mode,
+			&i.DispatchGeneration,
+			&i.LaunchID,
+			&i.TranscriptBytes,
+			&i.TranscriptPrefixSha256,
+			&i.TerminalID,
+			&i.TerminalLinesConsumed,
+			&i.LastObservedAt,
+			&i.CreatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}

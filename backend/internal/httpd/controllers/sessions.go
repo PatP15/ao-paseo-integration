@@ -122,9 +122,11 @@ type SessionsController struct {
 }
 
 // SessionExecutionBindingReader is the read-only slice of the store the
-// session views use to say where a remote session runs.
+// session views use to say where a remote session runs. It reads archived
+// bindings as well as live ones: a session that has ended still ran on a
+// computer, and the board has to keep saying so after its slot is released.
 type SessionExecutionBindingReader interface {
-	ListActiveSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error)
+	ListSessionExecutionBindings(ctx context.Context) ([]domain.SessionExecutionBinding, error)
 	GetSessionExecutionBinding(ctx context.Context, sessionID domain.SessionID) (domain.SessionExecutionBinding, bool, error)
 }
 
@@ -191,7 +193,7 @@ func (c *SessionsController) annotateExecutionAll(ctx context.Context, views []S
 	if c.ExecutionBindings == nil || len(views) == 0 {
 		return views
 	}
-	bindings, err := c.ExecutionBindings.ListActiveSessionExecutionBindings(ctx)
+	bindings, err := c.ExecutionBindings.ListSessionExecutionBindings(ctx)
 	if err != nil || len(bindings) == 0 {
 		return views
 	}

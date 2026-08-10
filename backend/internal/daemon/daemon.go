@@ -377,6 +377,12 @@ func Run() error {
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
+	// Runs after the two reconciles above so the sessions they just terminated
+	// are already durable, and their remote slots are released in this same pass
+	// rather than one boot later.
+	if reconcileErr := reconcileExecutionCapacityOnBoot(ctx, store, log); reconcileErr != nil {
+		log.Error("reconcile remote capacity on boot failed", "err", reconcileErr)
+	}
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

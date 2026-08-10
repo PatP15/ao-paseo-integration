@@ -60,6 +60,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
 		lifecycle.WithContainerReaper(dockerreap.New(), store),
+		lifecycle.WithExecutionBindingArchiver(store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})

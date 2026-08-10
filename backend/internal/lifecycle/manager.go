@@ -54,6 +54,13 @@ type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+// executionBindingArchiver withdraws an ended session's remote binding from its
+// computer's capacity. Optional, like the container reaper: a build with no
+// execution storage simply never archives.
+type executionBindingArchiver interface {
+	ArchiveSessionExecutionBinding(ctx context.Context, id domain.SessionID, at time.Time) (bool, error)
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -82,6 +89,15 @@ func WithContainerReaper(reaper ports.ContainerReaper, projects projectConfigLoa
 	}
 }
 
+// WithExecutionBindingArchiver wires the remote-capacity leg of termination:
+// MarkTerminated releases the ended session's slot on the computer that ran it.
+// Without it a finished remote session holds its slot forever, and dispatch
+// eventually refuses every new work item with "no eligible computer" — a dead
+// end no UI could clear.
+func WithExecutionBindingArchiver(archiver executionBindingArchiver) Option {
+	return func(m *Manager) { m.executionBindings = archiver }
+}
+
 // WithActiveSteering supplies the adapter-provided active-turn steering
 // capability (see ports.ActiveTurnSteerer). Without it the reducer assumes no
 // harness can be steered mid-turn.
@@ -107,6 +123,7 @@ type Manager struct {
 	completionTerminator sessionTerminator
 	containers           ports.ContainerReaper
 	projects             projectConfigLoader
+	executionBindings    executionBindingArchiver
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -691,8 +708,9 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
 // caller's responsibility (see session_manager.Manager.Kill); this also reaps the
-// session's Docker containers via the optional ContainerReaper (#2652) as its one
-// built-in external side effect.
+// session's Docker containers via the optional ContainerReaper (#2652) and
+// releases its remote slot via the optional archiver, as its two built-in
+// external side effects.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
 	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
@@ -707,7 +725,32 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		return err
 	}
 	m.reapSessionContainers(ctx, id)
+	m.releaseExecutionSlot(ctx, id)
 	return nil
+}
+
+// releaseExecutionSlot is the remote-capacity counterpart to
+// reapSessionContainers: every terminal path funnels through MarkTerminated, so
+// this one hook covers kill, daemon-shutdown teardown, cleanup, replacement and
+// observer-driven termination. Called unconditionally because the archive is
+// idempotent in SQL (it only ever writes a row whose archived_at is still
+// empty), so a repeat terminate is a no-op
+// rather than a rewrite. Best-effort and logged, matching the rest of AO's
+// terminal-state teardown: a session must still end when the archive write
+// fails, and the boot reconcile picks the leak up afterwards.
+func (m *Manager) releaseExecutionSlot(ctx context.Context, id domain.SessionID) {
+	if m.executionBindings == nil {
+		return
+	}
+	archived, err := m.executionBindings.ArchiveSessionExecutionBinding(ctx, id, m.clock().UTC())
+	if err != nil {
+		slog.Default().Warn("lifecycle: releasing the remote slot failed; boot reconcile will retry",
+			"session", id, "err", err)
+		return
+	}
+	if archived {
+		slog.Default().Info("lifecycle: released the remote slot of an ended session", "session", id)
+	}
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning

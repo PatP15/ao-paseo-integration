@@ -106,6 +106,124 @@ describe("DispatchWorkItemDialog", () => {
 		expect(screen.getByRole("button", { name: "Dispatch" })).toBeDisabled();
 	});
 
+	// F-B's picker leg: the router skips an offline computer and one whose live
+	// bindings fill its session cap, so the picker has to say so before the
+	// dispatch is attempted rather than after it is refused.
+	it("marks a full computer unavailable and refuses to send work there", async () => {
+		getMock.mockImplementation((route: string) => {
+			if (route === "/api/v1/execution/hosts") {
+				return Promise.resolve({
+					data: {
+						hosts: [
+							{
+								id: "loop-worker",
+								name: "loop worker",
+								enabled: true,
+								endpoint: "127.0.0.1:6807",
+								transport: "lan",
+								trustZone: "hobby",
+								capabilities: [],
+								activeSessions: 4,
+								maxConcurrentSessions: 4,
+								reachable: true,
+								requiresNoMcp: true,
+								requiresNoRelay: true,
+							},
+						],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/bindings") {
+				return Promise.resolve({
+					data: { bindings: [{ projectId: "e2e", hostId: "loop-worker", enabled: true }] },
+					error: undefined,
+				});
+			}
+			return Promise.resolve({ data: { providers: [], skills: [] }, error: undefined });
+		});
+		renderDialog();
+		const user = userEvent.setup();
+
+		expect(
+			await screen.findByText(
+				"Every computer bound to this project is offline or full. Test its connection, or wait for a running session to finish.",
+			),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Computer" }));
+		const option = await screen.findByRole("menuitem", { name: "loop worker — busy, 4 of 4 sessions" });
+		// Radix marks a disabled item with aria-disabled rather than the form
+		// attribute, and stops it receiving the select.
+		expect(option).toHaveAttribute("aria-disabled", "true");
+	});
+
+	// An offline computer is the other refusal the router makes; the label has to
+	// name it, and the capacity line has to show the headroom on a usable one.
+	it("marks an offline computer unavailable and shows capacity for a usable one", async () => {
+		getMock.mockImplementation((route: string) => {
+			if (route === "/api/v1/execution/hosts") {
+				return Promise.resolve({
+					data: {
+						hosts: [
+							{
+								id: "office-mac",
+								name: "Office Mac",
+								enabled: true,
+								endpoint: "office-mac:6780",
+								transport: "tailscale",
+								trustZone: "work",
+								capabilities: [],
+								activeSessions: 0,
+								maxConcurrentSessions: 3,
+								reachable: false,
+								requiresNoMcp: true,
+								requiresNoRelay: true,
+							},
+							{
+								id: "loop-worker",
+								name: "loop worker",
+								enabled: true,
+								endpoint: "127.0.0.1:6807",
+								transport: "lan",
+								trustZone: "hobby",
+								capabilities: [],
+								activeSessions: 1,
+								maxConcurrentSessions: 4,
+								reachable: true,
+								requiresNoMcp: true,
+								requiresNoRelay: true,
+							},
+						],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/bindings") {
+				return Promise.resolve({
+					data: {
+						bindings: [
+							{ projectId: "e2e", hostId: "office-mac", enabled: true },
+							{ projectId: "e2e", hostId: "loop-worker", enabled: true },
+						],
+					},
+					error: undefined,
+				});
+			}
+			return Promise.resolve({ data: { providers: [], skills: [] }, error: undefined });
+		});
+		renderDialog();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Computer" }));
+		expect(await screen.findByRole("menuitem", { name: "Office Mac — offline" })).toHaveAttribute(
+			"aria-disabled",
+			"true",
+		);
+		await user.click(screen.getByRole("menuitem", { name: "loop worker" }));
+
+		expect(await screen.findByText("Running 1 of 4 sessions this computer allows.")).toBeInTheDocument();
+	});
+
 	// Every other dialog in the app offers Cancel beside its primary; this one
 	// left the header's × as the only way out.
 	it("closes from the footer's Cancel", async () => {

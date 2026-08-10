@@ -2326,3 +2326,86 @@ func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
 		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
 	}
 }
+
+// fakeExecutionBindingArchiver is a minimal executionBindingArchiver double. It
+// mirrors the store's contract: the first archive of a session answers true, a
+// repeat answers false.
+type fakeExecutionBindingArchiver struct {
+	calls    []domain.SessionID
+	archived map[domain.SessionID]bool
+	err      error
+}
+
+func (f *fakeExecutionBindingArchiver) ArchiveSessionExecutionBinding(_ context.Context, id domain.SessionID, at time.Time) (bool, error) {
+	f.calls = append(f.calls, id)
+	if f.err != nil {
+		return false, f.err
+	}
+	if at.IsZero() {
+		return false, errors.New("archive time must be set")
+	}
+	if f.archived == nil {
+		f.archived = map[domain.SessionID]bool{}
+	}
+	if f.archived[id] {
+		return false, nil
+	}
+	f.archived[id] = true
+	return true, nil
+}
+
+// TestMarkTerminated_ReleasesRemoteSlot is the F-B regression: a remote session
+// that ends must give its slot back to the computer that ran it. Before this
+// hook existed, ArchiveSessionExecutionBinding had no caller at all, every dead
+// remote session counted against MaxConcurrentSessions forever, and dispatch
+// eventually refused all new work with "no eligible computer" — with nothing in
+// any UI able to free the capacity.
+func TestMarkTerminated_ReleasesRemoteSlot(t *testing.T) {
+	archiver := &fakeExecutionBindingArchiver{}
+	st := newFakeStore()
+	m := New(st, &fakeMessenger{}, WithExecutionBindingArchiver(archiver))
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(archiver.calls) != 1 || archiver.calls[0] != "mer-1" {
+		t.Fatalf("expected the remote slot of mer-1 to be released, got %v", archiver.calls)
+	}
+}
+
+// TestMarkTerminated_RemoteSlotReleaseFailureDoesNotFailTermination holds the
+// best-effort contract the container reaper already has: the session still ends
+// when the archive write fails, and the boot reconcile repairs the leak.
+func TestMarkTerminated_RemoteSlotReleaseFailureDoesNotFailTermination(t *testing.T) {
+	archiver := &fakeExecutionBindingArchiver{err: errors.New("database is locked")}
+	st := newFakeStore()
+	m := New(st, &fakeMessenger{}, WithExecutionBindingArchiver(archiver))
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatalf("a failed slot release must not fail MarkTerminated: %v", err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated despite the archive failure")
+	}
+	if len(archiver.calls) != 1 {
+		t.Fatalf("expected the release to still be attempted, got %v", archiver.calls)
+	}
+}
+
+// TestMarkTerminated_WithoutArchiverStillTerminates keeps the hook optional, the
+// way WithContainerReaper is: a build with no execution storage must terminate
+// sessions exactly as before.
+func TestMarkTerminated_WithoutArchiverStillTerminates(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, &fakeMessenger{})
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be terminated with no archiver wired")
+	}
+}

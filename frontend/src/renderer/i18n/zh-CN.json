@@ -430,6 +430,8 @@
 	"instructions.slowRead": "仍在检查已绑定的计算机。每台都要通过网络读取，可能需要一分钟；始终没有响应的计算机会在各自的行中说明。",
 	"instructions.sync": "同步",
 	"instructions.syncFailed": "同步失败。",
+	"instructions.syncFailedOn": "AO 无法同步 {{host}}。下面是该计算机自己的输出。",
+	"instructions.syncRefused": "{{host}} 的检出中存在项目分支上没有的提交，因此 AO 拒绝对其执行快进。需要有权访问该计算机的人去处理——AO 绝不会替另一台机器合并或变基。",
 	"instructions.syncing": "同步中…",
 	"instructions.title": "指令与技能",
 	"migration.againLater": "你可以稍后再次运行。",

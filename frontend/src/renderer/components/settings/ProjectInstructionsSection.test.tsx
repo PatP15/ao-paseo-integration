@@ -9,12 +9,24 @@ const { getMock, postMock } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 }));
 
+// The two error helpers are reimplemented rather than stubbed away, because what
+// this suite checks is precisely how the section treats a typed error body: the
+// real `apiErrorMessage` staples "(CODE)" onto the message, and the row is
+// supposed to strip it once the code has chosen a sentence.
 vi.mock("../../lib/api-client", () => ({
 	apiClient: {
 		GET: (...args: unknown[]) => getMock(...args),
 		POST: (...args: unknown[]) => postMock(...args),
 	},
-	apiErrorMessage: (error: unknown) => String(error),
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null ? ((error as { code?: string }).code ?? undefined) : undefined,
+	apiErrorMessage: (error: unknown) => {
+		if (typeof error === "object" && error !== null) {
+			const body = error as { code?: string; message?: string };
+			if (body.message) return body.code ? `${body.message} (${body.code})` : body.message;
+		}
+		return String(error);
+	},
 }));
 
 type Binding = {
@@ -147,7 +159,42 @@ describe("ProjectInstructionsSection binding drift rows", () => {
 		expect(screen.queryByText("0 files drifted")).not.toBeInTheDocument();
 	});
 
-	it("reports a sync refusal on the row instead of failing silently", async () => {
+	it("says what a refused fast-forward means before quoting git, and drops the stapled code", async () => {
+		mockInstructions([
+			{
+				hostId: "worker-1",
+				hostRepoPath: "/srv/repo",
+				baseBranch: "main",
+				inSync: false,
+				driftedPaths: ["CLAUDE.md"],
+			},
+		]);
+		// The shape the channel really returns: a typed refusal carrying git's own
+		// multi-line advice (captured from the rig).
+		postMock.mockReset().mockResolvedValue({
+			data: undefined,
+			error: {
+				error: "conflict",
+				code: "MAINTENANCE_REFUSED",
+				message:
+					"git pull --ff-only: hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nfatal: Not possible to fast-forward, aborting.",
+			},
+		});
+		renderSection();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Sync" }));
+
+		const alert = await screen.findByRole("alert");
+		expect(alert.textContent).toContain("Worker one has commits in its checkout that are not on the project's branch");
+		expect(alert.textContent).toContain("AO never merges or rebases another machine's work");
+		// git's transcript is kept for the audit, verbatim...
+		expect(alert.textContent).toContain("fatal: Not possible to fast-forward, aborting.");
+		// ...but the code that chose the sentence is not stapled to the end of it.
+		expect(alert.textContent).not.toContain("(MAINTENANCE_REFUSED)");
+	});
+
+	it("reports an untyped sync failure on the row instead of failing silently", async () => {
 		mockInstructions([
 			{
 				hostId: "worker-1",

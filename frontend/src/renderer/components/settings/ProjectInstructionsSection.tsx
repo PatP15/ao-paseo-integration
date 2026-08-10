@@ -4,7 +4,7 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
 import { useExecutionHostName } from "../../hooks/useExecutionHostsQuery";
-import { apiClient, apiErrorMessage } from "../../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import { PendingLine } from "../PendingLine";
 import { SettingsDetailRow } from "./SettingsRow";
@@ -25,7 +25,10 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 	const queryClient = useQueryClient();
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const [openFile, setOpenFile] = useState<string | null>(null);
-	const [syncError, setSyncError] = useState<string | null>(null);
+	// A refused sync is kept as its code plus the channel's own words, not as one
+	// flattened string: git's refusal is worth showing verbatim for the audit, but
+	// only under a sentence that says what it means for this computer.
+	const [syncError, setSyncError] = useState<{ hostId: string; code?: string; detail: string } | null>(null);
 	const [syncingHost, setSyncingHost] = useState<string | null>(null);
 
 	const instructionsQuery = useQuery({
@@ -50,7 +53,11 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 			const { data, error } = await apiClient.POST("/api/v1/execution/bindings/{projectId}/{hostId}/sync", {
 				params: { path: { projectId, hostId } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				throw failure;
+			}
 			return data.binding;
 		},
 		onSettled: () => setSyncingHost(null),
@@ -58,7 +65,12 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 			setSyncError(null);
 			void queryClient.invalidateQueries({ queryKey: projectInstructionsQueryKey(projectId) });
 		},
-		onError: (error: unknown) => setSyncError(error instanceof Error ? error.message : t("instructions.syncFailed")),
+		onError: (error: unknown, hostId: string) =>
+			setSyncError({
+				hostId,
+				code: (error as { code?: string })?.code,
+				detail: error instanceof Error ? error.message : t("instructions.syncFailed"),
+			}),
 	});
 
 	const view = instructionsQuery.data;
@@ -157,14 +169,39 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 							))}
 						</div>
 					) : null}
-					{syncError ? (
-						<p className="px-1 text-xs text-error" role="alert">
-							{syncError}
-						</p>
-					) : null}
+					{syncError ? <SyncFailureNote failure={syncError} /> : null}
 				</>
 			) : null}
 		</SettingsSection>
+	);
+}
+
+/**
+ * One refused or failed Sync, told as a consequence before a transcript.
+ *
+ * The channel returns git's own words on purpose — AO never resolves another
+ * machine's divergence, so the operator needs the real reason — but git answers
+ * a refused fast-forward with several lines of `hint:` advice, which reflowed
+ * into one paragraph reads as "hint: hint: git merge --no-ff hint: hint: or:"
+ * with an error code stapled to the end. Lead with what it means for this
+ * computer, keep the transcript underneath as sent.
+ */
+function SyncFailureNote({ failure }: { failure: { hostId: string; code?: string; detail: string } }) {
+	const { t } = useTranslation();
+	const hostName = useExecutionHostName(failure.hostId);
+	const { code, detail } = failure;
+	// `apiErrorMessage` staples "(CODE)" on for surfaces with nowhere else to put
+	// it; here the code has already chosen the sentence above.
+	const transcript = code && detail.endsWith(`(${code})`) ? detail.slice(0, -(code.length + 2)).trim() : detail;
+	return (
+		<div className="flex flex-col gap-1 px-1 text-xs" role="alert">
+			<p className="break-words text-error">
+				{code === "MAINTENANCE_REFUSED"
+					? t("instructions.syncRefused", { host: hostName })
+					: t("instructions.syncFailedOn", { host: hostName })}
+			</p>
+			<p className="whitespace-pre-wrap break-words font-mono text-settings-muted">{transcript}</p>
+		</div>
 	);
 }
 

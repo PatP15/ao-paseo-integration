@@ -430,6 +430,8 @@
 	"instructions.slowRead": "Still checking the bound computers. Each one is read over the network, so this can take a minute; a computer that never answers is reported on its own row.",
 	"instructions.sync": "Sync",
 	"instructions.syncFailed": "Sync failed.",
+	"instructions.syncFailedOn": "AO could not sync {{host}}. The computer's own words are below.",
+	"instructions.syncRefused": "{{host}} has commits in its checkout that are not on the project's branch, so AO refused to fast-forward it. Someone with access to that computer has to reconcile it — AO never merges or rebases another machine's work.",
 	"instructions.syncing": "Syncing…",
 	"instructions.title": "Instructions & skills",
 	"migration.againLater": "You can run this again later.",

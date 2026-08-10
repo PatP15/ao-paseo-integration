@@ -278,15 +278,19 @@ export function DispatchWorkItemDialog({
 			label: t("dispatch.model"),
 			value: model,
 			options: [
-				{ value: NONE, label: t("dispatch.providerDefault") },
+				// The trigger renders this option's label, because NONE is a real
+				// value and a placeholder only shows for an unmatched one. A disabled
+				// select reading "Provider default" looks like a choice already made.
+				{
+					value: NONE,
+					label: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
+				},
 				...(providerInfo?.models ?? []).map((entry) => ({
 					value: entry.id,
 					label: entry.label || entry.id,
 				})),
 			],
-			// A disabled select that still reads "Provider default" looks like a
-			// choice already made; say what it is waiting for instead.
-			placeholder: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
+			placeholder: t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,
 			onChange: (value: string) => {
 				setModel(value);
@@ -301,7 +305,10 @@ export function DispatchWorkItemDialog({
 			// host (re-derived per discovery, so it cannot drift); a host with no
 			// such agent yet offers only its reported default-mode id.
 			options: [
-				{ value: NONE, label: t("dispatch.providerDefault") },
+				{
+					value: NONE,
+					label: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
+				},
 				...(providerInfo?.modes.length
 					? providerInfo.modes.map((entry) => ({
 							value: entry.id,
@@ -316,7 +323,7 @@ export function DispatchWorkItemDialog({
 							]
 						: []),
 			],
-			placeholder: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
+			placeholder: t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,
 			onChange: setMode,
 		},
@@ -325,13 +332,16 @@ export function DispatchWorkItemDialog({
 			label: t("dispatch.thinking"),
 			value: thinking,
 			options: [
-				{ value: NONE, label: t("dispatch.providerDefault") },
+				{
+					value: NONE,
+					label: modelInfo === undefined ? t("dispatch.awaitingModel") : t("dispatch.providerDefault"),
+				},
 				...(modelInfo?.thinkingOptionIds ?? []).map((id) => ({
 					value: id,
 					label: id,
 				})),
 			],
-			placeholder: modelInfo === undefined ? t("dispatch.awaitingModel") : t("dispatch.providerDefault"),
+			placeholder: t("dispatch.providerDefault"),
 			disabled: modelInfo === undefined,
 			onChange: setThinking,
 		},

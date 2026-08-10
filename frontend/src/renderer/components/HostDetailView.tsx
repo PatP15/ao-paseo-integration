@@ -337,7 +337,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 						aria-label={t("hostDetail.syncSource")}
 					/>
 					<input
-						className="settings-inline-input min-w-0 flex-1"
+						className="settings-inline-input settings-field min-w-0 flex-1"
 						value={syncName}
 						onChange={(event) => setSyncName(event.target.value)}
 						placeholder={t("hostDetail.syncNamePlaceholder")}
@@ -507,7 +507,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 				</label>
 				<textarea
 					id="prefsFreeform"
-					className="settings-inline-input min-h-24 w-full resize-y font-mono text-xs"
+					className="settings-inline-input settings-field min-h-24 resize-y font-mono text-xs"
 					value={freeform}
 					onChange={(event) => setFreeform(event.target.value)}
 					placeholder={t("hostDetail.freeformPlaceholder")}
@@ -597,7 +597,7 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 				{stored?.exists ? t("hostDetail.machineClaude") : t("hostDetail.machineClaudeMissing")}
 			</p>
 			<textarea
-				className="settings-inline-input min-h-64 w-full resize-y font-mono text-xs"
+				className="settings-inline-input settings-field min-h-64 resize-y font-mono text-xs"
 				value={content}
 				onChange={(event) => setContent(event.target.value)}
 				aria-label={t("hostDetail.tabInstructions")}

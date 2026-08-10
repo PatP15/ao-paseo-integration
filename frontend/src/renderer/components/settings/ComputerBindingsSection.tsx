@@ -227,7 +227,7 @@ function BindComputerDialog({
 						</label>
 						<input
 							id="bindingRepoPath"
-							className="settings-inline-input w-full"
+							className="settings-inline-input settings-field"
 							value={hostRepoPath}
 							onChange={(e) => setHostRepoPath(e.target.value)}
 							placeholder={t("settings.bindings.repoPathPlaceholder")}
@@ -240,7 +240,7 @@ function BindComputerDialog({
 						</label>
 						<input
 							id="bindingPriority"
-							className="settings-inline-input w-full"
+							className="settings-inline-input settings-field"
 							inputMode="numeric"
 							value={priority}
 							onChange={(event) => setPriority(event.target.value)}
@@ -257,7 +257,7 @@ function BindComputerDialog({
 						</label>
 						<input
 							id="bindingBaseBranch"
-							className="settings-inline-input w-full"
+							className="settings-inline-input settings-field"
 							value={baseBranch}
 							onChange={(e) => setBaseBranch(e.target.value)}
 							placeholder={t("settings.bindings.baseBranchPlaceholder")}

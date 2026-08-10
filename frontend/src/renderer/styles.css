@@ -568,6 +568,23 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 }
 
+/*
+ * Stacked, labelled form fields reuse the inline input's surface but not its
+ * value geometry. `settings-inline-input` is the RIGHT-ALIGNED value slot of a
+ * settings row, capped in width and pinned to the row height; under its own
+ * label in a dialog that reads as right-aligned prose in a clipped box, which
+ * is how the dispatch prompt and every new dialog field rendered.
+ */
+.settings-field {
+	width: 100%;
+	max-width: none;
+	min-width: 0;
+	height: auto;
+	min-height: var(--size-settings-inline-input-height);
+	padding-block: calc(var(--spacing) * 1.5);
+	text-align: left;
+}
+
 @utility settings-menu-surface {
 	display: flex;
 	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
@@ -2326,8 +2343,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-radius: 8px;
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--color-bg-secondary) 92%, transparent), transparent 118px),
-		linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%),
-		var(--bg);
+		linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%), var(--bg);
 	box-shadow:
 		0 0 0 1px color-mix(in srgb, var(--color-border) 42%, transparent),
 		0 20px 48px color-mix(in srgb, black 18%, transparent),
@@ -2399,9 +2415,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-height: 44px;
 	padding: 7px 8px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-	background:
-		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
-		var(--surface);
+	background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)), var(--surface);
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
 		0 1px 0 color-mix(in srgb, black 22%, transparent);
@@ -2477,8 +2491,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	padding-left: 29px;
 	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
 	border-radius: 7px;
-	background:
-		linear-gradient(180deg, color-mix(in srgb, var(--bg) 90%, white 2%), var(--bg));
+	background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 90%, white 2%), var(--bg));
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
 		0 1px 8px color-mix(in srgb, black 9%, transparent);

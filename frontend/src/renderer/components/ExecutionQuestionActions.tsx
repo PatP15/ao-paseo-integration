@@ -132,17 +132,13 @@ export function ExecutionQuestionActions({ questionId }: { questionId: string })
 						}}
 					>
 						<input
-							className="settings-inline-input min-w-0 flex-1"
+							className="settings-inline-input settings-field min-w-0 flex-1"
 							value={answer}
 							onChange={(event) => setAnswer(event.target.value)}
 							placeholder={t("inbox.answerPlaceholder")}
 							disabled={busy}
 						/>
-						<button
-							type="submit"
-							className="settings-option-trigger shrink-0"
-							disabled={busy || answer.trim() === ""}
-						>
+						<button type="submit" className="settings-option-trigger shrink-0" disabled={busy || answer.trim() === ""}>
 							{busy ? t("inbox.sending") : t("inbox.send")}
 						</button>
 					</form>

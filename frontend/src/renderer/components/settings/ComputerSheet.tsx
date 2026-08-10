@@ -183,7 +183,7 @@ export function ComputerSheet({
 
 	const field = "flex flex-col gap-1.5";
 	const labelClass = "text-xs font-medium text-settings-label";
-	const inputClass = "settings-inline-input w-full";
+	const inputClass = "settings-inline-input settings-field";
 
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>

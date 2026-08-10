@@ -276,7 +276,7 @@ function CreateWorkItemDialog({
 						</label>
 						<input
 							id="workItemTitle"
-							className="settings-inline-input w-full"
+							className="settings-inline-input settings-field"
 							value={title}
 							onChange={(e) => setTitle(e.target.value)}
 							autoFocus
@@ -288,7 +288,7 @@ function CreateWorkItemDialog({
 						</label>
 						<textarea
 							id="workItemBody"
-							className="settings-inline-input min-h-24 w-full resize-y"
+							className="settings-inline-input settings-field min-h-24 resize-y"
 							value={body}
 							onChange={(e) => setBody(e.target.value)}
 						/>

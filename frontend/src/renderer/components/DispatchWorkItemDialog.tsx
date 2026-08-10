@@ -446,7 +446,7 @@ export function DispatchWorkItemDialog({
 							</label>
 							<input
 								id="dispatchBranch"
-								className="settings-inline-input w-full"
+								className="settings-inline-input settings-field"
 								value={branch}
 								onChange={(e) => setBranch(e.target.value)}
 							/>
@@ -457,7 +457,7 @@ export function DispatchWorkItemDialog({
 							</label>
 							<textarea
 								id="dispatchPrompt"
-								className="settings-inline-input min-h-28 w-full resize-y"
+								className="settings-inline-input settings-field min-h-28 resize-y"
 								value={prompt}
 								onChange={(e) => setPrompt(e.target.value)}
 							/>

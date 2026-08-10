@@ -574,13 +574,17 @@ button.settings-row-bar {
  * settings row, capped in width and pinned to the row height; under its own
  * label in a dialog that reads as right-aligned prose in a clipped box, which
  * is how the dispatch prompt and every new dialog field rendered.
+ *
+ * No min-height here on purpose: this rule sits outside Tailwind's utility
+ * layer, so a min-height would beat the `min-h-*` a textarea sets and clip it
+ * back to one row. `height: auto` plus the block padding gives a single-line
+ * input the same height it had.
  */
 .settings-field {
 	width: 100%;
 	max-width: none;
 	min-width: 0;
 	height: auto;
-	min-height: var(--size-settings-inline-input-height);
 	padding-block: calc(var(--spacing) * 1.5);
 	text-align: left;
 }

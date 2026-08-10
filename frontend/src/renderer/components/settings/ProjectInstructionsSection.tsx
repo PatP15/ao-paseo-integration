@@ -132,6 +132,11 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 					)}
 					{view.bindings.length > 0 ? (
 						<div className="flex flex-col gap-1.5">
+							{/* The rows below carry three states and an action that writes to
+							    another machine, so they say what they compare and which way
+							    Sync moves — the same lead-with-the-explanation idiom the
+							    Skills and Schedules tabs use for their own flagged rows. */}
+							<p className="px-1 text-xs text-settings-muted">{t("instructions.bindingsExplanation")}</p>
 							{view.bindings.map((binding) => (
 								<BindingDriftRow
 									key={binding.hostId}

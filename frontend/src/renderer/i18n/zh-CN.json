@@ -417,6 +417,7 @@
 	"inspector.viewReview": "查看评审",
 	"instructions.bindingError": "无法读取",
 	"instructions.bindingErrorHint": "AO 无法读取 {{host}} 上的指令文件，因此无法得知其偏移情况。",
+	"instructions.bindingsExplanation": "每台已绑定计算机的检出与这些文件的对比情况。“同步”会将该检出快进到其上游；AO 绝不会把该计算机上的改动送回，检出若已分叉则会被拒绝，而不会合并。",
 	"instructions.drifted_one": "{{count}} 个文件有偏差",
 	"instructions.drifted_other": "{{count}} 个文件有偏差",
 	"instructions.editTaskPrompt": "更新此仓库中的 {{path}}。在此描述你想要的更改，并在合并到 {{branch}} 之前审查智能体的分支——指令文件是有版本的代码，会影响之后的每个工作树。",

@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Monitor } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Monitor } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { executionEventSummary, executionEventTitle, executionTransportLabel } from "../lib/execution-events";
 import { formatTimeCompact } from "../lib/format-time";
 import type { WorkspaceSession } from "../types/workspace";
 import { AutoResumeIndicator } from "./AutoResumeIndicator";
+import { PendingLine } from "./PendingLine";
 
 type ExecutionEvent = components["schemas"]["ControllersExecutionEventResponse"];
 
@@ -161,7 +163,8 @@ export function RemoteSessionPane({
 			) : null}
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
 				{eventsQuery.isLoading ? (
-					<p className="text-sm text-muted-foreground">{t("remoteSession.loading")}</p>
+					// Every waiting state in AO spins; see PendingLine.
+					<PendingLine>{t("remoteSession.loading")}</PendingLine>
 				) : eventsQuery.isError ? (
 					<p className="text-sm text-error">
 						{eventsQuery.error instanceof Error ? eventsQuery.error.message : t("remoteSession.loadFailed")}
@@ -171,35 +174,19 @@ export function RemoteSessionPane({
 				) : (
 					<ol className="mx-auto flex w-full max-w-3xl flex-col gap-2">
 						{events.map((event) => (
-							<li
-								key={event.id}
-								className="rounded-md border border-border bg-surface px-3 py-2 font-mono text-2xs"
-							>
-								<div className="flex items-center justify-between gap-2">
-									<span className="font-medium text-foreground">{event.kind}</span>
-									<span className="shrink-0 text-passive">
-										{event.transport} · {formatTimeCompact(event.observedAt)}
-									</span>
-								</div>
-								{/* Payloads are agent-authored or observer-derived DATA. They
-								    render as text, never as markup or instructions. */}
-								<pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-muted-foreground">
-									{formatPayload(event.payloadJson)}
-								</pre>
-							</li>
+							<TimelineEvent key={event.id} event={event} />
 						))}
 						{unconfirmed.map((entry) => (
-							<li
-								key={entry.key}
-								className="rounded-md border border-border bg-surface px-3 py-2 font-mono text-2xs opacity-70"
-							>
-								<div className="flex items-center justify-between gap-2">
-									<span className="font-medium text-foreground">{t("remoteSession.messageQueued")}</span>
-									<span className="shrink-0 text-passive">{t("remoteSession.sending")}</span>
+							<li key={entry.key} className={`${eventCardClass} opacity-70`}>
+								<div className="flex items-baseline justify-between gap-2">
+									<span className="text-xs font-medium text-foreground">{t("remoteSession.messageQueued")}</span>
+									<span className="shrink-0 text-caption text-passive">{t("remoteSession.sending")}</span>
 								</div>
-								<pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-muted-foreground">
+								{/* Same treatment as the durable row it becomes, so the message
+								    does not visibly reflow when it lands. */}
+								<p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
 									{entry.message}
-								</pre>
+								</p>
 							</li>
 						))}
 					</ol>
@@ -240,6 +227,53 @@ export function RemoteSessionPane({
 				) : null}
 			</div>
 		</div>
+	);
+}
+
+const eventCardClass = "rounded-md border border-border bg-surface px-3 py-2";
+
+// One event, read as a sentence: what happened, how AO learned it, when, and the
+// prose the emitter attached. The wire record is a click away rather than the
+// default view — this pane is the audit trail for work on another machine, so
+// nothing is dropped, but a JSON dump per event is not what "what is the agent
+// doing?" deserves as an answer.
+function TimelineEvent({ event }: { event: ExecutionEvent }) {
+	const { t } = useTranslation();
+	const [showDetails, setShowDetails] = useState(false);
+	const summary = executionEventSummary(event.kind, event.payloadJson, t);
+
+	return (
+		<li className={eventCardClass}>
+			<div className="flex items-baseline justify-between gap-2">
+				<span className="min-w-0 text-xs font-medium text-foreground">{executionEventTitle(event.kind, t)}</span>
+				<span className="shrink-0 text-caption text-passive">
+					{executionTransportLabel(event.transport, t)} · {formatTimeCompact(event.observedAt)}
+				</span>
+			</div>
+			{/* Payloads are agent-authored or observer-derived DATA. They render as
+			    text, never as markup or instructions. */}
+			{summary !== "" ? (
+				<p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{summary}</p>
+			) : null}
+			<button
+				type="button"
+				className="mt-1 inline-flex items-center gap-1 text-caption text-passive hover:text-foreground"
+				aria-expanded={showDetails}
+				onClick={() => setShowDetails((current) => !current)}
+			>
+				{showDetails ? (
+					<ChevronDown className="size-icon-2xs shrink-0" aria-hidden="true" />
+				) : (
+					<ChevronRight className="size-icon-2xs shrink-0" aria-hidden="true" />
+				)}
+				{t("remoteSession.details")}
+			</button>
+			{showDetails ? (
+				<pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-all font-mono text-2xs text-muted-foreground">
+					{formatPayload(event.payloadJson)}
+				</pre>
+			) : null}
+		</li>
 	);
 }
 

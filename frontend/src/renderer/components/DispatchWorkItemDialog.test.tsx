@@ -33,6 +33,23 @@ const workItem = {
 	updatedAt: "2026-08-10T06:00:00Z",
 };
 
+const HOST_LOOP = {
+	id: "loop-worker",
+	name: "loop worker",
+	enabled: true,
+	endpoint: "127.0.0.1:6807",
+	transport: "lan",
+	trustZone: "hobby",
+	capabilities: [],
+	activeSessions: 1,
+	maxConcurrentSessions: 4,
+	reachable: true,
+	requiresNoMcp: true,
+	requiresNoRelay: true,
+};
+
+const HOST_OFFICE = { ...HOST_LOOP, id: "office-mac", name: "Office Mac", endpoint: "office-mac:6780" };
+
 function renderDialog(onOpenChange = vi.fn()) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -280,6 +297,175 @@ describe("DispatchWorkItemDialog", () => {
 		expect(await screen.findByRole("button", { name: "paseo-advisor (policy-gated)" })).toBeInTheDocument();
 		// An ungated skill keeps its plain name as its accessible name.
 		expect(screen.getByRole("button", { name: "demo-skill" })).toBeInTheDocument();
+	});
+
+	// ---- the policy gate --------------------------------------------------
+	// A gated skill is the only place in the app where a click writes an audit
+	// row under the operator's name, so every part of it is pinned: what the
+	// panel promises, what each action does, what is left behind, and that the
+	// decision cannot follow the operator to another computer.
+
+	function mockGate({ twoComputers = false }: { twoComputers?: boolean } = {}) {
+		getMock.mockImplementation((route: string) => {
+			if (route === "/api/v1/execution/hosts") {
+				return Promise.resolve({
+					data: {
+						hosts: twoComputers ? [HOST_LOOP, HOST_OFFICE] : [HOST_LOOP],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/bindings") {
+				return Promise.resolve({
+					data: {
+						bindings: twoComputers
+							? [
+									{ projectId: "e2e", hostId: "loop-worker", enabled: true },
+									{ projectId: "e2e", hostId: "office-mac", enabled: true },
+								]
+							: [{ projectId: "e2e", hostId: "loop-worker", enabled: true }],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/hosts/{hostId}/inventory") {
+				return Promise.resolve({
+					data: {
+						skills: [
+							{ name: "demo-skill", description: "Demo", policyGated: false },
+							{ name: "paseo-advisor", description: "Spin up a single agent", policyGated: true },
+						],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/hosts/{hostId}/providers") {
+				return Promise.resolve({
+					data: {
+						providers: [
+							{ provider: "claude", label: "Claude", status: "available", models: [], modes: [], defaultMode: "" },
+						],
+					},
+					error: undefined,
+				});
+			}
+			return Promise.resolve({ data: { providers: [], skills: [] }, error: undefined });
+		});
+	}
+
+	async function openGate(user: ReturnType<typeof userEvent.setup>, computer = "loop worker") {
+		await user.click(await screen.findByRole("button", { name: "Computer" }));
+		await user.click(await screen.findByRole("menuitem", { name: computer }));
+		await user.click(await screen.findByRole("button", { name: "paseo-advisor (policy-gated)" }));
+	}
+
+	const promptValue = () => (screen.getByLabelText("Prompt") as HTMLTextAreaElement).value;
+
+	// The panel offered "Enable for this dispatch" above a paragraph explaining
+	// that the skill's orchestration is refused there anyway — the one thing the
+	// override cannot do. It is an audit fact that "alters nothing about the
+	// launch" (storage/sqlite/store/execution_dispatch_store.go), so the action
+	// names the only effect it has.
+	it("offers to insert a gated skill rather than to enable it", async () => {
+		mockGate();
+		renderDialog();
+		const user = userEvent.setup();
+
+		await openGate(user);
+
+		expect(await screen.findByText('"paseo-advisor" is policy-gated on loop worker.')).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Insert anyway" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Enable/ })).not.toBeInTheDocument();
+	});
+
+	// The gate's dismissal was labelled "Cancel", a few centimetres from the
+	// footer's Cancel, which abandons the whole dispatch.
+	it("names the gate's dismissal for its own scope and leaves nothing behind", async () => {
+		mockGate();
+		renderDialog();
+		const user = userEvent.setup();
+		await openGate(user);
+		const before = promptValue();
+
+		await user.click(screen.getByRole("button", { name: "Don't insert" }));
+
+		expect(screen.queryByText('"paseo-advisor" is policy-gated on loop worker.')).not.toBeInTheDocument();
+		expect(promptValue()).toBe(before);
+		expect(screen.queryByText("Overrides recorded with this dispatch")).not.toBeInTheDocument();
+	});
+
+	// Inserting used to leave no trace at all: the chip looked exactly as before,
+	// and the audit row about to be written could be neither seen nor taken back.
+	it("shows the recorded override and lets it be withdrawn without losing the text", async () => {
+		mockGate();
+		renderDialog();
+		const user = userEvent.setup();
+		await openGate(user);
+
+		await user.click(screen.getByRole("button", { name: "Insert anyway" }));
+
+		expect(promptValue()).toContain('Use the "paseo-advisor" skill');
+		expect(await screen.findByText("Overrides recorded with this dispatch")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Withdraw the recorded override for paseo-advisor" }));
+
+		expect(screen.queryByText("Overrides recorded with this dispatch")).not.toBeInTheDocument();
+		// Withdrawing is about the audit fact, not the prompt text it inserted —
+		// which the hint says, and which the operator edits in the prompt.
+		expect(promptValue()).toContain('Use the "paseo-advisor" skill');
+	});
+
+	it("sends a recorded override with the dispatch", async () => {
+		mockGate();
+		postMock.mockResolvedValue({
+			data: { sessionId: "e2e-4", commandId: "cmd-1", commandState: "pending", hostId: "loop-worker" },
+			error: undefined,
+		});
+		renderDialog();
+		const user = userEvent.setup();
+		await openGate(user);
+		await user.click(screen.getByRole("button", { name: "Insert anyway" }));
+		await user.click(screen.getByRole("button", { name: "Provider" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
+
+		await user.click(screen.getByRole("button", { name: "Dispatch" }));
+
+		expect(postMock.mock.calls[0][1].body.settings.skillPolicyOverrides).toEqual(["paseo-advisor"]);
+	});
+
+	it("stops sending an override the operator withdrew", async () => {
+		mockGate();
+		postMock.mockResolvedValue({
+			data: { sessionId: "e2e-4", commandId: "cmd-1", commandState: "pending", hostId: "loop-worker" },
+			error: undefined,
+		});
+		renderDialog();
+		const user = userEvent.setup();
+		await openGate(user);
+		await user.click(screen.getByRole("button", { name: "Insert anyway" }));
+		await user.click(screen.getByRole("button", { name: "Withdraw the recorded override for paseo-advisor" }));
+		await user.click(screen.getByRole("button", { name: "Provider" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
+
+		await user.click(screen.getByRole("button", { name: "Dispatch" }));
+
+		expect(postMock.mock.calls[0][1].body.settings).toBeUndefined();
+	});
+
+	// The audit row records the skill together with the dispatch's hostId, so an
+	// override must not survive a change of computer: it would log a decision the
+	// operator never made there.
+	it("drops an override when the computer changes", async () => {
+		mockGate({ twoComputers: true });
+		renderDialog();
+		const user = userEvent.setup();
+		await openGate(user);
+		await user.click(screen.getByRole("button", { name: "Insert anyway" }));
+		expect(await screen.findByText("Overrides recorded with this dispatch")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Computer" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Office Mac" }));
+
+		expect(screen.queryByText("Overrides recorded with this dispatch")).not.toBeInTheDocument();
 	});
 
 	// Every other dialog in the app offers Cancel beside its primary; this one

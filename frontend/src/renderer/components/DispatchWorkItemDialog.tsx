@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
@@ -445,6 +446,12 @@ export function DispatchWorkItemDialog({
 									setModel(NONE);
 									setMode(NONE);
 									setThinking(NONE);
+									// An override is a decision about a skill ON A COMPUTER: the audit
+									// row records the skill together with the dispatch's hostId. Carrying
+									// it across would log a decision the operator never made there, for a
+									// skill that computer may not even have.
+									setOverrides([]);
+									setPendingGate(null);
 								}}
 								placeholder={boundHosts.length === 0 ? t("dispatch.noBoundComputers") : t("dispatch.selectComputer")}
 								disabled={boundHosts.length === 0}
@@ -519,26 +526,68 @@ export function DispatchWorkItemDialog({
 								</div>
 								<p className="text-xs text-settings-muted">{t("dispatch.skillsHint")}</p>
 								{pendingGate ? (
-									<div className="flex flex-col gap-1.5 rounded-md border border-(--color-border-settings-input) px-3 py-2">
-										<p className="text-xs text-warning">{t("dispatch.gateExplanation", { name: pendingGate })}</p>
-										<div className="flex items-center gap-2">
-											<button
-												type="button"
-												// A decision pair inside a warning box: pressable, and
-												// neither one dressed as the recommended way out.
-												className="settings-chip-button"
-												onClick={() => {
-													setOverrides((current) => [...current, pendingGate]);
-													const skill = skills.find((entry) => entry.name === pendingGate);
-													if (skill) appendSkillSnippet(skill);
-												}}
-											>
-												{t("dispatch.gateEnable")}
-											</button>
-											<button type="button" className="settings-chip-button" onClick={() => setPendingGate(null)}>
-												{t("dispatch.gateCancel")}
-											</button>
+									// The app's warning box (CreateProjectAgentSheet): icon, a title
+									// stating the fact, body in reading colour. This decision sat in a
+									// box bordered like an input, with the whole account of it as one
+									// warning-coloured paragraph and no lead.
+									<div
+										role="alert"
+										className="flex gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md"
+									>
+										<TriangleAlert className="mt-0.5 size-icon-sm shrink-0 text-warning" aria-hidden="true" />
+										<div className="flex min-w-0 flex-col gap-1.5">
+											<p className="font-medium text-settings-label">
+												{t("dispatch.gateTitle", { name: pendingGate, computer: host?.name ?? hostId })}
+											</p>
+											<p className="text-settings-muted">{t("dispatch.gateExplanation")}</p>
+											<div className="flex items-center gap-2 pt-0.5">
+												<button
+													type="button"
+													// A decision pair inside a warning box: pressable, and neither
+													// one dressed as the recommended way out. The primary used to
+													// read "Enable for this dispatch" — the one thing it cannot do:
+													// the override is an audit fact and "alters nothing about the
+													// launch" (storage/sqlite/store/execution_dispatch_store.go).
+													className="settings-chip-button"
+													onClick={() => {
+														setOverrides((current) => [...current, pendingGate]);
+														const skill = skills.find((entry) => entry.name === pendingGate);
+														if (skill) appendSkillSnippet(skill);
+													}}
+												>
+													{t("dispatch.gateInsert")}
+												</button>
+												{/* "Cancel" here sat a few centimetres from the footer's Cancel,
+												    which abandons the whole dispatch. Same word, two scopes; this
+												    one names its own. */}
+												<button type="button" className="settings-chip-button" onClick={() => setPendingGate(null)}>
+													{t("dispatch.gateDismiss")}
+												</button>
+											</div>
 										</div>
+									</div>
+								) : null}
+								{/* The decision left no trace: once inserted, the chip looked exactly as
+								    it had before, so an audit fact about to be written under the
+								    operator's name was invisible and could not be taken back. */}
+								{overrides.length > 0 ? (
+									<div className="flex flex-col gap-1.5">
+										<span className="text-xs font-medium text-settings-label">{t("dispatch.gateRecorded")}</span>
+										<div className="flex flex-wrap items-center gap-1.5">
+											{overrides.map((name) => (
+												<button
+													key={name}
+													type="button"
+													className="settings-chip-button"
+													aria-label={t("dispatch.gateWithdraw", { name })}
+													onClick={() => setOverrides((current) => current.filter((entry) => entry !== name))}
+												>
+													{name}
+													<X className="size-icon-sm" aria-hidden="true" />
+												</button>
+											))}
+										</div>
+										<p className="text-xs text-settings-muted">{t("dispatch.gateRecordedHint")}</p>
 									</div>
 								) : null}
 							</div>

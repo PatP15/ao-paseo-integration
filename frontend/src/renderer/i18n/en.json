@@ -415,7 +415,7 @@
 	"inspector.viewPreviousReview": "View previous review",
 	"inspector.viewReview": "View review",
 	"instructions.bindingError": "Unreadable",
-	"instructions.bindingErrorHint": "AO could not read the instruction files on {{host}}, so its drift is unknown. Test the connection on that computer, then reopen this page.",
+	"instructions.bindingErrorHint": "AO could not read the instruction files on {{host}}, so its drift is unknown.",
 	"instructions.drifted_one": "{{count}} file drifted",
 	"instructions.drifted_other": "{{count}} files drifted",
 	"instructions.editTaskPrompt": "Update {{path}} in this repository. Describe the change you want here, then review the agent's branch before merging to {{branch}} — instruction files are versioned code and reach every future worktree.",

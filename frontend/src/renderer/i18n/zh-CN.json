@@ -415,7 +415,7 @@
 	"inspector.viewPreviousReview": "查看上次评审",
 	"inspector.viewReview": "查看评审",
 	"instructions.bindingError": "无法读取",
-	"instructions.bindingErrorHint": "AO 无法读取 {{host}} 上的指令文件，因此无法判断是否有偏差。请在该计算机上测试连接后重新打开本页。",
+	"instructions.bindingErrorHint": "AO 无法读取 {{host}} 上的指令文件，因此无法得知其偏移情况。",
 	"instructions.drifted_one": "{{count}} 个文件有偏差",
 	"instructions.drifted_other": "{{count}} 个文件有偏差",
 	"instructions.editTaskPrompt": "更新此仓库中的 {{path}}。在此描述你想要的更改，并在合并到 {{branch}} 之前审查智能体的分支——指令文件是有版本的代码，会影响之后的每个工作树。",

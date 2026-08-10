@@ -201,7 +201,11 @@ function BindingDriftRow({
 			meta={
 				binding.error ? (
 					<>
-						<p className="break-words text-error">{t("instructions.bindingErrorHint", { host: hostName })}</p>
+						{/* Two lines, no overlap: what the failed read means for this row,
+					    then the reason the daemon gave — which since `ea6b008` is itself an
+					    operator-facing sentence naming the next step, so the line above no
+					    longer repeats "test the connection". */}
+					<p className="break-words text-error">{t("instructions.bindingErrorHint", { host: hostName })}</p>
 						<p className="break-words text-settings-muted">{binding.error}</p>
 					</>
 				) : !binding.inSync ? (

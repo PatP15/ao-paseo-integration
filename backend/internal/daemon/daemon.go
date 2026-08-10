@@ -328,6 +328,7 @@ func Run() error {
 		ExecutionSecrets:  secretstore.New(cfg.DataDir),
 		AutoResume:        autoresumesvc.New(store),
 		WorkItems:         workItemSvc,
+		WorkItemClaims:    store,
 	})
 	if err != nil {
 		stop()

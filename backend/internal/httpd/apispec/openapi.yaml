@@ -4139,6 +4139,11 @@ components:
           - approved
           - rejected
           type: string
+        note:
+          description: 'Reason recorded with the decision. Optional, and most useful
+            on a rejection: it is the only explanation anyone but the decider will
+            see.'
+          type: string
       type: object
     AutoResumeSettingsResponse:
       properties:
@@ -6858,6 +6863,9 @@ components:
           type: string
         createdByType:
           type: string
+        decisionNote:
+          description: Reason the decider recorded with the approval decision.
+          type: string
         excludedScope:
           items:
             type: string
@@ -6881,6 +6889,12 @@ components:
           type: string
         riskLevel:
           type: string
+        sessionIds:
+          description: Sessions that have worked this item, oldest attempt first.
+            The last one is where the work is now.
+          items:
+            type: string
+          type: array
         title:
           type: string
         updatedAt:
@@ -6899,6 +6913,7 @@ components:
       - lifecycleFact
       - priority
       - createdByType
+      - sessionIds
       - createdAt
       - updatedAt
       type: object

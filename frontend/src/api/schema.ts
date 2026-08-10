@@ -1376,6 +1376,8 @@ export interface components {
              * @enum {string}
              */
             decision?: "approved" | "rejected";
+            /** @description Reason recorded with the decision. Optional, and most useful on a rejection: it is the only explanation anyone but the decider will see. */
+            note?: string;
         };
         AutoResumeSettingsResponse: {
             /** @description What an empty resumePrompt resolves to. */
@@ -2450,6 +2452,8 @@ export interface components {
             createdAt: string;
             createdById?: string;
             createdByType: string;
+            /** @description Reason the decider recorded with the approval decision. */
+            decisionNote?: string;
             excludedScope: string[];
             id: string;
             /** @enum {string} */
@@ -2459,6 +2463,8 @@ export interface components {
             priority: number;
             projectId: string;
             riskLevel: string;
+            /** @description Sessions that have worked this item, oldest attempt first. The last one is where the work is now. */
+            sessionIds: string[];
             title: string;
             /** Format: date-time */
             updatedAt: string;

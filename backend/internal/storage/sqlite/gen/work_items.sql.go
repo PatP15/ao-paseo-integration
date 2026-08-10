@@ -46,7 +46,7 @@ func (q *Queries) DeleteWorkItemDependencies(ctx context.Context, workItemID str
 }
 
 const getWorkItem = `-- name: GetWorkItem :one
-SELECT id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at FROM work_items WHERE id = ?
+SELECT id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at, decision_note FROM work_items WHERE id = ?
 `
 
 func (q *Queries) GetWorkItem(ctx context.Context, id string) (WorkItem, error) {
@@ -72,6 +72,7 @@ func (q *Queries) GetWorkItem(ctx context.Context, id string) (WorkItem, error) 
 		&i.ApprovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DecisionNote,
 	)
 	return i, err
 }
@@ -154,8 +155,48 @@ func (q *Queries) ListWorkItemSessions(ctx context.Context, workItemID string) (
 	return items, nil
 }
 
+const listWorkItemSessionsByProject = `-- name: ListWorkItemSessionsByProject :many
+SELECT wis.work_item_id, wis.session_id, wis.role, wis.attempt_number, wis.is_active_owner, wis.created_at, wis.released_at FROM work_item_sessions AS wis
+JOIN work_items AS wi ON wi.id = wis.work_item_id
+WHERE wi.project_id = ?
+ORDER BY wis.work_item_id, wis.attempt_number, wis.created_at
+`
+
+// Every session claim in one project, so a work-item list can carry the path to
+// the session running each item without one query per row.
+func (q *Queries) ListWorkItemSessionsByProject(ctx context.Context, projectID string) ([]WorkItemSession, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkItemSessionsByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkItemSession{}
+	for rows.Next() {
+		var i WorkItemSession
+		if err := rows.Scan(
+			&i.WorkItemID,
+			&i.SessionID,
+			&i.Role,
+			&i.AttemptNumber,
+			&i.IsActiveOwner,
+			&i.CreatedAt,
+			&i.ReleasedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkItemsByProject = `-- name: ListWorkItemsByProject :many
-SELECT id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at FROM work_items WHERE project_id = ? ORDER BY priority, created_at, id
+SELECT id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at, decision_note FROM work_items WHERE project_id = ? ORDER BY priority, created_at, id
 `
 
 func (q *Queries) ListWorkItemsByProject(ctx context.Context, projectID string) ([]WorkItem, error) {
@@ -187,6 +228,7 @@ func (q *Queries) ListWorkItemsByProject(ctx context.Context, projectID string) 
 			&i.ApprovedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DecisionNote,
 		); err != nil {
 			return nil, err
 		}
@@ -243,15 +285,17 @@ func (q *Queries) ReleaseWorkItemSession(ctx context.Context, arg ReleaseWorkIte
 
 const setWorkItemApproval = `-- name: SetWorkItemApproval :one
 UPDATE work_items
-SET approval_state = ?, approved_by = ?, approved_at = ?, updated_at = ?
+SET approval_state = ?, approved_by = ?, approved_at = ?, decision_note = ?,
+    updated_at = ?
 WHERE id = ? AND approval_state IN ('draft', 'proposed')
-RETURNING id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at
+RETURNING id, project_id, parent_work_item_id, title, body, acceptance_criteria_json, allowed_scope_json, excluded_scope_json, risk_level, policy_profile_id, approval_state, lifecycle_fact, priority, created_by_type, created_by_id, approved_by, approved_at, created_at, updated_at, decision_note
 `
 
 type SetWorkItemApprovalParams struct {
 	ApprovalState string
 	ApprovedBy    string
 	ApprovedAt    string
+	DecisionNote  string
 	UpdatedAt     string
 	ID            string
 }
@@ -261,6 +305,7 @@ func (q *Queries) SetWorkItemApproval(ctx context.Context, arg SetWorkItemApprov
 		arg.ApprovalState,
 		arg.ApprovedBy,
 		arg.ApprovedAt,
+		arg.DecisionNote,
 		arg.UpdatedAt,
 		arg.ID,
 	)
@@ -285,6 +330,7 @@ func (q *Queries) SetWorkItemApproval(ctx context.Context, arg SetWorkItemApprov
 		&i.ApprovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DecisionNote,
 	)
 	return i, err
 }
@@ -294,9 +340,9 @@ INSERT INTO work_items (
     id, project_id, parent_work_item_id, title, body,
     acceptance_criteria_json, allowed_scope_json, excluded_scope_json,
     risk_level, policy_profile_id, approval_state, lifecycle_fact, priority,
-    created_by_type, created_by_id, approved_by, approved_at, created_at,
-    updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_by_type, created_by_id, approved_by, approved_at, decision_note,
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     project_id = excluded.project_id,
     parent_work_item_id = excluded.parent_work_item_id,
@@ -314,6 +360,7 @@ ON CONFLICT (id) DO UPDATE SET
     created_by_id = excluded.created_by_id,
     approved_by = excluded.approved_by,
     approved_at = excluded.approved_at,
+    decision_note = excluded.decision_note,
     updated_at = excluded.updated_at
 `
 
@@ -335,6 +382,7 @@ type UpsertWorkItemParams struct {
 	CreatedByID            string
 	ApprovedBy             string
 	ApprovedAt             string
+	DecisionNote           string
 	CreatedAt              string
 	UpdatedAt              string
 }
@@ -358,6 +406,7 @@ func (q *Queries) UpsertWorkItem(ctx context.Context, arg UpsertWorkItemParams) 
 		arg.CreatedByID,
 		arg.ApprovedBy,
 		arg.ApprovedAt,
+		arg.DecisionNote,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

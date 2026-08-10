@@ -35,7 +35,8 @@ func (s *Store) UpsertWorkItem(ctx context.Context, item domain.WorkItem) error 
 		PolicyProfileID: item.PolicyProfileID, ApprovalState: string(item.ApprovalState),
 		LifecycleFact: string(item.LifecycleFact), Priority: int64(item.Priority), CreatedByType: item.CreatedByType,
 		CreatedByID: item.CreatedByID, ApprovedBy: item.ApprovedBy, ApprovedAt: encodeExecutionTime(item.ApprovedAt),
-		CreatedAt: encodeExecutionTime(item.CreatedAt), UpdatedAt: encodeExecutionTime(item.UpdatedAt),
+		DecisionNote: item.DecisionNote,
+		CreatedAt:    encodeExecutionTime(item.CreatedAt), UpdatedAt: encodeExecutionTime(item.UpdatedAt),
 	})
 }
 
@@ -56,10 +57,10 @@ func (s *Store) GetWorkItem(ctx context.Context, id string) (domain.WorkItem, bo
 }
 
 // SetWorkItemApproval atomically decides a draft or proposed work item as
-// approved or rejected. A false result means either the item does not exist or
-// its approval state no longer permits a decision; callers can GetWorkItem to
-// distinguish the two.
-func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver string, decision domain.WorkItemApproval, at time.Time) (domain.WorkItem, bool, error) {
+// approved or rejected, recording the reason the human gave with it. A false
+// result means either the item does not exist or its approval state no longer
+// permits a decision; callers can GetWorkItem to distinguish the two.
+func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver, note string, decision domain.WorkItemApproval, at time.Time) (domain.WorkItem, bool, error) {
 	if decision != domain.WorkItemApproved && decision != domain.WorkItemRejected {
 		return domain.WorkItem{}, false, fmt.Errorf("approval decision must be approved or rejected, got %q", decision)
 	}
@@ -69,6 +70,7 @@ func (s *Store) SetWorkItemApproval(ctx context.Context, id, approver string, de
 		ApprovalState: string(decision),
 		ApprovedBy:    approver,
 		ApprovedAt:    encodeExecutionTime(at),
+		DecisionNote:  note,
 		UpdatedAt:     encodeExecutionTime(at),
 		ID:            id,
 	})
@@ -117,6 +119,33 @@ func (s *Store) ClaimWorkItemSession(ctx context.Context, claim domain.WorkItemS
 	return nil
 }
 
+// ListWorkItemSessionsByProject returns every session claim in one project,
+// ordered by work item then attempt, so a work-item list can carry the path to
+// the session working each item in a single read.
+func (s *Store) ListWorkItemSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]domain.WorkItemSession, error) {
+	rows, err := s.qr.ListWorkItemSessionsByProject(ctx, string(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("list work item sessions for project %s: %w", projectID, err)
+	}
+	claims := make([]domain.WorkItemSession, 0, len(rows))
+	for _, row := range rows {
+		created, err := decodeExecutionTime(row.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode work item %s claim created time: %w", row.WorkItemID, err)
+		}
+		released, err := decodeExecutionTime(row.ReleasedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode work item %s claim released time: %w", row.WorkItemID, err)
+		}
+		claims = append(claims, domain.WorkItemSession{
+			WorkItemID: row.WorkItemID, SessionID: domain.SessionID(row.SessionID),
+			Role: domain.WorkItemSessionRole(row.Role), Attempt: int(row.AttemptNumber),
+			ActiveOwner: row.IsActiveOwner != 0, CreatedAt: created, ReleasedAt: released,
+		})
+	}
+	return claims, nil
+}
+
 // ReleaseWorkItemSession clears a held ownership claim.
 func (s *Store) ReleaseWorkItemSession(ctx context.Context, workItemID string, sessionID domain.SessionID, releasedAt string) (bool, error) {
 	s.writeMu.Lock()
@@ -163,7 +192,8 @@ func workItemFromGen(row gen.WorkItem) (domain.WorkItem, error) {
 		ExcludedScope: excluded, RiskLevel: row.RiskLevel, PolicyProfileID: row.PolicyProfileID,
 		ApprovalState: domain.WorkItemApproval(row.ApprovalState), LifecycleFact: domain.WorkItemLifecycle(row.LifecycleFact),
 		Priority: int(row.Priority), CreatedByType: row.CreatedByType, CreatedByID: row.CreatedByID,
-		ApprovedBy: row.ApprovedBy, ApprovedAt: approved, CreatedAt: created, UpdatedAt: updated,
+		ApprovedBy: row.ApprovedBy, ApprovedAt: approved, DecisionNote: row.DecisionNote,
+		CreatedAt: created, UpdatedAt: updated,
 	}, nil
 }
 

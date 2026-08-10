@@ -3,9 +3,9 @@ INSERT INTO work_items (
     id, project_id, parent_work_item_id, title, body,
     acceptance_criteria_json, allowed_scope_json, excluded_scope_json,
     risk_level, policy_profile_id, approval_state, lifecycle_fact, priority,
-    created_by_type, created_by_id, approved_by, approved_at, created_at,
-    updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_by_type, created_by_id, approved_by, approved_at, decision_note,
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     project_id = excluded.project_id,
     parent_work_item_id = excluded.parent_work_item_id,
@@ -23,6 +23,7 @@ ON CONFLICT (id) DO UPDATE SET
     created_by_id = excluded.created_by_id,
     approved_by = excluded.approved_by,
     approved_at = excluded.approved_at,
+    decision_note = excluded.decision_note,
     updated_at = excluded.updated_at;
 
 -- name: GetWorkItem :one
@@ -30,7 +31,8 @@ SELECT * FROM work_items WHERE id = ?;
 
 -- name: SetWorkItemApproval :one
 UPDATE work_items
-SET approval_state = ?, approved_by = ?, approved_at = ?, updated_at = ?
+SET approval_state = ?, approved_by = ?, approved_at = ?, decision_note = ?,
+    updated_at = ?
 WHERE id = ? AND approval_state IN ('draft', 'proposed')
 RETURNING *;
 
@@ -66,3 +68,11 @@ WHERE work_item_id = ? AND session_id = ? AND is_active_owner = 1;
 
 -- name: ListWorkItemSessions :many
 SELECT * FROM work_item_sessions WHERE work_item_id = ? ORDER BY attempt_number, created_at;
+
+-- Every session claim in one project, so a work-item list can carry the path to
+-- the session running each item without one query per row.
+-- name: ListWorkItemSessionsByProject :many
+SELECT wis.* FROM work_item_sessions AS wis
+JOIN work_items AS wi ON wi.id = wis.work_item_id
+WHERE wi.project_id = ?
+ORDER BY wis.work_item_id, wis.attempt_number, wis.created_at;

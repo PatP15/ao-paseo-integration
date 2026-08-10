@@ -28,6 +28,7 @@ const workItem = {
 	lifecycleFact: "open" as const,
 	priority: 30,
 	createdByType: "human",
+	sessionIds: [],
 	createdAt: "2026-08-10T06:00:00Z",
 	updatedAt: "2026-08-10T06:00:00Z",
 };

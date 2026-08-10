@@ -46,8 +46,12 @@ type WorkItem struct {
 	CreatedByID        string
 	ApprovedBy         string
 	ApprovedAt         time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// DecisionNote is the reason the human gave with the approval decision. It
+	// matters most on a rejection: without it, "Rejected" is a dead end for
+	// everyone except whoever decided.
+	DecisionNote string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // WorkItemSessionRole describes how a session participates in a work item.

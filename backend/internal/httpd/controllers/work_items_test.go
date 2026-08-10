@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,8 +23,8 @@ import (
 type fakeWorkItemService struct {
 	created workitemsvc.CreateInput
 	decided struct {
-		id, by   string
-		decision domain.WorkItemApproval
+		id, by, note string
+		decision     domain.WorkItemApproval
 	}
 	items []domain.WorkItem
 }
@@ -39,13 +40,14 @@ func (f *fakeWorkItemService) Create(_ context.Context, in workitemsvc.CreateInp
 	}, nil
 }
 
-func (f *fakeWorkItemService) Decide(_ context.Context, id, by string, decision domain.WorkItemApproval) (domain.WorkItem, error) {
-	f.decided.id, f.decided.by, f.decided.decision = id, by, decision
+func (f *fakeWorkItemService) Decide(_ context.Context, id, by, note string, decision domain.WorkItemApproval) (domain.WorkItem, error) {
+	f.decided.id, f.decided.by, f.decided.note, f.decided.decision = id, by, note, decision
 	at := time.Unix(200, 0).UTC()
 	return domain.WorkItem{
 		ID: id, ProjectID: "project", Title: "Ship G1", ApprovalState: decision,
 		LifecycleFact: domain.WorkItemOpen, Priority: 100, CreatedByType: "human",
-		ApprovedBy: by, ApprovedAt: at, CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: at,
+		ApprovedBy: by, ApprovedAt: at, DecisionNote: note,
+		CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: at,
 	}, nil
 }
 
@@ -105,7 +107,7 @@ func TestWorkItemRoutesCreateApproveAndList(t *testing.T) {
 		t.Fatalf("decision without body field = %q, want approved", svc.decided.decision)
 	}
 
-	reject := httptest.NewRequest(http.MethodPost, "/api/v1/work-items/wi_1/approval", jsonBody(`{"approver":"operator","decision":"rejected"}`))
+	reject := httptest.NewRequest(http.MethodPost, "/api/v1/work-items/wi_1/approval", jsonBody(`{"approver":"operator","decision":"rejected","note":"superseded by wi_9"}`))
 	reject.Header.Set("Content-Type", "application/json")
 	rejected := httptest.NewRecorder()
 	router.ServeHTTP(rejected, reject)
@@ -118,6 +120,9 @@ func TestWorkItemRoutesCreateApproveAndList(t *testing.T) {
 	}
 	if rejectOut.WorkItem.ApprovalState != domain.WorkItemRejected {
 		t.Fatalf("reject response state = %q", rejectOut.WorkItem.ApprovalState)
+	}
+	if svc.decided.note != "superseded by wi_9" || rejectOut.WorkItem.DecisionNote != "superseded by wi_9" {
+		t.Fatalf("reject note: service saw %q, response carried %q", svc.decided.note, rejectOut.WorkItem.DecisionNote)
 	}
 
 	get := httptest.NewRecorder()
@@ -150,6 +155,93 @@ func TestWorkItemRoutesCreateApproveAndList(t *testing.T) {
 	}
 	if len(listOut.WorkItems) != 1 || listOut.WorkItems[0].ID != "wi_1" {
 		t.Fatalf("list response = %#v", listOut)
+	}
+}
+
+// fakeWorkItemClaims is a minimal WorkItemSessionClaimReader double.
+type fakeWorkItemClaims struct {
+	claims []domain.WorkItemSession
+	err    error
+}
+
+func (f *fakeWorkItemClaims) ListWorkItemSessionsByProject(_ context.Context, _ domain.ProjectID) ([]domain.WorkItemSession, error) {
+	return f.claims, f.err
+}
+
+// TestWorkItemListCarriesTheDecisionReasonAndItsSessions is the F-W wire pin: a
+// rejected item had no reason anywhere in its JSON, and a dispatched one had no
+// path to the session doing the work.
+func TestWorkItemListCarriesTheDecisionReasonAndItsSessions(t *testing.T) {
+	svc := &fakeWorkItemService{items: []domain.WorkItem{
+		{
+			ID: "wi_1", ProjectID: "project", Title: "Rejected work", ApprovalState: domain.WorkItemRejected,
+			LifecycleFact: domain.WorkItemOpen, Priority: 10, CreatedByType: "human", ApprovedBy: "pat",
+			DecisionNote: "superseded by wi_9", CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: time.Unix(200, 0).UTC(),
+		},
+		{
+			ID: "wi_2", ProjectID: "project", Title: "Running work", ApprovalState: domain.WorkItemApproved,
+			LifecycleFact: domain.WorkItemInProgress, Priority: 20, CreatedByType: "human",
+			CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: time.Unix(200, 0).UTC(),
+		},
+	}}
+	claims := &fakeWorkItemClaims{claims: []domain.WorkItemSession{
+		{WorkItemID: "wi_2", SessionID: "e2e-2", Role: domain.WorkItemRoleImplementer, Attempt: 1},
+		{WorkItemID: "wi_2", SessionID: "e2e-3", Role: domain.WorkItemRoleImplementer, Attempt: 2, ActiveOwner: true},
+	}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil,
+		httpd.APIDeps{WorkItems: svc, WorkItemClaims: claims}, httpd.ControlDeps{})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/work-items?projectId=project", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out controllers.ListWorkItemsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.WorkItems) != 2 {
+		t.Fatalf("list = %#v", out)
+	}
+	if out.WorkItems[0].DecisionNote != "superseded by wi_9" {
+		t.Fatalf("rejected item note = %q, want the reason the decider gave", out.WorkItems[0].DecisionNote)
+	}
+	// Claim order, so the newest attempt is last: that is where the work is now.
+	if got := out.WorkItems[1].SessionIDs; len(got) != 2 || got[0] != "e2e-2" || got[1] != "e2e-3" {
+		t.Fatalf("session ids = %#v, want both attempts oldest first", got)
+	}
+	// An item nothing has run gets an empty array, never a null the UI has to
+	// guard.
+	if out.WorkItems[0].SessionIDs == nil || len(out.WorkItems[0].SessionIDs) != 0 {
+		t.Fatalf("undispatched item session ids = %#v, want []", out.WorkItems[0].SessionIDs)
+	}
+}
+
+// TestWorkItemListSurvivesAFailedClaimRead holds the advisory contract: session
+// links are display data, so a failed claim read must not fail the list.
+func TestWorkItemListSurvivesAFailedClaimRead(t *testing.T) {
+	svc := &fakeWorkItemService{items: []domain.WorkItem{{
+		ID: "wi_1", ProjectID: "project", Title: "Work", ApprovalState: domain.WorkItemApproved,
+		LifecycleFact: domain.WorkItemOpen, Priority: 10, CreatedByType: "human",
+		CreatedAt: time.Unix(100, 0).UTC(), UpdatedAt: time.Unix(200, 0).UTC(),
+	}}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil,
+		httpd.APIDeps{WorkItems: svc, WorkItemClaims: &fakeWorkItemClaims{err: errors.New("database is locked")}},
+		httpd.ControlDeps{})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/work-items?projectId=project", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out controllers.ListWorkItemsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.WorkItems) != 1 || len(out.WorkItems[0].SessionIDs) != 0 {
+		t.Fatalf("list = %#v, want the item with no session links", out)
 	}
 }
 

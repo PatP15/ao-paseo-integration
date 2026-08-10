@@ -472,6 +472,7 @@ type WorkItem struct {
 	ApprovedAt             string
 	CreatedAt              string
 	UpdatedAt              string
+	DecisionNote           string
 }
 
 type WorkItemDep struct {

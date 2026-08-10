@@ -77,6 +77,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 	const queryClient = useQueryClient();
 	const [createOpen, setCreateOpen] = useState(false);
 	const [dispatchItem, setDispatchItem] = useState<WorkItem | null>(null);
+	const [rejectItem, setRejectItem] = useState<WorkItem | null>(null);
 	const [decisionError, setDecisionError] = useState<string | null>(null);
 
 	const itemsQuery = useQuery({
@@ -92,16 +93,17 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 	});
 
 	const decideMutation = useMutation({
-		mutationFn: async ({ id, decision }: { id: string; decision: "approved" | "rejected" }) => {
+		mutationFn: async ({ id, decision, note }: { id: string; decision: "approved" | "rejected"; note?: string }) => {
 			// No approver named: the daemon records the OS user running it.
 			const { error } = await apiClient.POST("/api/v1/work-items/{id}/approval", {
 				params: { path: { id } },
-				body: { decision },
+				body: { decision, note },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 		},
 		onSuccess: () => {
 			setDecisionError(null);
+			setRejectItem(null);
 			void queryClient.invalidateQueries({ queryKey: workItemsQueryKey(projectId) });
 		},
 		onError: (error: unknown) =>
@@ -163,6 +165,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 						{items.map((item) => {
 							const decidable = item.approvalState === "draft" || item.approvalState === "proposed";
 							const dispatchable = item.approvalState === "approved" && item.lifecycleFact === "open";
+							const session = item.sessionIds.at(-1);
 							return (
 								<div key={item.id} className="rounded-lg border border-border bg-surface px-4 py-3">
 									<div className="flex items-start justify-between gap-3">
@@ -183,7 +186,32 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 														{t("workItems.decidedBy", { name: item.approvedBy })}
 													</span>
 												) : null}
+												{/* The path from a work item to the session doing the
+												    work. The newest attempt is last, which is where the
+												    work actually is. */}
+												{session !== undefined ? (
+													<button
+														type="button"
+														className="settings-option-trigger"
+														onClick={() =>
+															void navigate({
+																to: "/projects/$projectId/sessions/$sessionId",
+																params: { projectId, sessionId: session },
+															})
+														}
+													>
+														{t("workItems.openSession")}
+													</button>
+												) : null}
 											</div>
+											{/* A decision's reason, which for a rejection is the only
+											    explanation anyone but the decider will ever see. */}
+											{item.decisionNote ? (
+												<p className="mt-1.5 text-xs text-settings-muted">{item.decisionNote}</p>
+											) : null}
+											{item.approvalState === "rejected" ? (
+												<p className="mt-1 text-caption text-settings-muted">{t("workItems.rejectedHint")}</p>
+											) : null}
 										</div>
 										{dispatchable ? (
 											<div className="flex shrink-0 items-center gap-2">
@@ -212,7 +240,10 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 													type="button"
 													className="settings-option-trigger inline-flex items-center gap-1.5"
 													disabled={decideMutation.isPending}
-													onClick={() => decideMutation.mutate({ id: item.id, decision: "rejected" })}
+													onClick={() => {
+														setDecisionError(null);
+														setRejectItem(item);
+													}}
 												>
 													<X className="size-icon-base" aria-hidden="true" />
 													{t("workItems.reject")}
@@ -227,6 +258,18 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 				)}
 			</div>
 			<CreateWorkItemDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
+			<RejectWorkItemDialog
+				workItem={rejectItem}
+				open={rejectItem !== null}
+				pending={decideMutation.isPending}
+				error={decisionError}
+				onOpenChange={(next) => {
+					if (!next) setRejectItem(null);
+				}}
+				onReject={(note) => {
+					if (rejectItem) decideMutation.mutate({ id: rejectItem.id, decision: "rejected", note });
+				}}
+			/>
 			<DispatchWorkItemDialog
 				projectId={projectId}
 				workItem={dispatchItem}
@@ -236,6 +279,96 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 				}}
 			/>
 		</CenterPanelShell>
+	);
+}
+
+/**
+ * The reason a rejection carries.
+ *
+ * Rejecting used to be a single click that recorded "Rejected" and the
+ * decider's name, and nothing else: the next person to open the list could not
+ * tell whether the work was wrong, premature, or already done elsewhere, and
+ * the decision is final, so there was no way to ask. The reason is required
+ * here for exactly that reason — with the blocked hint naming it, the way every
+ * other gated primary in the app does.
+ */
+export function RejectWorkItemDialog({
+	workItem,
+	open,
+	pending,
+	error,
+	onOpenChange,
+	onReject,
+}: {
+	workItem: WorkItem | null;
+	open: boolean;
+	pending: boolean;
+	error: string | null;
+	onOpenChange: (open: boolean) => void;
+	onReject: (note: string) => void;
+}) {
+	const { t } = useTranslation();
+	const [note, setNote] = useState("");
+
+	useEffect(() => {
+		if (!open) setNote("");
+	}, [open]);
+
+	const canSubmit = note.trim() !== "" && !pending;
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
+			<DialogContent className={settingsDialogContentClass}>
+				<DialogHeader className={settingsDialogHeaderClass}>
+					<DialogTitle className="settings-dialog-title">{t("workItems.rejectTitle")}</DialogTitle>
+					<DialogDescription>{t("workItems.rejectDescription")}</DialogDescription>
+				</DialogHeader>
+				<form
+					className="flex flex-col gap-4 px-1"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (canSubmit) onReject(note.trim());
+					}}
+				>
+					{/* Which item: a list can hold several with similar names, and the
+					    dialog's title cannot say. */}
+					<p className="text-xs font-medium text-settings-label">{workItem?.title}</p>
+					<div className="flex flex-col gap-1.5">
+						<label className="text-xs font-medium text-settings-label" htmlFor="workItemRejectReason">
+							{t("workItems.rejectFieldReason")}
+						</label>
+						<textarea
+							id="workItemRejectReason"
+							className="settings-inline-input settings-field min-h-20 resize-y"
+							value={note}
+							onChange={(event) => setNote(event.target.value)}
+							autoFocus
+						/>
+					</div>
+					{note.trim() === "" && !pending ? (
+						<p className="text-xs text-settings-muted">{t("workItems.blockedReason")}</p>
+					) : null}
+					{error ? (
+						<p className="text-xs text-error" role="alert">
+							{error}
+						</p>
+					) : null}
+					<div className={settingsDialogFooterClass}>
+						<button
+							type="button"
+							className="settings-footer-button"
+							disabled={pending}
+							onClick={() => onOpenChange(false)}
+						>
+							{t("workItems.cancel")}
+						</button>
+						<button type="submit" className="settings-footer-button settings-footer-button-primary" disabled={!canSubmit}>
+							{pending ? t("workItems.rejecting") : t("workItems.rejectSubmit")}
+						</button>
+					</div>
+				</form>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

@@ -23,7 +23,7 @@ const (
 // Store is the durable work-item state used by the service.
 type Store interface {
 	UpsertWorkItem(context.Context, domain.WorkItem) error
-	SetWorkItemApproval(context.Context, string, string, domain.WorkItemApproval, time.Time) (domain.WorkItem, bool, error)
+	SetWorkItemApproval(context.Context, string, string, string, domain.WorkItemApproval, time.Time) (domain.WorkItem, bool, error)
 	ListWorkItemsByProject(context.Context, domain.ProjectID) ([]domain.WorkItem, error)
 	GetWorkItem(context.Context, string) (domain.WorkItem, bool, error)
 }
@@ -110,7 +110,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.WorkItem, 
 // Approve promotes a draft or proposed item and records who made the durable
 // decision. Approval cannot be used to rewrite an existing decision.
 func (s *Service) Approve(ctx context.Context, id, approver string) (domain.WorkItem, error) {
-	return s.Decide(ctx, id, approver, domain.WorkItemApproved)
+	return s.Decide(ctx, id, approver, "", domain.WorkItemApproved)
 }
 
 // SetDefaultApprover installs the identity recorded when a caller does not
@@ -121,10 +121,16 @@ func (s *Service) SetDefaultApprover(identity func() string) {
 }
 
 // Decide records a human approval decision — approved or rejected — on a
-// draft or proposed work item. Rejection is terminal the same way approval
-// is: the store's guard only permits deciding from draft/proposed, so neither
-// decision can overwrite the other.
-func (s *Service) Decide(ctx context.Context, id, approver string, decision domain.WorkItemApproval) (domain.WorkItem, error) {
+// draft or proposed work item, with the reason the human gave for it.
+// Rejection is terminal the same way approval is: the store's guard only
+// permits deciding from draft/proposed, so neither decision can overwrite the
+// other, and the note therefore records the reason for the ONE decision this
+// item will ever carry.
+//
+// The note is optional. An approval usually needs no prose, and demanding one
+// would be a gate on the wrong thing; a rejection without a reason is a dead
+// end for everyone except the decider, which is why the UI asks for one there.
+func (s *Service) Decide(ctx context.Context, id, approver, note string, decision domain.WorkItemApproval) (domain.WorkItem, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return domain.WorkItem{}, apierr.Invalid("WORK_ITEM_ID_REQUIRED", "work item id is required", nil)
@@ -139,7 +145,7 @@ func (s *Service) Decide(ctx context.Context, id, approver string, decision doma
 	if decision != domain.WorkItemApproved && decision != domain.WorkItemRejected {
 		return domain.WorkItem{}, apierr.Invalid("DECISION_INVALID", "decision must be approved or rejected", nil)
 	}
-	item, changed, err := s.store.SetWorkItemApproval(ctx, id, approver, decision, s.now().UTC())
+	item, changed, err := s.store.SetWorkItemApproval(ctx, id, approver, strings.TrimSpace(note), decision, s.now().UTC())
 	if err != nil {
 		return domain.WorkItem{}, fmt.Errorf("decide work item: %w", err)
 	}

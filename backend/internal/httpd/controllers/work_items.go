@@ -17,14 +17,25 @@ import (
 // WorkItemService is the controller-facing work-graph surface.
 type WorkItemService interface {
 	Create(context.Context, workitemsvc.CreateInput) (domain.WorkItem, error)
-	Decide(context.Context, string, string, domain.WorkItemApproval) (domain.WorkItem, error)
+	Decide(context.Context, string, string, string, domain.WorkItemApproval) (domain.WorkItem, error)
 	List(context.Context, domain.ProjectID) ([]domain.WorkItem, error)
 	Get(context.Context, string) (domain.WorkItem, error)
+}
+
+// WorkItemSessionClaimReader is the optional read that lets a work item point at
+// the sessions which have worked it. Optional and advisory, on the same terms as
+// the sessions list's execution annotation: a failed read returns the items
+// unannotated rather than failing the list, because a work-item list without
+// session links beats no work-item list.
+type WorkItemSessionClaimReader interface {
+	ListWorkItemSessionsByProject(context.Context, domain.ProjectID) ([]domain.WorkItemSession, error)
 }
 
 // WorkItemsController owns the work-item create, approval, and list routes.
 type WorkItemsController struct {
 	Svc WorkItemService
+	// Claims annotates listed items with their sessions.
+	Claims WorkItemSessionClaimReader
 }
 
 // Register mounts the work-item routes.
@@ -67,7 +78,7 @@ func (c *WorkItemsController) approve(w http.ResponseWriter, r *http.Request) {
 	if decision == "" {
 		decision = domain.WorkItemApproved
 	}
-	item, err := c.Svc.Decide(r.Context(), chi.URLParam(r, "id"), in.Approver, decision)
+	item, err := c.Svc.Decide(r.Context(), chi.URLParam(r, "id"), in.Approver, in.Note, decision)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -98,11 +109,35 @@ func (c *WorkItemsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
+	sessions := c.sessionsByWorkItem(r.Context(), domain.ProjectID(r.URL.Query().Get("projectId")))
 	out := make([]WorkItemResponse, 0, len(items))
 	for _, item := range items {
-		out = append(out, workItemResponse(item))
+		view := workItemResponse(item)
+		if ids, ok := sessions[item.ID]; ok {
+			view.SessionIDs = ids
+		}
+		out = append(out, view)
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListWorkItemsResponse{WorkItems: out})
+}
+
+// sessionsByWorkItem groups one project's session claims by work item, in claim
+// order, so the newest attempt is last. An unavailable reader or a failed read
+// answers an empty map: the annotation is display data, never a reason to fail
+// the list.
+func (c *WorkItemsController) sessionsByWorkItem(ctx context.Context, projectID domain.ProjectID) map[string][]string {
+	if c.Claims == nil {
+		return map[string][]string{}
+	}
+	claims, err := c.Claims.ListWorkItemSessionsByProject(ctx, projectID)
+	if err != nil {
+		return map[string][]string{}
+	}
+	grouped := make(map[string][]string, len(claims))
+	for _, claim := range claims {
+		grouped[claim.WorkItemID] = append(grouped[claim.WorkItemID], string(claim.SessionID))
+	}
+	return grouped
 }
 
 // WorkItemIDParam identifies the work item whose approval is changing.
@@ -122,6 +157,7 @@ type ListWorkItemsQuery struct {
 type ApproveWorkItemRequest struct {
 	Approver string `json:"approver,omitempty" description:"Identity recorded on the decision. Defaults to the OS user running the daemon."`
 	Decision string `json:"decision,omitempty" enum:"approved,rejected" description:"Approval decision; defaults to approved when omitted."`
+	Note     string `json:"note,omitempty" description:"Reason recorded with the decision. Optional, and most useful on a rejection: it is the only explanation anyone but the decider will see."`
 }
 
 // WorkItemResponse is one durable work-graph node.
@@ -143,6 +179,8 @@ type WorkItemResponse struct {
 	CreatedByID        string                   `json:"createdById,omitempty"`
 	ApprovedBy         string                   `json:"approvedBy,omitempty"`
 	ApprovedAt         *time.Time               `json:"approvedAt,omitempty"`
+	DecisionNote       string                   `json:"decisionNote,omitempty" description:"Reason the decider recorded with the approval decision."`
+	SessionIDs         []string                 `json:"sessionIds" description:"Sessions that have worked this item, oldest attempt first. The last one is where the work is now."`
 	CreatedAt          time.Time                `json:"createdAt"`
 	UpdatedAt          time.Time                `json:"updatedAt"`
 }
@@ -181,6 +219,7 @@ func workItemResponse(item domain.WorkItem) WorkItemResponse {
 		ExcludedScope: excluded, RiskLevel: item.RiskLevel, PolicyProfileID: item.PolicyProfileID,
 		ApprovalState: item.ApprovalState, LifecycleFact: item.LifecycleFact, Priority: item.Priority,
 		CreatedByType: strings.TrimSpace(item.CreatedByType), CreatedByID: item.CreatedByID,
-		ApprovedBy: item.ApprovedBy, ApprovedAt: approvedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		ApprovedBy: item.ApprovedBy, ApprovedAt: approvedAt, DecisionNote: item.DecisionNote,
+		SessionIDs: []string{}, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }

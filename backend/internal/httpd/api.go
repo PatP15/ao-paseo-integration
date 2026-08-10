@@ -44,6 +44,7 @@ type APIDeps struct {
 	ExecutionSecrets    controllers.ExecutionSecretStore
 	AutoResume          controllers.AutoResumeSettingsService
 	WorkItems           controllers.WorkItemService
+	WorkItemClaims      controllers.WorkItemSessionClaimReader
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -96,7 +97,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		execution:     &controllers.ExecutionController{Svc: deps.Execution, Dispatch: deps.ExecutionDispatch, Secrets: deps.ExecutionSecrets},
 		autoResume:    &controllers.AutoResumeController{Svc: deps.AutoResume},
-		workItems:     &controllers.WorkItemsController{Svc: deps.WorkItems},
+		workItems:     &controllers.WorkItemsController{Svc: deps.WorkItems, Claims: deps.WorkItemClaims},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }

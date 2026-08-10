@@ -63,6 +63,26 @@ func HostChannelError(host domain.ExecutionHost, kind apierr.Kind, code, message
 		map[string]any{"host": string(host.ID), "hostError": detail})
 }
 
+// HostUnavailableError is the refusal for a host AO has no usable client for.
+// Three composition-root sites — schedules, maintenance, provider discovery —
+// each built this message by hand out of the raw registry id and the words
+// "host … has no usable client", which is neither the name nor the noun the
+// whole UI uses. The three causes cannot be told apart at this layer (the
+// backends cache answers one bool), so the message names all three, but it
+// names them the way an operator would and points at the screen that fixes
+// them. Phrasing lives here so the three sites cannot drift apart.
+func HostUnavailableError(host domain.ExecutionHost) error {
+	name := host.Name
+	if strings.TrimSpace(name) == "" {
+		name = string(host.ID)
+	}
+	return apierr.Conflict("HOST_UNAVAILABLE",
+		fmt.Sprintf("AO cannot reach %s: it is disabled, its stored password could not be read, "+
+			"or its Paseo daemon did not answer the version handshake. Check it under Computers "+
+			"in settings, then try again.", name),
+		map[string]any{"host": string(host.ID)})
+}
+
 // maxHostConcurrency caps sessions per host. The ceiling is an observation
 // budget, not a resource one: each poll of the Paseo CLI costs roughly a second
 // because the binary re-execs a helper, so a host tracking many sessions cannot

@@ -264,9 +264,7 @@ func newScheduleChannel(backends *executionBackends) (
 	resolve := func(ctx context.Context, host domain.ExecutionHost) (*paseoexec.Backend, error) {
 		client, ok := backends.client(ctx, host.ID)
 		if !ok {
-			return nil, apierr.Conflict("HOST_UNAVAILABLE",
-				"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
-				nil)
+			return nil, executionsvc.HostUnavailableError(host)
 		}
 		return paseoexec.NewBackend(client, backends.store), nil
 	}
@@ -314,9 +312,7 @@ type maintenanceChannel struct {
 func (m maintenanceChannel) resolve(ctx context.Context, host domain.ExecutionHost) (*paseoexec.Backend, error) {
 	client, ok := m.backends.client(ctx, host.ID)
 	if !ok {
-		return nil, apierr.Conflict("HOST_UNAVAILABLE",
-			"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
-			nil)
+		return nil, executionsvc.HostUnavailableError(host)
 	}
 	return paseoexec.NewBackend(client, m.backends.store), nil
 }
@@ -492,9 +488,7 @@ func newProviderDiscovery(backends *executionBackends) func(context.Context, dom
 	return func(ctx context.Context, host domain.ExecutionHost) ([]domain.ExecutionHostProvider, error) {
 		client, ok := backends.client(ctx, host.ID)
 		if !ok {
-			return nil, apierr.Conflict("HOST_UNAVAILABLE",
-				"host "+string(host.ID)+" has no usable client: it is disabled, its credential cannot be resolved, or its daemon did not answer the version handshake",
-				nil)
+			return nil, executionsvc.HostUnavailableError(host)
 		}
 		providers, err := paseoexec.NewBackend(client, backends.store).Providers(ctx, host.ID)
 		if err != nil {

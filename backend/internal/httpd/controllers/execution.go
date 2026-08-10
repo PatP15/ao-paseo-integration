@@ -972,9 +972,9 @@ func (c *ExecutionController) dispatch(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, dispatchsvc.ErrNoEligibleHost) {
 			envelope.WriteError(w, r, apierr.Conflict(
 				"NO_ELIGIBLE_HOST",
-				"No registered host is eligible: check that the project is bound to a host in "+
-					"the requested trust zone, that the host is enabled and online, and that it "+
-					"has free capacity.",
+				"No registered computer can take this work: check that the project is bound "+
+					"to a computer in the requested trust zone, that the computer is enabled "+
+					"and online, and that it has free capacity.",
 				nil))
 			return
 		}

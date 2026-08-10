@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -822,5 +823,48 @@ func TestGetCommand(t *testing.T) {
 	_, err = svc.GetCommand(context.Background(), "  ")
 	if code := errCode(t, err); code != "COMMAND_ID_REQUIRED" {
 		t.Fatalf("code = %q, want COMMAND_ID_REQUIRED", code)
+	}
+}
+
+// The three composition-root sites that could not resolve a client each wrote
+// this refusal by hand out of the raw registry id and the phrase "host … has no
+// usable client". The renderer prints the message verbatim, so an operator was
+// told about a "host" — a noun the UI never uses — under an id they never
+// chose. One helper now owns the phrasing for all three.
+func TestHostUnavailableErrorNamesTheComputerNotTheID(t *testing.T) {
+	err := HostUnavailableError(domain.ExecutionHost{ID: "loop-worker", Name: "loop worker"})
+
+	var typed *apierr.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("want a typed apierr, got %T", err)
+	}
+	if typed.Code != "HOST_UNAVAILABLE" {
+		t.Fatalf("code = %q", typed.Code)
+	}
+	if !strings.Contains(typed.Message, "loop worker") {
+		t.Fatalf("message does not name the computer: %q", typed.Message)
+	}
+	if strings.Contains(typed.Message, "loop-worker") {
+		t.Fatalf("message leaks the registry id: %q", typed.Message)
+	}
+	if strings.Contains(typed.Message, "host") || strings.Contains(typed.Message, "usable client") {
+		t.Fatalf("message uses vocabulary the UI does not: %q", typed.Message)
+	}
+	// The id still travels in details, where a support read needs it.
+	if got := typed.Details["host"]; got != "loop-worker" {
+		t.Fatalf("details host = %v", got)
+	}
+}
+
+// An unnamed host is a registry row that was never given a display name; the
+// id is then the only thing to call it, and printing nothing would be worse.
+func TestHostUnavailableErrorFallsBackToTheIDWhenUnnamed(t *testing.T) {
+	err := HostUnavailableError(domain.ExecutionHost{ID: "loop-worker", Name: "  "})
+	var typed *apierr.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("want a typed apierr, got %T", err)
+	}
+	if !strings.Contains(typed.Message, "loop-worker") {
+		t.Fatalf("message = %q", typed.Message)
 	}
 }

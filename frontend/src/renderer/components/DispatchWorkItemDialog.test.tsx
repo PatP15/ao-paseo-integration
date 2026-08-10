@@ -376,6 +376,8 @@ describe("DispatchWorkItemDialog", () => {
 		expect(await screen.findByText('"paseo-advisor" is policy-gated on loop worker.')).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Insert anyway" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /Enable/ })).not.toBeInTheDocument();
+		// The audit consequence belongs BEFORE the click, not only after it.
+		expect(screen.getByText(/records an override under your name with the dispatch/)).toBeInTheDocument();
 	});
 
 	// The gate's dismissal was labelled "Cancel", a few centimetres from the

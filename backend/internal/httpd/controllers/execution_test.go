@@ -41,6 +41,8 @@ type fakeExecutionService struct {
 	events       []domain.ExecutionEventRecord
 	eventsFilter executionsvc.EventsFilter
 
+	sentMessage executionsvc.SendMessageInput
+
 	schedules       []executionsvc.HostSchedule
 	deletedSchedule string
 
@@ -136,6 +138,20 @@ func (f *fakeExecutionService) ListSessionEvents(_ context.Context, filter execu
 		return nil, f.err
 	}
 	return f.events, nil
+}
+
+func (f *fakeExecutionService) SendSessionMessage(
+	_ context.Context,
+	in executionsvc.SendMessageInput,
+) (domain.ExecutionCommand, error) {
+	f.sentMessage = in
+	if f.err != nil {
+		return domain.ExecutionCommand{}, f.err
+	}
+	return domain.ExecutionCommand{
+		ID: "command-msg-1", SessionID: in.SessionID, HostID: "worker-1",
+		Type: domain.ExecutionCommandSendMessage, State: domain.ExecutionCommandPending,
+	}, nil
 }
 
 func (f *fakeExecutionService) HostProviders(_ context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error) {
@@ -302,6 +318,7 @@ func TestExecutionRoutesReport501WithoutServices(t *testing.T) {
 		{http.MethodPost, "/api/v1/execution/hosts/worker-1/probe", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/providers", ""},
 		{http.MethodGet, "/api/v1/sessions/project-1/execution-events", ""},
+		{http.MethodPost, "/api/v1/sessions/project-1/execution-messages", `{}`},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/schedules", ""},
 		{http.MethodDelete, "/api/v1/execution/hosts/worker-1/schedules/sch-1", ""},
 		{http.MethodGet, "/api/v1/execution/hosts/worker-1/inventory", ""},
@@ -1102,5 +1119,45 @@ func TestGetExecutionCommand(t *testing.T) {
 	resp, _ = doJSON(t, http.MethodGet, srv.URL+"/api/v1/execution/commands/ghost", "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing command status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestSendSessionExecutionMessage pins the composer's write path: the text and
+// sender reach the service, the answer is Accepted rather than OK because
+// nothing has been delivered yet, and an unknown key is refused outright.
+func TestSendSessionExecutionMessage(t *testing.T) {
+	svc := &fakeExecutionService{}
+	srv := executionServer(t, httpd.APIDeps{Execution: svc})
+
+	resp, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions/project-1/execution-messages",
+		`{"message":"rerun the failing test","sentBy":"operator"}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if svc.sentMessage.SessionID != "project-1" ||
+		svc.sentMessage.Message != "rerun the failing test" || svc.sentMessage.SentBy != "operator" {
+		t.Fatalf("sent = %#v", svc.sentMessage)
+	}
+	var out controllers.ExecutionSessionMessageResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if out.CommandType != domain.ExecutionCommandSendMessage || out.CommandState != domain.ExecutionCommandPending {
+		t.Fatalf("response = %+v", out)
+	}
+
+	// The body vocabulary is closed: a caller reaching for a field the endpoint
+	// does not have is told, not silently served a message without it.
+	resp, body = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions/project-1/execution-messages",
+		`{"message":"hi","prompt":"hi"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400 (body %s)", resp.StatusCode, body)
+	}
+
+	svc.err = apierr.Conflict("SESSION_NOT_REMOTE", "session project-1 runs on no execution host", nil)
+	resp, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions/project-1/execution-messages",
+		`{"message":"hi"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("local session status = %d, want 409", resp.StatusCode)
 	}
 }

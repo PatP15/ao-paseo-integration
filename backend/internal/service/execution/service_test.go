@@ -26,6 +26,9 @@ type fakeStore struct {
 	resolved    domain.ExecutionQuestionResolution
 	resolveErr  error
 
+	enqueuedMessage domain.ExecutionSessionMessage
+	enqueueErr      error
+
 	projectBindings map[domain.ProjectID][]domain.ProjectHostBinding
 	upsertedBinding domain.ProjectHostBinding
 	commands        map[string]domain.ExecutionCommand
@@ -194,6 +197,20 @@ func (f *fakeStore) ResolveExecutionQuestion(
 		ID: resolution.CommandID, SessionID: "project-1", HostID: "worker-1",
 		Type: resolution.CommandType, PayloadJSON: resolution.PayloadJSON,
 		State: domain.ExecutionCommandPending,
+	}, nil
+}
+
+func (f *fakeStore) EnqueueExecutionSessionMessage(
+	_ context.Context, message domain.ExecutionSessionMessage,
+) (domain.ExecutionCommand, error) {
+	if f.enqueueErr != nil {
+		return domain.ExecutionCommand{}, f.enqueueErr
+	}
+	f.enqueuedMessage = message
+	return domain.ExecutionCommand{
+		ID: message.CommandID, SessionID: message.SessionID, HostID: "worker-1",
+		Type: domain.ExecutionCommandSendMessage, State: domain.ExecutionCommandPending,
+		CreatedAt: message.SentAt,
 	}, nil
 }
 

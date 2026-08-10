@@ -92,6 +92,34 @@ type ExecutionMessagePayload struct {
 	Message    string `json:"message"`
 }
 
+// ExecutionSessionMessageSent is the timeline event type recorded when AO
+// accepts a free-form message for a session's remote agent. It names what AO
+// queued, never what the agent did with it.
+const ExecutionSessionMessageSent = "session_message_sent"
+
+// ExecutionSessionMessage is one free-form message a human asked AO to deliver
+// to a session's already-launched remote agent.
+//
+// The command and its timeline event are committed together: a message the API
+// accepted but never showed would be indistinguishable, from the pane, from one
+// that was never sent.
+type ExecutionSessionMessage struct {
+	CommandID string
+	EventID   string
+	SessionID SessionID
+	Message   string
+	SentBy    string
+	SentAt    time.Time
+}
+
+// ExecutionSessionMessageEvent is the timeline payload for one accepted
+// message. Message is human-authored text; clients render it as data.
+type ExecutionSessionMessageEvent struct {
+	CommandID string `json:"commandId"`
+	Message   string `json:"message"`
+	SentBy    string `json:"sentBy,omitempty"`
+}
+
 // ExecutionDispatchSeed contains everything the store commits atomically for
 // one approved work item. The store assigns the conventional project-N
 // session ID and derives the workspace title and idempotency key from it.

@@ -17,6 +17,10 @@ const (
 	ExecutionEventSentinel ExecutionEventTransport = "sentinel"
 	// ExecutionEventOutputSchema is a provider-structured output channel.
 	ExecutionEventOutputSchema ExecutionEventTransport = "output_schema"
+	// ExecutionEventOutbox is AO's own write, not a remote read: what the
+	// outbox was asked to deliver to the agent. It keeps a message AO sent
+	// distinguishable from anything the host reported back.
+	ExecutionEventOutbox ExecutionEventTransport = "outbox"
 )
 
 // Execution observation event types. They name the remote fact AO ingested,

@@ -63,6 +63,15 @@ func (c *captureExecutionService) ListSessionEvents(context.Context, executionsv
 	return nil, nil
 }
 
+func (c *captureExecutionService) SendSessionMessage(
+	_ context.Context, in executionsvc.SendMessageInput,
+) (domain.ExecutionCommand, error) {
+	return domain.ExecutionCommand{
+		ID: "command-message", SessionID: in.SessionID, HostID: "worker-1",
+		Type: domain.ExecutionCommandSendMessage, State: domain.ExecutionCommandPending,
+	}, nil
+}
+
 func (c *captureExecutionService) HostSchedules(context.Context, domain.ExecutionHostID) ([]executionsvc.HostSchedule, error) {
 	return nil, nil
 }

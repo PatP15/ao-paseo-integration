@@ -42,6 +42,7 @@ type Store interface {
 	ListOpenExecutionQuestions(context.Context) ([]domain.ExecutionInboxQuestion, error)
 	GetExecutionQuestion(context.Context, string) (domain.ExecutionInboxQuestion, bool, error)
 	ResolveExecutionQuestion(context.Context, domain.ExecutionQuestionResolution) (domain.ExecutionCommand, error)
+	EnqueueExecutionSessionMessage(context.Context, domain.ExecutionSessionMessage) (domain.ExecutionCommand, error)
 	UpsertProjectHostBinding(context.Context, domain.ProjectHostBinding) error
 	ListProjectHostBindings(context.Context, domain.ProjectID) ([]domain.ProjectHostBinding, error)
 	ListAllProjectHostBindings(context.Context) ([]domain.ProjectHostBinding, error)
@@ -759,6 +760,59 @@ func (s *Service) Decide(ctx context.Context, in DecisionInput) (domain.Executio
 		CommandID: s.newID(), CommandType: commandType, PayloadJSON: string(payload),
 		AuditType: "execution.permission_decided", DecidedAt: s.now().UTC(),
 	})
+}
+
+// SendMessageInput is a free-form follow-up for a session's remote agent.
+type SendMessageInput struct {
+	SessionID domain.SessionID
+	Message   string
+	SentBy    string
+}
+
+// SendSessionMessage queues one free-form message for a session's remote agent
+// and records the timeline event announcing it.
+//
+// A session with no execution binding is refused: it has no host, so the
+// message would sit in a queue nothing drains while the pane showed it as sent.
+// Local sessions are messaged through the session runtime, not through here.
+func (s *Service) SendSessionMessage(ctx context.Context, in SendMessageInput) (domain.ExecutionCommand, error) {
+	sessionID := domain.SessionID(strings.TrimSpace(string(in.SessionID)))
+	if sessionID == "" {
+		return domain.ExecutionCommand{}, apierr.Invalid("SESSION_ID_REQUIRED", "sessionId is required", nil)
+	}
+	message := strings.TrimSpace(in.Message)
+	if message == "" {
+		return domain.ExecutionCommand{}, apierr.Invalid("MESSAGE_REQUIRED", "message is required", nil)
+	}
+	if len(message) > MaxAnswerLen {
+		return domain.ExecutionCommand{}, apierr.Invalid("MESSAGE_TOO_LONG",
+			fmt.Sprintf("message must be at most %d characters", MaxAnswerLen), nil)
+	}
+	// The host delivers a message by typing it at the agent's prompt, where a
+	// line break submits. Sending one would deliver a truncated message and
+	// leave the remainder as a second, meaningless turn, so it is refused here
+	// rather than silently split by the adapter.
+	if strings.ContainsAny(message, "\r\n") {
+		return domain.ExecutionCommand{}, apierr.Invalid("MESSAGE_SINGLE_LINE",
+			"message must be a single line: a line break submits at the agent's prompt and would send it truncated", nil)
+	}
+	if _, found, err := s.store.GetSession(ctx, sessionID); err != nil {
+		return domain.ExecutionCommand{}, fmt.Errorf("get session %s: %w", sessionID, err)
+	} else if !found {
+		return domain.ExecutionCommand{}, apierr.NotFound("SESSION_NOT_FOUND", "session "+string(sessionID)+" was not found")
+	}
+	command, err := s.store.EnqueueExecutionSessionMessage(ctx, domain.ExecutionSessionMessage{
+		CommandID: s.newID(), EventID: s.newID(), SessionID: sessionID,
+		Message: message, SentBy: s.actor(in.SentBy), SentAt: s.now().UTC(),
+	})
+	if errors.Is(err, domain.ErrSessionNotRemote) {
+		return domain.ExecutionCommand{}, apierr.Conflict("SESSION_NOT_REMOTE",
+			"session "+string(sessionID)+" runs on no execution host, so it has no remote agent to message", nil)
+	}
+	if err != nil {
+		return domain.ExecutionCommand{}, fmt.Errorf("enqueue message for session %s: %w", sessionID, err)
+	}
+	return command, nil
 }
 
 func (s *Service) openQuestion(ctx context.Context, id string) (domain.ExecutionInboxQuestion, error) {

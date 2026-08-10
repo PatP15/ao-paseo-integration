@@ -863,6 +863,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/execution-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue one free-form message for a session's remote agent */
+        post: operations["sendSessionExecutionMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1767,6 +1784,16 @@ export interface components {
             source: "agent_event" | "paseo_permission";
             workItemId?: string;
         };
+        ExecutionSessionMessageResponse: {
+            commandId: string;
+            /** @enum {string} */
+            commandState: "pending" | "delivering" | "acknowledged" | "failed";
+            /** @enum {string} */
+            commandType: "send_message";
+            /** Format: date-time */
+            createdAt: string;
+            sessionId: string;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -2094,6 +2121,12 @@ export interface components {
             killed?: boolean;
             ok: boolean;
             sessionId: string;
+        };
+        SendExecutionMessageRequest: {
+            /** @description Single-line text delivered verbatim to the agent. */
+            message: string;
+            /** @description Recorded on the timeline event. Defaults to "human". */
+            sentBy?: string;
         };
         SendSessionMessageRequest: {
             message: string;
@@ -5586,6 +5619,78 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    sendSessionExecutionMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description AO session whose remote agent should receive the message. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendExecutionMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionSessionMessageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

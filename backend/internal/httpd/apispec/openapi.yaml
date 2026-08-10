@@ -2510,6 +2510,63 @@ paths:
       summary: Page one session's ingested execution events, oldest first
       tags:
       - execution
+  /api/v1/sessions/{sessionId}/execution-messages:
+    post:
+      operationId: sendSessionExecutionMessage
+      parameters:
+      - description: AO session whose remote agent should receive the message.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: AO session whose remote agent should receive the message.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendExecutionMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionSessionMessageResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Queue one free-form message for a session's remote agent
+      tags:
+      - execution
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -5124,6 +5181,33 @@ components:
       - options
       - createdAt
       type: object
+    ExecutionSessionMessageResponse:
+      properties:
+        commandId:
+          type: string
+        commandState:
+          enum:
+          - pending
+          - delivering
+          - acknowledged
+          - failed
+          type: string
+        commandType:
+          enum:
+          - send_message
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - commandId
+      - commandType
+      - commandState
+      - createdAt
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -5956,6 +6040,17 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    SendExecutionMessageRequest:
+      properties:
+        message:
+          description: Single-line text delivered verbatim to the agent.
+          type: string
+        sentBy:
+          description: Recorded on the timeline event. Defaults to "human".
+          type: string
+      required:
+      - message
       type: object
     SendSessionMessageRequest:
       properties:

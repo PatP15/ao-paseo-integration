@@ -347,6 +347,81 @@ func (s *Store) AcknowledgeExecutionStart(ctx context.Context, commandID string,
 	})
 }
 
+// EnqueueExecutionSessionMessage appends a free-form message to a session's
+// FIFO and records the timeline event announcing it, in one transaction.
+//
+// A session with no execution binding is refused here rather than enqueued and
+// failed later: there is no host to deliver to, and a command sitting in a
+// queue nothing drains reads to a human as "sent".
+func (s *Store) EnqueueExecutionSessionMessage(
+	ctx context.Context,
+	message domain.ExecutionSessionMessage,
+) (domain.ExecutionCommand, error) {
+	if message.CommandID == "" || message.EventID == "" || message.SessionID == "" || message.Message == "" {
+		return domain.ExecutionCommand{}, fmt.Errorf("invalid session message: required field is empty")
+	}
+	payload, err := json.Marshal(domain.ExecutionMessagePayload{Message: message.Message})
+	if err != nil {
+		return domain.ExecutionCommand{}, fmt.Errorf("marshal session message payload: %w", err)
+	}
+	eventPayload, err := json.Marshal(domain.ExecutionSessionMessageEvent{
+		CommandID: message.CommandID, Message: message.Message, SentBy: message.SentBy,
+	})
+	if err != nil {
+		return domain.ExecutionCommand{}, fmt.Errorf("marshal session message event: %w", err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	var command domain.ExecutionCommand
+	err = s.inTx(ctx, "enqueue execution session message", func(q *gen.Queries) error {
+		binding, err := q.GetSessionExecutionBinding(ctx, string(message.SessionID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("session %s: %w", message.SessionID, domain.ErrSessionNotRemote)
+		}
+		if err != nil {
+			return err
+		}
+		sequence, err := q.NextExecutionCommandSequence(ctx, string(message.SessionID))
+		if err != nil {
+			return err
+		}
+		at := encodeExecutionTime(message.SentAt)
+		command = domain.ExecutionCommand{
+			ID: message.CommandID, SessionID: message.SessionID,
+			HostID: domain.ExecutionHostID(binding.HostID), Type: domain.ExecutionCommandSendMessage,
+			PayloadJSON: string(payload),
+			// The caller's command id is the idempotency key, so a retried POST
+			// collides here instead of sending the agent the same text twice.
+			IdempotencyKey: fmt.Sprintf("%s:%s", domain.ExecutionCommandSendMessage, message.CommandID),
+			Sequence:       int(sequence), State: domain.ExecutionCommandPending,
+			CreatedAt: message.SentAt.UTC(),
+		}
+		if err := q.InsertExecutionCommand(ctx, executionCommandParams(command)); err != nil {
+			return fmt.Errorf("insert session message command: %w", err)
+		}
+		// protocol_event_id is the command id: it is what makes a replay of this
+		// transaction land on the same timeline row instead of a duplicate.
+		rows, err := q.InsertExecutionEvent(ctx, gen.InsertExecutionEventParams{
+			ID: message.EventID, SessionID: string(message.SessionID), HostID: binding.HostID,
+			ProtocolEventID: message.CommandID, EventType: domain.ExecutionSessionMessageSent,
+			Transport: string(domain.ExecutionEventOutbox), PayloadJson: string(eventPayload),
+			PayloadSha256: hashHex(string(eventPayload)), ObservedAt: at, IngestedAt: at,
+		})
+		if err != nil {
+			return fmt.Errorf("insert session message event: %w", err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("insert session message event: command %s already has one", message.CommandID)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.ExecutionCommand{}, err
+	}
+	return command, nil
+}
+
 // AcknowledgeExecutionDelivery completes a command that publishes nothing of
 // its own. start_agent has AcknowledgeExecutionStart because it mints a runtime
 // handle; a delivered message has only its own completion to record.

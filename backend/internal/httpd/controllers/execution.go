@@ -32,6 +32,7 @@ type ExecutionService interface {
 	GetCommand(ctx context.Context, id string) (domain.ExecutionCommand, error)
 	HostProviders(ctx context.Context, id domain.ExecutionHostID) ([]domain.ExecutionHostProvider, error)
 	ListSessionEvents(ctx context.Context, filter executionsvc.EventsFilter) ([]domain.ExecutionEventRecord, error)
+	SendSessionMessage(ctx context.Context, in executionsvc.SendMessageInput) (domain.ExecutionCommand, error)
 	HostSchedules(ctx context.Context, id domain.ExecutionHostID) ([]executionsvc.HostSchedule, error)
 	DeleteHostSchedule(ctx context.Context, id domain.ExecutionHostID, scheduleID string) error
 	Inventory(ctx context.Context, id domain.ExecutionHostID, refresh bool) (executionsvc.HostInventory, error)
@@ -87,6 +88,7 @@ func (c *ExecutionController) Register(r chi.Router) {
 	r.Get("/execution/secrets", c.listSecrets)
 	r.Get("/execution/commands/{commandId}", c.getCommand)
 	r.Get("/sessions/{sessionId}/execution-events", c.listSessionEvents)
+	r.Post("/sessions/{sessionId}/execution-messages", c.sendSessionMessage)
 	r.Get("/execution/hosts/{hostId}/schedules", c.listHostSchedules)
 	r.Delete("/execution/hosts/{hostId}/schedules/{scheduleId}", c.deleteHostSchedule)
 	r.Get("/execution/hosts/{hostId}/inventory", c.hostInventory)
@@ -526,6 +528,53 @@ func (c *ExecutionController) listSessionEvents(w http.ResponseWriter, r *http.R
 		response.NextAfter = out[len(out)-1].ID
 	}
 	envelope.WriteJSON(w, http.StatusOK, response)
+}
+
+// ExecutionSessionMessagePathParams identifies the session being messaged.
+type ExecutionSessionMessagePathParams struct {
+	SessionID string `path:"sessionId" description:"AO session whose remote agent should receive the message."`
+}
+
+// SendExecutionMessageRequest is one free-form follow-up for a remote agent.
+type SendExecutionMessageRequest struct {
+	Message string `json:"message" description:"Single-line text delivered verbatim to the agent."`
+	SentBy  string `json:"sentBy,omitempty" description:"Recorded on the timeline event. Defaults to \"human\"."`
+}
+
+// ExecutionSessionMessageResponse reports the queued delivery for one message.
+type ExecutionSessionMessageResponse struct {
+	SessionID    domain.SessionID             `json:"sessionId"`
+	CommandID    string                       `json:"commandId"`
+	CommandType  domain.ExecutionCommandType  `json:"commandType" enum:"send_message"`
+	CommandState domain.ExecutionCommandState `json:"commandState" enum:"pending,delivering,acknowledged,failed"`
+	CreatedAt    time.Time                    `json:"createdAt"`
+}
+
+// sendSessionMessage queues a follow-up prompt for a session's remote agent.
+func (c *ExecutionController) sendSessionMessage(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/sessions/{sessionId}/execution-messages")
+		return
+	}
+	var in SendExecutionMessageRequest
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON",
+			"Invalid JSON body: a message accepts only message and sentBy", nil)
+		return
+	}
+	command, err := c.Svc.SendSessionMessage(r.Context(), executionsvc.SendMessageInput{
+		SessionID: domain.SessionID(chi.URLParam(r, "sessionId")),
+		Message:   in.Message,
+		SentBy:    in.SentBy,
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, ExecutionSessionMessageResponse{
+		SessionID: command.SessionID, CommandID: command.ID,
+		CommandType: command.Type, CommandState: command.State, CreatedAt: command.CreatedAt,
+	})
 }
 
 // ExecutionProviderModelResponse is one launchable model with its thinking

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	paseoexec "github.com/aoagents/agent-orchestrator/backend/internal/adapters/execution/paseo"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimerouter"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -85,5 +86,62 @@ func TestExecutionBackendsCacheHonorsCredentialRotationAndDisable(t *testing.T) 
 	}
 	if got, ok := backends.client(ctx, host.ID); ok || got != nil {
 		t.Fatalf("disabled host returned cached client: got %p, ok=%v", got, ok)
+	}
+}
+
+// TestExecutionBackendsResolveRuntimeForNamespacedHandles pins the resolver the
+// runtime router needs. The router was constructed with a nil resolver, so
+// every namespaced handle answered "remote execution runtime not found": a
+// kill on a remote session terminated AO's row and logged "remote agent stop
+// failed; terminating anyway" while the agent kept running on the worker.
+func TestExecutionBackendsResolveRuntimeForNamespacedHandles(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	host := domain.ExecutionHost{
+		ID: "worker", Name: "Worker", BackendType: domain.ExecutionBackendPaseo,
+		Transport: domain.ExecutionTransportLAN, Endpoint: "127.0.0.1:1", EndpointSecretRef: "worker-pw",
+		TrustZone: domain.ExecutionTrustZoneHobby, Enabled: true, MaxConcurrentSessions: 1,
+		RequiresNoMCP: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := store.UpsertExecutionHost(ctx, host, nil); err != nil {
+		t.Fatalf("upsert host: %v", err)
+	}
+	secretDir := filepath.Join(dataDir, "secrets")
+	if err := os.MkdirAll(secretDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "worker-pw"), []byte("password"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	backends := newExecutionBackends(store, dataDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// The signature is runtimerouter.RemoteResolver, so a change to either side
+	// is a compile error rather than a silently unrouted handle.
+	var resolve runtimerouter.RemoteResolver = backends.ResolveExecutionRuntime
+
+	runtime, ok := resolve(domain.ExecutionBackendPaseo, host.ID)
+	if !ok || runtime == nil {
+		t.Fatalf("registered paseo host resolved no runtime: %v, ok=%v", runtime, ok)
+	}
+	if _, ok := resolve("other-backend", host.ID); ok {
+		t.Fatal("a non-paseo namespace resolved to the paseo client")
+	}
+	if _, ok := resolve(domain.ExecutionBackendPaseo, "unknown-host"); ok {
+		t.Fatal("an unregistered host resolved a runtime")
+	}
+
+	host.Enabled = false
+	host.UpdatedAt = time.Now()
+	if err := store.UpsertExecutionHost(ctx, host, nil); err != nil {
+		t.Fatalf("disable host: %v", err)
+	}
+	if _, ok := resolve(domain.ExecutionBackendPaseo, host.ID); ok {
+		t.Fatal("a disabled host resolved a runtime")
 	}
 }

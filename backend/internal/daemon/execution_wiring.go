@@ -514,6 +514,27 @@ func (b *executionBackends) ResolveExecutionBackend(hostID domain.ExecutionHostI
 	return paseoexec.NewBackend(client, b.store), true
 }
 
+// ResolveExecutionRuntime implements runtimerouter.RemoteResolver: the
+// post-launch control surface for a namespaced handle. Without it the router
+// has no remote runtime to route to, so killing a remote session terminated
+// AO's row and left the agent running on the worker.
+//
+// The backend type is checked rather than assumed: a handle names the backend
+// that minted it, and answering a non-Paseo namespace with a Paseo client
+// would drive the wrong daemon.
+func (b *executionBackends) ResolveExecutionRuntime(
+	backend domain.ExecutionBackendType, hostID domain.ExecutionHostID,
+) (ports.ExecutionRuntime, bool) {
+	if backend != domain.ExecutionBackendPaseo {
+		return nil, false
+	}
+	client, ok := b.client(context.Background(), hostID)
+	if !ok {
+		return nil, false
+	}
+	return paseoexec.NewBackend(client, b.store), true
+}
+
 // dispatchDrainInterval paces the outbox. The queue is not latency-critical —
 // a dispatch has already been committed durably by the time it lands here — and
 // each delivery costs remote CLI invocations at roughly 0.9s each (spike

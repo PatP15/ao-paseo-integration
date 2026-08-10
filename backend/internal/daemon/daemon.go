@@ -135,7 +135,15 @@ func Run() error {
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
 	localRuntime := runtimeselect.New(log)
-	runtimeAdapter := runtimerouter.New(localRuntime, nil)
+	// One backends cache shared by the runtime router, the observer, the
+	// dispatch drain, and provider discovery: all of them talk to the same
+	// hosts and a second cache would double the client count and version
+	// handshakes. It is built here, before the router, because a router
+	// without a remote resolver silently answers every remote handle with
+	// "remote execution runtime not found" — which made killing a remote
+	// session terminate AO's row while the agent kept running on the worker.
+	executionClients := newExecutionBackends(store, cfg.DataDir, log)
+	runtimeAdapter := runtimerouter.New(localRuntime, executionClients.ResolveExecutionRuntime)
 	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
@@ -191,10 +199,6 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
-	// One backends cache shared by the observer, the dispatch drain, and
-	// provider discovery: all three talk to the same hosts and a second cache
-	// would double the client count and version handshakes.
-	executionClients := newExecutionBackends(store, cfg.DataDir, log)
 	lcStack.executionDone, lcStack.dispatchDone = startExecutionObserver(ctx, store, lcStack.LCM, executionClients, notificationWriter, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {

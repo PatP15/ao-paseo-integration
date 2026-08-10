@@ -17,10 +17,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
-// Store is the durable policy this service reads and writes.
+// Store is the durable policy this service reads and writes, plus the pending
+// side of the schedule the watcher keeps.
 type Store interface {
 	GetAutoResumeSettings(context.Context) (domain.AutoResumeSettings, error)
 	PutAutoResumeSettings(context.Context, domain.AutoResumeSettings, time.Time) (domain.AutoResumeSettings, error)
+	ListPendingAutoResumes(context.Context) ([]domain.AutoResumeSchedule, error)
 }
 
 // Service answers auto-resume settings reads and writes for the HTTP API.
@@ -43,6 +45,20 @@ func (s *Service) Settings(ctx context.Context) (domain.AutoResumeSettings, erro
 		return domain.AutoResumeSettings{}, fmt.Errorf("read auto-resume settings: %w", err)
 	}
 	return settings, nil
+}
+
+// Pending returns every session whose resume is scheduled but not yet sent,
+// oldest due first.
+//
+// It is one read for the whole app rather than a per-session probe: the badge
+// that consumes it is drawn on a list of session cards, and a probe per card
+// would put the query count on the size of the board.
+func (s *Service) Pending(ctx context.Context) ([]domain.AutoResumeSchedule, error) {
+	rows, err := s.store.ListPendingAutoResumes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read pending auto-resumes: %w", err)
+	}
+	return rows, nil
 }
 
 // SettingsInput is a complete replacement of the policy. Both fields are

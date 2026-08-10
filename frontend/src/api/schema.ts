@@ -1225,6 +1225,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/auto-resume/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List sessions waiting on a provider usage limit to reset */
+        get: operations["listPendingAutoResumes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shell-terminals": {
         parameters: {
             query?: never;
@@ -1864,6 +1881,11 @@ export interface components {
             unreadCount: number;
             unresolvedCount: number;
         };
+        ListPendingAutoResumesResponse: {
+            /** @description Automatic resumes AO will perform for one session before it stops. */
+            maxResumesPerSession: number;
+            pending: components["schemas"]["PendingAutoResume"][];
+        };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
         };
@@ -1976,6 +1998,18 @@ export interface components {
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
             title: string;
+        };
+        PendingAutoResume: {
+            /** @description 1-based count of this session's automatic resumes, including this one. */
+            attempt: number;
+            /** @description False when the notice carried no readable reset time and AO fell back to a fixed wait. */
+            exactReset: boolean;
+            /**
+             * Format: date-time
+             * @description When AO will send the resume, already past the reset by a grace period.
+             */
+            resumeAt: string;
+            sessionId: string;
         };
         PreviewServerStatusResponse: {
             configuration?: string;
@@ -7164,6 +7198,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listPendingAutoResumes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPendingAutoResumesResponse"];
                 };
             };
             /** @description Internal Server Error */

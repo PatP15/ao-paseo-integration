@@ -48,6 +48,7 @@ import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
+import { AutoResumeIndicator } from "./AutoResumeIndicator";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -883,6 +884,7 @@ function SessionCard({
 							<span className="truncate">{session.executionHostId}</span>
 						</div>
 					)}
+					<AutoResumeIndicator className="mt-1.5" sessionId={session.id} />
 				</div>
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />

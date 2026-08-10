@@ -3693,6 +3693,31 @@ paths:
       summary: Replace the app-wide usage-limit auto-resume policy
       tags:
       - settings
+  /api/v1/settings/auto-resume/pending:
+    get:
+      operationId: listPendingAutoResumes
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListPendingAutoResumesResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List sessions waiting on a provider usage limit to reset
+      tags:
+      - settings
   /api/v1/shell-terminals:
     get:
       operationId: listShellTerminals
@@ -5409,6 +5434,20 @@ components:
       - unreadCount
       - unresolvedCount
       type: object
+    ListPendingAutoResumesResponse:
+      properties:
+        maxResumesPerSession:
+          description: Automatic resumes AO will perform for one session before it
+            stops.
+          type: integer
+        pending:
+          items:
+            $ref: '#/components/schemas/PendingAutoResume'
+          type: array
+      required:
+      - pending
+      - maxResumesPerSession
+      type: object
     ListProjectsResponse:
       properties:
         projects:
@@ -5689,6 +5728,29 @@ components:
       - title
       - targetSha
       - status
+      type: object
+    PendingAutoResume:
+      properties:
+        attempt:
+          description: 1-based count of this session's automatic resumes, including
+            this one.
+          type: integer
+        exactReset:
+          description: False when the notice carried no readable reset time and AO
+            fell back to a fixed wait.
+          type: boolean
+        resumeAt:
+          description: When AO will send the resume, already past the reset by a grace
+            period.
+          format: date-time
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - resumeAt
+      - attempt
+      - exactReset
       type: object
     PreviewServerStatusResponse:
       properties:

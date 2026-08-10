@@ -7,6 +7,7 @@ import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { formatTimeCompact } from "../lib/format-time";
 import type { WorkspaceSession } from "../types/workspace";
+import { AutoResumeIndicator } from "./AutoResumeIndicator";
 
 type ExecutionEvent = components["schemas"]["ControllersExecutionEventResponse"];
 
@@ -140,6 +141,7 @@ export function RemoteSessionPane({
 							: ""}
 					</span>
 				</span>
+				<AutoResumeIndicator sessionId={session.id} />
 				<div className="min-w-0 flex-1" />
 				{topbarActions}
 			</div>

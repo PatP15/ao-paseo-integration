@@ -14,3 +14,15 @@ export function formatTimeCompact(isoDate: string | null | undefined): string {
 	if (diffHours < 24) return appI18n.t("time.hoursAgo", { n: diffHours });
 	return appI18n.t("time.daysAgo", { n: Math.floor(diffHours / 24) });
 }
+
+/**
+ * Wall-clock time in the machine's own zone, for a moment still ahead of us.
+ * `formatTimeCompact` only counts backwards, and "in 4 hours" is the wrong
+ * shape for a reset the provider itself published as a clock time.
+ */
+export function formatClockTime(isoDate: string | null | undefined): string {
+	if (!isoDate) return "";
+	const date = new Date(isoDate);
+	if (!Number.isFinite(date.getTime())) return "";
+	return date.toLocaleTimeString(appI18n.language, { hour: "numeric", minute: "2-digit" });
+}

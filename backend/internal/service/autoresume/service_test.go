@@ -16,6 +16,8 @@ var testNow = time.Date(2026, time.August, 10, 18, 0, 0, 0, time.UTC)
 type fakeStore struct {
 	settings domain.AutoResumeSettings
 	savedAt  time.Time
+	pending  []domain.AutoResumeSchedule
+	listErr  error
 }
 
 func (f *fakeStore) GetAutoResumeSettings(context.Context) (domain.AutoResumeSettings, error) {
@@ -28,6 +30,10 @@ func (f *fakeStore) PutAutoResumeSettings(
 	settings.UpdatedAt = at
 	f.settings, f.savedAt = settings, at
 	return settings, nil
+}
+
+func (f *fakeStore) ListPendingAutoResumes(context.Context) ([]domain.AutoResumeSchedule, error) {
+	return f.pending, f.listErr
 }
 
 func newTestService(store Store) *Service {
@@ -142,5 +148,28 @@ func TestSaveRefusesAPromptTheAgentCouldNotReceive(t *testing.T) {
 				t.Fatal("a refused prompt was still persisted")
 			}
 		})
+	}
+}
+
+func TestPendingPassesThroughTheStoresOrder(t *testing.T) {
+	// The store already returns these oldest-due-first; re-sorting here would
+	// give the badge a different order than the watcher acts in.
+	store := &fakeStore{pending: []domain.AutoResumeSchedule{
+		{ID: "a", SessionID: "session-1", Attempt: 1, ResumeAt: testNow.Add(2 * time.Minute), ExactReset: true},
+		{ID: "b", SessionID: "session-2", Attempt: 3, ResumeAt: testNow.Add(30 * time.Minute)},
+	}}
+	rows, err := newTestService(store).Pending(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].SessionID != "session-1" || rows[1].SessionID != "session-2" {
+		t.Fatalf("rows = %+v, want the store's order preserved", rows)
+	}
+}
+
+func TestPendingReportsAnUnreadableSchedule(t *testing.T) {
+	store := &fakeStore{listErr: errors.New("database is locked")}
+	if _, err := newTestService(store).Pending(context.Background()); err == nil {
+		t.Fatal("an unreadable schedule was reported as no pending resumes")
 	}
 }

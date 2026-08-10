@@ -241,6 +241,8 @@ var schemaNames = map[string]string{
 	"ControllersSendExecutionMessageRequest":       "SendExecutionMessageRequest",
 	"ControllersExecutionSessionMessageResponse":   "ExecutionSessionMessageResponse",
 	"ControllersAutoResumeSettingsResponse":        "AutoResumeSettingsResponse",
+	"ControllersListPendingAutoResumesResponse":    "ListPendingAutoResumesResponse",
+	"ControllersPendingAutoResume":                 "PendingAutoResume",
 	"ControllersPutAutoResumeSettingsRequest":      "PutAutoResumeSettingsRequest",
 	// httpd/controllers — work-item wire envelopes
 	"ControllersApproveWorkItemRequest": "ApproveWorkItemRequest",
@@ -603,6 +605,16 @@ func executionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.AutoResumeSettingsResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/settings/auto-resume/pending", id: "listPendingAutoResumes",
+			tag:     "settings",
+			summary: "List sessions waiting on a provider usage limit to reset",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListPendingAutoResumesResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

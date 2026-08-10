@@ -8,6 +8,7 @@ import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { CenterPanelShell } from "./CenterPanelShell";
 import { DispatchWorkItemDialog } from "./DispatchWorkItemDialog";
+import { PendingLine } from "./PendingLine";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 import { Badge } from "./ui/badge";
 import {
@@ -127,7 +128,7 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
 				{itemsQuery.isLoading ? (
-					<p className="text-sm text-settings-muted">{t("workItems.loading")}</p>
+					<PendingLine>{t("workItems.loading")}</PendingLine>
 				) : itemsQuery.isError ? (
 					<p className="text-sm text-error">
 						{itemsQuery.error instanceof Error ? itemsQuery.error.message : t("workItems.loadFailed")}

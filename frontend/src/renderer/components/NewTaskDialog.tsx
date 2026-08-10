@@ -423,7 +423,11 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 						{boundHosts.length > 0 && !isScratchProject ? (
 							<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
 								<div className="space-y-1.5">
-									<span className="text-xs font-medium text-muted-foreground">{t("newTask.runOn")}</span>
+									{/* Block, not inline: an inline label beside an inline-flex trigger
+									    collapsed onto one line and read as the sentence "Run on This
+									    computer", while every other field in this dialog stacks its
+									    label above its control. */}
+									<span className="block text-xs font-medium text-muted-foreground">{t("newTask.runOn")}</span>
 									<SettingsOptionMenu
 										value={runOn}
 										options={[
@@ -443,7 +447,7 @@ export function NewTaskDialog({ open, projectId, prefill, onCreated, onOpenChang
 								</div>
 								{remoteSelected && remoteHost ? (
 									<div className="space-y-1.5">
-										<span className="text-xs font-medium text-muted-foreground">{t("dispatch.provider")}</span>
+										<span className="block text-xs font-medium text-muted-foreground">{t("dispatch.provider")}</span>
 										<SettingsOptionMenu
 											value={remoteProvider}
 											options={(providersQuery.data ?? []).map((entry) => ({

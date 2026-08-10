@@ -6,6 +6,7 @@ import type { components } from "../../../api/schema";
 import { useExecutionHostName } from "../../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
+import { PendingLine } from "../PendingLine";
 import { SettingsDetailRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
@@ -65,7 +66,7 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 	return (
 		<SettingsSection title={t("instructions.title")} sectionId="project-instructions">
 			{instructionsQuery.isLoading ? (
-				<p className="px-1 text-xs text-settings-muted">{t("instructions.loading")}</p>
+				<PendingLine className="px-1 text-xs">{t("instructions.loading")}</PendingLine>
 			) : instructionsQuery.isError ? (
 				<p className="px-1 text-xs text-error">
 					{instructionsQuery.error instanceof Error ? instructionsQuery.error.message : t("instructions.loadFailed")}

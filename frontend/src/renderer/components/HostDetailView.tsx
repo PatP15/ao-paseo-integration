@@ -17,6 +17,7 @@ import { transportLabel, trustZoneLabel } from "./settings/ComputersSection";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { CenterPanelShell } from "./CenterPanelShell";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { PendingLine } from "./PendingLine";
 import { TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 import { Badge } from "./ui/badge";
 
@@ -123,7 +124,7 @@ function OverviewTab({ hostId }: { hostId: string }) {
 				queryKey: executionHostsQueryOptions.queryKey,
 			}),
 	});
-	if (!host) return <p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>;
+	if (!host) return <PendingLine>{t("hostDetail.loading")}</PendingLine>;
 	const rows: Array<[string, string]> = [
 		[t("hostDetail.endpoint"), host.endpoint],
 		[t("hostDetail.transport"), transportLabel(host.transport, t)],
@@ -277,7 +278,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 				</p>
 			) : null}
 			{inventoryQuery.isLoading ? (
-				<p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>
+				<PendingLine>{t("hostDetail.loading")}</PendingLine>
 			) : inventoryQuery.isError ? (
 				<p className="text-sm text-error" role="alert">
 					{inventoryQuery.error instanceof Error ? inventoryQuery.error.message : t("hostDetail.loadFailed")}
@@ -456,7 +457,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 		},
 	});
 
-	if (inventoryQuery.isLoading) return <p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>;
+	if (inventoryQuery.isLoading) return <PendingLine>{t("hostDetail.loading")}</PendingLine>;
 	if (inventoryQuery.isError) {
 		return (
 			<p className="text-sm text-error" role="alert">
@@ -582,7 +583,7 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 	});
 
 	if (instructionsQuery.isLoading) {
-		return <p className="text-sm text-settings-muted">{t("hostDetail.readingInstructions")}</p>;
+		return <PendingLine>{t("hostDetail.readingInstructions")}</PendingLine>;
 	}
 	if (instructionsQuery.isError) {
 		return (
@@ -657,7 +658,7 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 			    listing, so an empty list proves nothing about heartbeats. */}
 			<p className="text-xs text-settings-muted">{t("hostDetail.heartbeatBlindSpot")}</p>
 			{schedulesQuery.isLoading ? (
-				<p className="text-sm text-settings-muted">{t("hostDetail.loading")}</p>
+				<PendingLine>{t("hostDetail.loading")}</PendingLine>
 			) : schedulesQuery.isError ? (
 				<p className="text-sm text-error">
 					{schedulesQuery.error instanceof Error ? schedulesQuery.error.message : t("hostDetail.loadFailed")}

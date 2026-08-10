@@ -22,7 +22,7 @@ type ExecutionHostSkill struct {
 // affordances, host detail badges) gates the same set.
 func SkillPolicyGated(name, description string) bool {
 	switch name {
-	case "paseo-loop", "paseo-handoff", "paseo-committee":
+	case "paseo-loop", "paseo-handoff", "paseo-committee", "paseo-advisor":
 		return true
 	}
 	lowered := strings.ToLower(description)
@@ -33,7 +33,11 @@ func SkillPolicyGated(name, description string) bool {
 	// "delegate" or "hand off", which appear NEGATED in perfectly gate-free
 	// skills ("…without delegating the work itself"). The named list above
 	// already covers the canonical paseo-* orchestrators.
-	for _, marker := range []string{"spawn", "schedule", "orchestrat", "committee", "loop until"} {
+	//
+	// "spin up" earns its place from a real skill: paseo-advisor announces
+	// itself as "Spin up a single agent as an advisor", which spawns through
+	// Paseo exactly as handoff does while matching none of the other markers.
+	for _, marker := range []string{"spawn", "spin up", "spins up", "schedule", "orchestrat", "committee", "loop until"} {
 		if strings.Contains(lowered, marker) {
 			return true
 		}

@@ -589,6 +589,7 @@
 	"remoteSession.event.agentIdle": "Agent went idle",
 	"remoteSession.event.agentPermissionPending": "Agent is waiting for a permission decision",
 	"remoteSession.event.agentRunning": "Agent is working",
+	"remoteSession.event.autoResumeSent": "AO resumed the agent after a usage limit",
 	"remoteSession.event.blocked": "Agent reported it is blocked",
 	"remoteSession.event.checkpoint": "Progress checkpoint",
 	"remoteSession.event.failure": "Agent reported a failure",

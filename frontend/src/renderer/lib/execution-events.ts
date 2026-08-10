@@ -14,8 +14,25 @@ import type { TFunction } from "i18next";
 // falls back to the raw string, because a timeline that silently drops an event
 // is worse than one that shows a word we have no label for.
 
-/** A human title for one timeline event, or the raw kind if AO has no label. */
-export function executionEventTitle(kind: string, t: TFunction): string {
+/**
+ * The sender AO records on a message it queued by itself, rather than one a
+ * human typed into the composer (autoresume.AutoResumeActor).
+ */
+const AUTO_RESUME_ACTOR = "ao-auto-resume";
+
+/**
+ * A human title for one timeline event, or the raw kind if AO has no label.
+ *
+ * `payloadJson` is read only where the kind alone would misattribute the event:
+ * an auto-resume message is a `session_message_sent` like any other, and titling
+ * it "You sent a message" credited the operator with a prompt AO wrote and
+ * queued while they were away. The backend already records the difference —
+ * `sentBy` — expressly so this line can tell them apart.
+ */
+export function executionEventTitle(kind: string, payloadJson: string, t: TFunction): string {
+	if (kind === "session_message_sent" && sentBy(payloadJson) === AUTO_RESUME_ACTOR) {
+		return t("remoteSession.event.autoResumeSent");
+	}
 	switch (kind) {
 		case "agent_running":
 			return t("remoteSession.event.agentRunning");
@@ -64,6 +81,17 @@ export function executionTransportLabel(transport: string, t: TFunction): string
 			return t("remoteSession.transport.sentByAo");
 		default:
 			return transport;
+	}
+}
+
+/** Who queued a message event, or "" when the payload does not say. */
+function sentBy(payloadJson: string): string {
+	try {
+		const parsed: unknown = JSON.parse(payloadJson);
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+		return readString(parsed as Record<string, unknown>, "sentBy");
+	} catch {
+		return "";
 	}
 }
 

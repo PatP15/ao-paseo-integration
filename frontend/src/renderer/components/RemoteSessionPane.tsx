@@ -245,7 +245,7 @@ function TimelineEvent({ event }: { event: ExecutionEvent }) {
 	return (
 		<li className={eventCardClass}>
 			<div className="flex items-baseline justify-between gap-2">
-				<span className="min-w-0 text-xs font-medium text-foreground">{executionEventTitle(event.kind, t)}</span>
+				<span className="min-w-0 text-xs font-medium text-foreground">{executionEventTitle(event.kind, event.payloadJson, t)}</span>
 				<span className="shrink-0 text-caption text-passive">
 					{executionTransportLabel(event.transport, t)} · {formatTimeCompact(event.observedAt)}
 				</span>

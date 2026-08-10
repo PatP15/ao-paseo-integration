@@ -24,13 +24,29 @@ describe("executionEventTitle", () => {
 		["follow_up_proposal", "remoteSession.event.followUp"],
 		["report_gap", "remoteSession.event.reportGap"],
 	])("titles %s", (kind, key) => {
-		expect(executionEventTitle(kind, t)).toBe(key);
+		expect(executionEventTitle(kind, "{}", t)).toBe(key);
+	});
+
+	// The backend records sentBy expressly so this line can tell an auto-resume
+	// apart from a message the operator typed; titling AO's own prompt "You sent
+	// a message" credited them with work they were not there for.
+	it("names AO as the sender of an auto-resume message", () => {
+		expect(
+			executionEventTitle("session_message_sent", JSON.stringify({ sentBy: "ao-auto-resume", message: "continue" }), t),
+		).toBe("remoteSession.event.autoResumeSent");
+	});
+
+	it("keeps the human title for a composed message and for an unreadable payload", () => {
+		expect(executionEventTitle("session_message_sent", JSON.stringify({ sentBy: "human" }), t)).toBe(
+			"remoteSession.event.messageSent",
+		);
+		expect(executionEventTitle("session_message_sent", "not json", t)).toBe("remoteSession.event.messageSent");
 	});
 
 	// A kind AO has no label for must still be visible: a timeline that drops an
 	// event is worse than one showing a word we cannot translate yet.
 	it("falls back to the raw kind", () => {
-		expect(executionEventTitle("something_new", t)).toBe("something_new");
+		expect(executionEventTitle("something_new", "{}", t)).toBe("something_new");
 	});
 });
 

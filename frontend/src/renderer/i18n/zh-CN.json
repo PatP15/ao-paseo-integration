@@ -589,6 +589,7 @@
 	"remoteSession.event.agentIdle": "智能体已空闲",
 	"remoteSession.event.agentPermissionPending": "智能体正在等待权限决定",
 	"remoteSession.event.agentRunning": "智能体正在工作",
+	"remoteSession.event.autoResumeSent": "AO 在用量限制后恢复了该智能体",
 	"remoteSession.event.blocked": "智能体报告已被阻塞",
 	"remoteSession.event.checkpoint": "进度检查点",
 	"remoteSession.event.failure": "智能体报告了失败",

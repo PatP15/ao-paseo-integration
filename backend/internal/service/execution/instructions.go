@@ -229,7 +229,7 @@ func (s *Service) SyncSkill(ctx context.Context, hostID domain.ExecutionHostID, 
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return HostInventory{}, apierr.Invalid("SKILL_SOURCE_REQUIRED",
-			"source is required: 'local' for this machine's ~/.claude/skills, or a registered host id", nil)
+			"source is required: 'local' for this computer's ~/.claude/skills, or a registered computer's id", nil)
 	}
 	target, err := s.instructionsHost(ctx, hostID)
 	if err != nil {
@@ -280,7 +280,7 @@ func (s *Service) instructionsHost(ctx context.Context, id domain.ExecutionHostI
 		return domain.ExecutionHost{}, fmt.Errorf("get execution host %s: %w", id, err)
 	}
 	if !found {
-		return domain.ExecutionHost{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return domain.ExecutionHost{}, HostNotFoundError(id)
 	}
 	if s.instructions == nil {
 		return domain.ExecutionHost{}, apierr.Internal("MAINTENANCE_CHANNEL_UNAVAILABLE",

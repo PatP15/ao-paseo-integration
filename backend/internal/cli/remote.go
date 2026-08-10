@@ -192,7 +192,7 @@ func newRemoteRegisterCommand(ctx *commandContext, jsonOutput *bool) *cobra.Comm
 		Long: "Register a host AO may dispatch to.\n\n" +
 			"--endpoint must contain a colon: the remote CLI resolves a colonless host to\n" +
 			"nothing and falls through to the local daemon, which would run remote work on\n" +
-			"this machine. Pass credentials as --secret-ref, never inside the endpoint.",
+			"this computer. Pass credentials as --secret-ref, never inside the endpoint.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req.Enabled = !disabled
@@ -255,7 +255,7 @@ func newRemoteBindCommand(ctx *commandContext, jsonOutput *bool) *cobra.Command 
 		Long: "Record where a project is checked out ON THE HOST.\n\n" +
 			"Dispatch routes over bindings, so an unbound project has no candidate hosts\n" +
 			"and fails with NO_ELIGIBLE_HOST however many hosts are online. The path\n" +
-			"cannot be inferred: the same repo is /home/u/x on one machine and\n" +
+			"cannot be inferred: the same repo is /home/u/x on one computer and\n" +
 			"C:\\Projects\\X on another.",
 		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

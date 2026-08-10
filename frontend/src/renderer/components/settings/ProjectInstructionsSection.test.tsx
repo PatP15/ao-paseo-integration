@@ -189,7 +189,10 @@ describe("ProjectInstructionsSection binding drift rows", () => {
 
 		const alert = await screen.findByRole("alert");
 		expect(alert.textContent).toContain("Worker one has commits in its checkout that are not on the project's branch");
-		expect(alert.textContent).toContain("AO never merges or rebases another machine's work");
+		// "computer" is this app's one name for a registered remote — the refusal
+		// must not slip into a synonym the rest of the UI never uses.
+		expect(alert.textContent).toContain("AO never merges or rebases another computer's work");
+		expect(alert.textContent).not.toContain("machine");
 		// git's transcript is kept for the audit, verbatim...
 		expect(alert.textContent).toContain("fatal: Not possible to fast-forward, aborting.");
 		// ...but the code that chose the sentence is not stapled to the end of it.

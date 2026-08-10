@@ -83,6 +83,20 @@ func HostUnavailableError(host domain.ExecutionHost) error {
 		map[string]any{"host": string(host.ID)})
 }
 
+// HostNotFoundError is the refusal for an id no registered computer answers to.
+//
+// Seven sites built it by hand as "host <raw id> is not registered" — the noun
+// the UI never uses, the id the operator never chose, and no next step. Unlike
+// HostUnavailableError there is no row to take a display name from (that is the
+// whole point of the refusal), so the id is all there is to name; the message
+// says so plainly and points at the screen that fixes it. Phrasing lives here
+// so the seven sites cannot drift apart.
+func HostNotFoundError(id domain.ExecutionHostID) error {
+	return apierr.NotFound("HOST_NOT_FOUND",
+		fmt.Sprintf("No computer is registered under the id %q. Add it under Computers in "+
+			"settings, or pick one that is already there.", string(id)))
+}
+
 // maxHostConcurrency caps sessions per host. The ceiling is an observation
 // budget, not a resource one: each poll of the Paseo CLI costs roughly a second
 // because the binary re-execs a helper, so a host tracking many sessions cannot
@@ -232,7 +246,7 @@ func (s *Service) hostProviders(
 		return nil, fmt.Errorf("get execution host %s: %w", id, err)
 	}
 	if !found {
-		return nil, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return nil, HostNotFoundError(id)
 	}
 	if s.providerDiscovery == nil {
 		return nil, apierr.Internal("PROVIDER_DISCOVERY_UNAVAILABLE",
@@ -455,7 +469,7 @@ func (s *Service) maintenanceHost(ctx context.Context, id domain.ExecutionHostID
 		return domain.ExecutionHost{}, fmt.Errorf("get execution host %s: %w", id, err)
 	}
 	if !found {
-		return domain.ExecutionHost{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return domain.ExecutionHost{}, HostNotFoundError(id)
 	}
 	if s.maintenance == nil {
 		return domain.ExecutionHost{}, apierr.Internal("MAINTENANCE_CHANNEL_UNAVAILABLE",
@@ -532,7 +546,7 @@ func (s *Service) scheduleHost(ctx context.Context, id domain.ExecutionHostID) (
 		return domain.ExecutionHost{}, fmt.Errorf("get execution host %s: %w", id, err)
 	}
 	if !found {
-		return domain.ExecutionHost{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return domain.ExecutionHost{}, HostNotFoundError(id)
 	}
 	if s.scheduleReader == nil || s.scheduleDeleter == nil {
 		return domain.ExecutionHost{}, apierr.Internal("SCHEDULE_CHANNEL_UNAVAILABLE",
@@ -559,7 +573,7 @@ func (s *Service) ProbeHost(ctx context.Context, id domain.ExecutionHostID) (Hos
 		return Host{}, fmt.Errorf("get execution host %s: %w", id, err)
 	}
 	if !found {
-		return Host{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return Host{}, HostNotFoundError(id)
 	}
 	if s.hostProber == nil {
 		return Host{}, apierr.Internal("PROBE_UNAVAILABLE",
@@ -575,7 +589,7 @@ func (s *Service) ProbeHost(ctx context.Context, id domain.ExecutionHostID) (Hos
 		return Host{}, fmt.Errorf("reload execution host %s: %w", id, err)
 	}
 	if !stillFound {
-		return Host{}, apierr.NotFound("HOST_NOT_FOUND", "host "+string(id)+" is not registered")
+		return Host{}, HostNotFoundError(id)
 	}
 	if proberErr != nil {
 		return Host{}, proberErr
@@ -1083,13 +1097,12 @@ func (s *Service) BindProject(ctx context.Context, in BindingInput) (domain.Proj
 	if repoPath == "" {
 		return domain.ProjectHostBinding{}, apierr.Invalid(
 			"HOST_REPO_PATH_REQUIRED",
-			"hostRepoPath is required: it is the checkout path ON THE HOST, which AO cannot infer", nil)
+			"hostRepoPath is required: it is the checkout path ON THAT COMPUTER, which AO cannot infer", nil)
 	}
 	if _, _, found, err := s.store.GetExecutionHost(ctx, hostID); err != nil {
 		return domain.ProjectHostBinding{}, err
 	} else if !found {
-		return domain.ProjectHostBinding{}, apierr.NotFound(
-			"HOST_NOT_FOUND", "register the host before binding a project to it")
+		return domain.ProjectHostBinding{}, HostNotFoundError(hostID)
 	}
 
 	baseBranch := strings.TrimSpace(in.BaseBranch)

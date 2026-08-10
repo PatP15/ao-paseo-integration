@@ -868,3 +868,29 @@ func TestHostUnavailableErrorFallsBackToTheIDWhenUnnamed(t *testing.T) {
 		t.Fatalf("message = %q", typed.Message)
 	}
 }
+
+// Seven sites answered an unknown id with "host <raw id> is not registered" —
+// a noun this UI never uses and a bare statement with no way forward, printed
+// verbatim by the renderer. There is no display name to fall back on here (an
+// unregistered id has no row), so the helper names the id as an id and points
+// at the screen that fixes it.
+func TestHostNotFoundErrorSpeaksTheUIsVocabulary(t *testing.T) {
+	err := HostNotFoundError("loop-worker")
+
+	var typed *apierr.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("want a typed apierr, got %T", err)
+	}
+	if typed.Code != "HOST_NOT_FOUND" {
+		t.Fatalf("code = %q, want HOST_NOT_FOUND", typed.Code)
+	}
+	if !strings.Contains(typed.Message, "loop-worker") {
+		t.Fatalf("message does not say which id was asked for: %q", typed.Message)
+	}
+	if strings.Contains(typed.Message, "host") {
+		t.Fatalf("message uses a noun the UI does not: %q", typed.Message)
+	}
+	if !strings.Contains(typed.Message, "computer") || !strings.Contains(typed.Message, "Computers") {
+		t.Fatalf("message names neither the concept nor the screen that fixes it: %q", typed.Message)
+	}
+}

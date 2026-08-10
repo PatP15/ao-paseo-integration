@@ -200,7 +200,7 @@ type SkillSyncParams struct {
 
 // SyncSkillRequest names where the skill comes from.
 type SyncSkillRequest struct {
-	Source string `json:"source" description:"'local' for the AO machine's own ~/.claude/skills, or a registered host id."`
+	Source string `json:"source" description:"'local' for this computer's own ~/.claude/skills, or a registered computer's id."`
 }
 
 // BindingDriftEnvelope wraps one refreshed binding state after a sync.

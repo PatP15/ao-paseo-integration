@@ -1675,7 +1675,7 @@ export interface components {
             mimeType?: string;
         };
         ControllersSyncSkillRequest: {
-            /** @description 'local' for the AO machine's own ~/.claude/skills, or a registered host id. */
+            /** @description 'local' for this computer's own ~/.claude/skills, or a registered computer's id. */
             source: string;
         };
         CreateWorkItemInput: {

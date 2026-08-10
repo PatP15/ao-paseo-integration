@@ -164,7 +164,7 @@ export function RemoteSessionPane({
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
 				{eventsQuery.isLoading ? (
 					// Every waiting state in AO spins; see PendingLine.
-					<PendingLine>{t("remoteSession.loading")}</PendingLine>
+					<PendingLine slowHint={t("remoteSession.slowRead")}>{t("remoteSession.loading")}</PendingLine>
 				) : eventsQuery.isError ? (
 					<p className="text-sm text-error">
 						{eventsQuery.error instanceof Error ? eventsQuery.error.message : t("remoteSession.loadFailed")}

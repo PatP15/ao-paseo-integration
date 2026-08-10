@@ -66,7 +66,9 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 	return (
 		<SettingsSection title={t("instructions.title")} sectionId="project-instructions">
 			{instructionsQuery.isLoading ? (
-				<PendingLine className="px-1 text-xs">{t("instructions.loading")}</PendingLine>
+				<PendingLine className="px-1 text-xs" slowHint={t("instructions.slowRead")}>
+					{t("instructions.loading")}
+				</PendingLine>
 			) : instructionsQuery.isError ? (
 				<p className="px-1 text-xs text-error">
 					{instructionsQuery.error instanceof Error ? instructionsQuery.error.message : t("instructions.loadFailed")}

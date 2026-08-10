@@ -90,11 +90,11 @@ describe("RemoteSessionPane composer", () => {
 		await userEvent.type(await screen.findByLabelText("Message the remote agent"), "rerun the failing test");
 		await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
-		expect(await screen.findByText("message queued")).toBeInTheDocument();
+		expect(await screen.findByText("Message queued")).toBeInTheDocument();
 		// Exactly one copy: the optimistic row must retire when its own durable
 		// event arrives, not sit alongside it.
 		events = [messageEvent("command-1")];
-		await waitFor(() => expect(screen.queryByText("message queued")).not.toBeInTheDocument(), { timeout: 5000 });
+		await waitFor(() => expect(screen.queryByText("Message queued")).not.toBeInTheDocument(), { timeout: 5000 });
 		expect(screen.getAllByText(/rerun the failing test/)).toHaveLength(1);
 	});
 
@@ -106,7 +106,7 @@ describe("RemoteSessionPane composer", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("host refused");
-		expect(screen.queryByText("message queued")).not.toBeInTheDocument();
+		expect(screen.queryByText("Message queued")).not.toBeInTheDocument();
 		expect(input).toHaveValue("rerun the failing test");
 	});
 

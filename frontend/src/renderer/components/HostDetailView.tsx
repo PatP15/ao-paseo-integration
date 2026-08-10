@@ -318,7 +318,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 				</p>
 			) : null}
 			{inventoryQuery.isLoading ? (
-				<PendingLine>{t("hostDetail.loading")}</PendingLine>
+				<PendingLine slowHint={t("hostDetail.slowRead")}>{t("hostDetail.loading")}</PendingLine>
 			) : inventoryQuery.isError ? (
 				<p className="text-sm text-error" role="alert">
 					{inventoryQuery.error instanceof Error ? inventoryQuery.error.message : t("hostDetail.loadFailed")}
@@ -503,7 +503,7 @@ export function PreferencesTab({ hostId }: { hostId: string }) {
 		},
 	});
 
-	if (inventoryQuery.isLoading) return <PendingLine>{t("hostDetail.loading")}</PendingLine>;
+	if (inventoryQuery.isLoading) return <PendingLine slowHint={t("hostDetail.slowRead")}>{t("hostDetail.loading")}</PendingLine>;
 	if (inventoryQuery.isError) {
 		return (
 			<p className="text-sm text-error" role="alert">
@@ -638,7 +638,7 @@ function InstructionsTab({ hostId }: { hostId: string }) {
 	});
 
 	if (instructionsQuery.isLoading) {
-		return <PendingLine>{t("hostDetail.readingInstructions")}</PendingLine>;
+		return <PendingLine slowHint={t("hostDetail.slowRead")}>{t("hostDetail.readingInstructions")}</PendingLine>;
 	}
 	if (instructionsQuery.isError) {
 		return (
@@ -716,7 +716,7 @@ export function SchedulesTab({ hostId }: { hostId: string }) {
 			    listing, so an empty list proves nothing about heartbeats. */}
 			<p className="text-xs text-settings-muted">{t("hostDetail.heartbeatBlindSpot")}</p>
 			{schedulesQuery.isLoading ? (
-				<PendingLine>{t("hostDetail.loading")}</PendingLine>
+				<PendingLine slowHint={t("hostDetail.slowRead")}>{t("hostDetail.loading")}</PendingLine>
 			) : schedulesQuery.isError ? (
 				<p className="text-sm text-error">
 					{schedulesQuery.error instanceof Error ? schedulesQuery.error.message : t("hostDetail.loadFailed")}

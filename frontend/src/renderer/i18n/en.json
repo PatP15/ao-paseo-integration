@@ -207,6 +207,7 @@
 	"dispatch.gateEnable": "Enable for this dispatch",
 	"dispatch.gateExplanation": "\"{{name}}\" orchestrates through Paseo (it spawns agents or schedules). AO owns scheduling and this computer's daemon runs without MCP tool injection, so the skill's own orchestration will be refused there. Enabling it is recorded in the audit log.",
 	"dispatch.gatedMark": "⚠",
+	"dispatch.gatedSkillLabel": "{{name}} (policy-gated)",
 	"dispatch.hostRequired": "Select a computer first.",
 	"dispatch.launched": "Agent launched on the computer.",
 	"dispatch.mode": "Mode",

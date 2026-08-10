@@ -502,10 +502,18 @@ export function DispatchWorkItemDialog({
 											// offered in a body area has to read as pressable.
 											className="settings-chip-button"
 											title={skill.description || skill.name}
+											// The gate was a bare "⚠" glyph — meaning carried by a
+											// character with no text alternative. The mark stays for
+											// sighted scanning; the accessible name says it in words.
+											aria-label={
+												skill.policyGated ? t("dispatch.gatedSkillLabel", { name: skill.name }) : undefined
+											}
 											onClick={() => insertSkill(skill)}
 										>
 											{skill.name}
-											{skill.policyGated ? ` ${t("dispatch.gatedMark")}` : ""}
+											{skill.policyGated ? (
+												<span aria-hidden="true">{t("dispatch.gatedMark")}</span>
+											) : null}
 										</button>
 									))}
 								</div>

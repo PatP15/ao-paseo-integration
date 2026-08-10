@@ -207,6 +207,7 @@
 	"dispatch.gateEnable": "为本次分派启用",
 	"dispatch.gateExplanation": "“{{name}}”通过 Paseo 进行编排（会派生智能体或计划任务）。AO 拥有调度权，且该计算机的守护进程未注入 MCP 工具，该技能自身的编排会被拒绝。启用将记入审计日志。",
 	"dispatch.gatedMark": "⚠",
+	"dispatch.gatedSkillLabel": "{{name}}（策略受限）",
 	"dispatch.hostRequired": "请先选择计算机。",
 	"dispatch.launched": "智能体已在计算机上启动。",
 	"dispatch.mode": "模式",

@@ -225,6 +225,63 @@ describe("DispatchWorkItemDialog", () => {
 		expect(await screen.findByText("Running 1 of 4 sessions this computer allows.")).toBeInTheDocument();
 	});
 
+	// The gate used to be a bare "⚠" appended to the chip's text: meaning carried
+	// by a glyph, with nothing for a screen reader to say.
+	it("names the policy gate in the chip's accessible label", async () => {
+		getMock.mockImplementation((route: string) => {
+			if (route === "/api/v1/execution/hosts") {
+				return Promise.resolve({
+					data: {
+						hosts: [
+							{
+								id: "loop-worker",
+								name: "loop worker",
+								enabled: true,
+								endpoint: "127.0.0.1:6807",
+								transport: "lan",
+								trustZone: "hobby",
+								capabilities: [],
+								activeSessions: 0,
+								maxConcurrentSessions: 4,
+								reachable: true,
+								requiresNoMcp: true,
+								requiresNoRelay: true,
+							},
+						],
+					},
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/bindings") {
+				return Promise.resolve({
+					data: { bindings: [{ projectId: "e2e", hostId: "loop-worker", enabled: true }] },
+					error: undefined,
+				});
+			}
+			if (route === "/api/v1/execution/hosts/{hostId}/inventory") {
+				return Promise.resolve({
+					data: {
+						skills: [
+							{ name: "demo-skill", description: "Demo", policyGated: false },
+							{ name: "paseo-advisor", description: "Spin up a single agent", policyGated: true },
+						],
+					},
+					error: undefined,
+				});
+			}
+			return Promise.resolve({ data: { providers: [], skills: [] }, error: undefined });
+		});
+		renderDialog();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole("button", { name: "Computer" }));
+		await user.click(await screen.findByRole("menuitem", { name: "loop worker" }));
+
+		expect(await screen.findByRole("button", { name: "paseo-advisor (policy-gated)" })).toBeInTheDocument();
+		// An ungated skill keeps its plain name as its accessible name.
+		expect(screen.getByRole("button", { name: "demo-skill" })).toBeInTheDocument();
+	});
+
 	// Every other dialog in the app offers Cancel beside its primary; this one
 	// left the header's × as the only way out.
 	it("closes from the footer's Cancel", async () => {

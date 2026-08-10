@@ -31,6 +31,42 @@ type Tab = (typeof TABS)[number];
 
 // The five prefs roles every Paseo skill reads (mirrors the file's contract).
 const PREF_ROLES = ["impl", "ui", "research", "planning", "audit"] as const;
+type PrefRole = (typeof PREF_ROLES)[number];
+
+// A role is a file key, and the tab showed nothing else: five mono words —
+// impl, ui, research, planning, audit — against five model pickers, with
+// nothing saying what kind of work each one covers or who reads the answer.
+// The key stays visible beside the name, because it is what the file contains
+// and what a human editing that file by hand will look for.
+function roleName(role: PrefRole, t: TFunction): string {
+	switch (role) {
+		case "impl":
+			return t("hostDetail.roleImpl");
+		case "ui":
+			return t("hostDetail.roleUi");
+		case "research":
+			return t("hostDetail.roleResearch");
+		case "planning":
+			return t("hostDetail.rolePlanning");
+		case "audit":
+			return t("hostDetail.roleAudit");
+	}
+}
+
+function roleHint(role: PrefRole, t: TFunction): string {
+	switch (role) {
+		case "impl":
+			return t("hostDetail.roleImplHint");
+		case "ui":
+			return t("hostDetail.roleUiHint");
+		case "research":
+			return t("hostDetail.roleResearchHint");
+		case "planning":
+			return t("hostDetail.rolePlanningHint");
+		case "audit":
+			return t("hostDetail.roleAuditHint");
+	}
+}
 
 function tabLabel(tab: Tab, t: TFunction): string {
 	switch (tab) {
@@ -366,7 +402,7 @@ export function SkillsTab({ hostId }: { hostId: string }) {
 	);
 }
 
-function PreferencesTab({ hostId }: { hostId: string }) {
+export function PreferencesTab({ hostId }: { hostId: string }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const inventoryQuery = useQuery({
@@ -473,6 +509,8 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 
 	return (
 		<>
+			{/* What the file is for, before five model pickers with no context. */}
+			<p className="text-xs text-settings-muted">{t("hostDetail.prefsExplanation")}</p>
 			<p className="text-xs text-settings-muted">
 				{t("hostDetail.prefsConfirmed", {
 					time: formatTimeCompact(prefs.confirmedAt),
@@ -490,8 +528,14 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 				// gets fixed, and only catalog values are offered as replacements.
 				const options = catalog.includes(current) || current === "" ? catalog : [current, ...catalog];
 				return (
-					<div key={role} className={`${rowClass} flex items-center justify-between gap-4`}>
-						<span className="font-mono text-xs text-settings-label">{role}</span>
+					<div key={role} className={`${rowClass} flex items-start justify-between gap-4`}>
+						<div className="min-w-0">
+							<p className="flex items-baseline gap-1.5 text-xs font-medium text-settings-label">
+								{roleName(role, t)}
+								<span className="font-mono text-caption text-settings-muted">{role}</span>
+							</p>
+							<p className="mt-0.5 text-caption text-settings-muted">{roleHint(role, t)}</p>
+						</div>
 						<SettingsOptionMenu
 							value={current}
 							options={options.map((entry) => ({
@@ -501,7 +545,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 							onChange={(value) => setRoles((existing) => ({ ...existing, [role]: value }))}
 							placeholder={providersQuery.isFetching ? t("dispatch.discovering") : t("hostDetail.roleUnset")}
 							disabled={catalog.length === 0}
-							aria-label={role}
+							aria-label={roleName(role, t)}
 						/>
 					</div>
 				);
@@ -517,6 +561,7 @@ function PreferencesTab({ hostId }: { hostId: string }) {
 					onChange={(event) => setFreeform(event.target.value)}
 					placeholder={t("hostDetail.freeformPlaceholder")}
 				/>
+				<p className="text-caption text-settings-muted">{t("hostDetail.freeformHint")}</p>
 			</div>
 			<div className="flex items-center gap-2">
 				<button

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SchedulesTab, SkillsTab } from "./HostDetailView";
+import { PreferencesTab, SchedulesTab, SkillsTab } from "./HostDetailView";
 
 const getMock = vi.fn();
 const postMock = vi.fn();
@@ -127,5 +127,57 @@ describe("HostDetailView schedules", () => {
 			"/api/v1/execution/hosts/{hostId}/schedules/{scheduleId}",
 			{ params: { path: { hostId: "target", scheduleId: "schedule-1" } } },
 		);
+	});
+});
+
+describe("HostDetailView preferences", () => {
+	beforeEach(() => {
+		getMock.mockReset().mockImplementation((path: string) => {
+			if (path === "/api/v1/execution/hosts/{hostId}/inventory") {
+				return Promise.resolve({
+					data: {
+						refreshed: false,
+						skillsAsOf: "2026-08-09T00:00:00Z",
+						skills: [],
+						prefs: {
+							content: JSON.stringify({ providers: { impl: "claude/claude-sonnet-5" }, preferences: [] }),
+							sha256: "abc",
+							confirmedAt: "2026-08-09T00:00:00Z",
+						},
+					},
+					error: undefined,
+				});
+			}
+			return Promise.resolve({ data: { providers: [] }, error: undefined });
+		});
+		postMock.mockReset();
+	});
+
+	// The tab used to be five mono file keys — impl, ui, research, planning,
+	// audit — against five model pickers, with nothing saying what each covers
+	// or who reads the answer.
+	it("names each role and what it covers, keeping the file key visible", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PreferencesTab hostId="target" />
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText(/Which provider and model the Paseo skills/)).toBeInTheDocument();
+		for (const [name, hint] of [
+			["Implementation", "Writing and changing code."],
+			["User interface", "Visual design, layout and interface copy."],
+			["Research", "Reading code and gathering context before a decision."],
+			["Planning", "Breaking work down and sequencing it."],
+			["Audit", "Reviewing and verifying finished work."],
+		]) {
+			expect(screen.getByText(name)).toBeInTheDocument();
+			expect(screen.getByText(hint)).toBeInTheDocument();
+		}
+		// The key is what the file contains, so it stays readable beside the name.
+		expect(screen.getByText("impl")).toBeInTheDocument();
+		// The picker is labelled by the human name, not the raw key.
+		expect(screen.getByRole("button", { name: "Implementation" })).toBeInTheDocument();
 	});
 });

@@ -7,6 +7,7 @@ import { executionHostsQueryOptions } from "../hooks/useExecutionHostsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { harnessForProvider } from "../lib/execution-harness";
+import { trustZoneLabel } from "./settings/ComputersSection";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import {
 	Dialog,
@@ -458,7 +459,7 @@ export function DispatchWorkItemDialog({
 							{host ? (
 								<>
 									<p className="text-xs text-settings-muted">
-										{t("dispatch.trustZoneLine", { zone: host.trustZone })}
+										{t("dispatch.trustZoneLine", { zone: trustZoneLabel(host.trustZone, t) })}
 									</p>
 									<p className="text-xs text-settings-muted">
 										{t("dispatch.capacityLine", {

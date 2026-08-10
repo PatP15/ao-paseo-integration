@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { ArrowLeft, Check, Plus, Rocket, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, Plus, Rocket, X } from "lucide-react";
 import { type ComponentProps, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
@@ -186,23 +186,6 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 														{t("workItems.decidedBy", { name: item.approvedBy })}
 													</span>
 												) : null}
-												{/* The path from a work item to the session doing the
-												    work. The newest attempt is last, which is where the
-												    work actually is. */}
-												{session !== undefined ? (
-													<button
-														type="button"
-														className="settings-option-trigger"
-														onClick={() =>
-															void navigate({
-																to: "/projects/$projectId/sessions/$sessionId",
-																params: { projectId, sessionId: session },
-															})
-														}
-													>
-														{t("workItems.openSession")}
-													</button>
-												) : null}
 											</div>
 											{/* A decision's reason, which for a rejection is the only
 											    explanation anyone but the decider will ever see. */}
@@ -213,6 +196,27 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 												<p className="mt-1 text-caption text-settings-muted">{t("workItems.rejectedHint")}</p>
 											) : null}
 										</div>
+										{/* Every row action lives here, so the meta line stays
+										    facts and the actions stay actions. */}
+										{session !== undefined ? (
+											<div className="flex shrink-0 items-center gap-2">
+												{/* The path from a work item to the session doing the work.
+												    The newest attempt is last, which is where the work is. */}
+												<button
+													type="button"
+													className="settings-option-trigger inline-flex items-center gap-1.5"
+													onClick={() =>
+														void navigate({
+															to: "/projects/$projectId/sessions/$sessionId",
+															params: { projectId, sessionId: session },
+														})
+													}
+												>
+													<ArrowUpRight className="size-icon-base" aria-hidden="true" />
+													{t("workItems.openSession")}
+												</button>
+											</div>
+										) : null}
 										{dispatchable ? (
 											<div className="flex shrink-0 items-center gap-2">
 												<button
@@ -331,8 +335,9 @@ export function RejectWorkItemDialog({
 					}}
 				>
 					{/* Which item: a list can hold several with similar names, and the
-					    dialog's title cannot say. */}
-					<p className="text-xs font-medium text-settings-label">{workItem?.title}</p>
+					    dialog's title cannot say. Muted, so it reads as context rather
+					    than as a second field label above Reason. */}
+					<p className="text-xs text-settings-muted">{workItem?.title}</p>
 					<div className="flex flex-col gap-1.5">
 						<label className="text-xs font-medium text-settings-label" htmlFor="workItemRejectReason">
 							{t("workItems.rejectFieldReason")}

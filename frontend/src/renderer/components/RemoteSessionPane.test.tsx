@@ -129,7 +129,7 @@ describe("RemoteSessionPane timeline", () => {
 		expect(screen.getByText("Re-read the checklist.")).toBeInTheDocument();
 		expect(screen.getByText("Agent went idle")).toBeInTheDocument();
 		// Provenance in the operator's terms, not the transport enum.
-		expect(screen.getByText(/sent by AO/)).toBeInTheDocument();
+		expect(screen.getByText(/AO outbox/)).toBeInTheDocument();
 		expect(screen.getByText(/AO inspection/)).toBeInTheDocument();
 		expect(screen.queryByText("agent_idle")).not.toBeInTheDocument();
 		// The wire record is not gone — this pane is an audit trail — it is just

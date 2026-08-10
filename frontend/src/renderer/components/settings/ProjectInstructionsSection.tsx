@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FileText, Monitor, PencilLine } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
+import { useExecutionHostName } from "../../hooks/useExecutionHostsQuery";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsDetailRow } from "./SettingsRow";
@@ -129,30 +130,9 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 					{view.bindings.length > 0 ? (
 						<div className="flex flex-col gap-1.5">
 							{view.bindings.map((binding) => (
-								<SettingsDetailRow
+								<BindingDriftRow
 									key={binding.hostId}
-									icon={Monitor}
-									title={
-										<>
-											<span className="truncate">{binding.hostId}</span>
-											{binding.error ? (
-												<span className="text-xs text-error">{t("instructions.bindingError")}</span>
-											) : binding.inSync ? (
-												<span className="text-xs text-(--color-success)">{t("instructions.inSync")}</span>
-											) : (
-												<span className="text-xs text-warning">
-													{t("instructions.drifted", { count: binding.driftedPaths.length })}
-												</span>
-											)}
-										</>
-									}
-									meta={
-										binding.error ? (
-											<p className="break-words text-error">{binding.error}</p>
-										) : !binding.inSync ? (
-											<p className="truncate font-mono">{binding.driftedPaths.join(", ")}</p>
-										) : null
-									}
+									binding={binding}
 									actions={
 										!binding.error && !binding.inSync ? (
 											<button
@@ -177,5 +157,55 @@ export function ProjectInstructionsSection({ projectId }: { projectId: string })
 				</>
 			) : null}
 		</SettingsSection>
+	);
+}
+
+/**
+ * One bound computer's drift against the project's committed instruction files.
+ *
+ * Named by its display name, like every other mention of the same machine — the
+ * row used to print the raw host id next to a Computers section calling it
+ * something else. A failed read leads with a sentence the operator can act on
+ * and keeps the channel's own words underneath as detail, instead of handing
+ * over `maintenance repo-status on host X: context deadline exceeded` alone.
+ */
+function BindingDriftRow({
+	binding,
+	actions,
+}: {
+	binding: ProjectInstructions["bindings"][number];
+	actions: ReactNode;
+}) {
+	const { t } = useTranslation();
+	const hostName = useExecutionHostName(binding.hostId);
+	return (
+		<SettingsDetailRow
+			icon={Monitor}
+			title={
+				<>
+					<span className="truncate">{hostName}</span>
+					{binding.error ? (
+						<span className="text-xs text-error">{t("instructions.bindingError")}</span>
+					) : binding.inSync ? (
+						<span className="text-xs text-(--color-success)">{t("instructions.inSync")}</span>
+					) : (
+						<span className="text-xs text-warning">
+							{t("instructions.drifted", { count: binding.driftedPaths.length })}
+						</span>
+					)}
+				</>
+			}
+			meta={
+				binding.error ? (
+					<>
+						<p className="break-words text-error">{t("instructions.bindingErrorHint", { host: hostName })}</p>
+						<p className="break-words text-settings-muted">{binding.error}</p>
+					</>
+				) : !binding.inSync ? (
+					<p className="truncate font-mono">{binding.driftedPaths.join(", ")}</p>
+				) : null
+			}
+			actions={actions}
+		/>
 	);
 }

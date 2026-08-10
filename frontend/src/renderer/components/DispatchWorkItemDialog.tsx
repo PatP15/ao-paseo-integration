@@ -26,6 +26,24 @@ type DispatchResponse = components["schemas"]["DispatchExecutionResponse"];
 
 const NONE = "__none__";
 
+/**
+ * The branch the remote agent works on, offered as a default.
+ *
+ * Slugged from the title, because `ao/wi_59e62c92-95b7-488` — a uuid sliced
+ * mid-group by a 20-character cap — told the operator nothing about the work and
+ * looked like a truncation bug. The id is still the fallback when a title slugs
+ * to nothing (punctuation or a non-Latin script), so the field is never empty.
+ */
+export function branchNameFor(workItem: Pick<WorkItem, "id" | "title">): string {
+	const slug = workItem.title
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 40)
+		.replace(/-+$/g, "");
+	return `ao/${slug || workItem.id.slice(0, 20)}`;
+}
+
 export function DispatchWorkItemDialog({
 	projectId,
 	workItem,
@@ -53,7 +71,7 @@ export function DispatchWorkItemDialog({
 
 	useEffect(() => {
 		if (open && workItem) {
-			setBranch(`ao/${workItem.id.slice(0, 20)}`);
+			setBranch(branchNameFor(workItem));
 			setPrompt(workItem.body || workItem.title);
 		}
 		if (!open) {
@@ -216,6 +234,25 @@ export function DispatchWorkItemDialog({
 		harness !== null &&
 		branch.trim() !== "" &&
 		prompt.trim() !== "";
+	// Dispatch has five preconditions and the dialog used to refuse silently:
+	// a greyed-out button with no hint at which of them was missing. Named in
+	// field order, and only the first one, so the message stays a next step
+	// rather than a list of complaints. The unsupported-harness case already
+	// prints its own warning next to the provider select.
+	const blockedReason = ((): string | null => {
+		if (busy || progress || workItem === null) return null;
+		// The no-bound-computer case already prints dispatch.bindHint under the
+		// select, with the fix in it; do not say it twice.
+		if (boundHosts.length === 0) return null;
+		if (host === undefined) return t("dispatch.blockedHost");
+		if (provider === "") {
+			return providersQuery.isFetching ? null : t("dispatch.blockedProvider");
+		}
+		if (harness === null) return null;
+		if (branch.trim() === "") return t("dispatch.blockedBranch");
+		if (prompt.trim() === "") return t("dispatch.blockedPrompt");
+		return null;
+	})();
 
 	const optionMenus = [
 		{
@@ -247,7 +284,9 @@ export function DispatchWorkItemDialog({
 					label: entry.label || entry.id,
 				})),
 			],
-			placeholder: t("dispatch.providerDefault"),
+			// A disabled select that still reads "Provider default" looks like a
+			// choice already made; say what it is waiting for instead.
+			placeholder: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,
 			onChange: (value: string) => {
 				setModel(value);
@@ -277,7 +316,7 @@ export function DispatchWorkItemDialog({
 							]
 						: []),
 			],
-			placeholder: t("dispatch.providerDefault"),
+			placeholder: providerInfo === undefined ? t("dispatch.awaitingProvider") : t("dispatch.providerDefault"),
 			disabled: providerInfo === undefined,
 			onChange: setMode,
 		},
@@ -292,7 +331,7 @@ export function DispatchWorkItemDialog({
 					label: id,
 				})),
 			],
-			placeholder: t("dispatch.providerDefault"),
+			placeholder: modelInfo === undefined ? t("dispatch.awaitingModel") : t("dispatch.providerDefault"),
 			disabled: modelInfo === undefined,
 			onChange: setThinking,
 		},
@@ -321,7 +360,7 @@ export function DispatchWorkItemDialog({
 						<p className="text-xs text-settings-muted">
 							{t("dispatch.sessionLine", {
 								sessionId: progress.sessionId,
-								hostId: progress.hostId,
+								host: host?.name ?? progress.hostId,
 							})}
 						</p>
 						{commandState === "failed" && commandError ? (
@@ -469,7 +508,20 @@ export function DispatchWorkItemDialog({
 									: t("dispatch.dispatchFailed")}
 							</p>
 						) : null}
+						{blockedReason ? <p className="text-xs text-settings-muted">{blockedReason}</p> : null}
+						{/* Cancel + primary, the footer every other dialog in the app
+						    uses (New task, Create work item, the confirm dialogs). This
+						    one offered the primary alone, leaving the header's × as the
+						    only way out of a half-filled dispatch. */}
 						<div className={settingsDialogFooterClass}>
+							<button
+								type="button"
+								className="settings-footer-button"
+								disabled={busy}
+								onClick={() => onOpenChange(false)}
+							>
+								{t("dispatch.cancel")}
+							</button>
 							<button
 								type="submit"
 								className="settings-footer-button settings-footer-button-primary"

@@ -133,7 +133,25 @@ export function WorkItemsView({ projectId }: { projectId: string }) {
 						{itemsQuery.error instanceof Error ? itemsQuery.error.message : t("workItems.loadFailed")}
 					</p>
 				) : items.length === 0 ? (
-					<p className="text-sm text-settings-muted">{t("workItems.empty")}</p>
+					// The board's own empty states are a centred hero with the action
+					// repeated in reach (BoardEmptyStates.ProjectBoardEmpty); an empty
+					// panel that instead starts a sentence in the top-left corner reads
+					// as a half-loaded page. Same shape here, since the whole body is
+					// empty rather than one section of a populated tab.
+					<div className="flex h-full min-h-0 items-center justify-center">
+						<div className="flex w-full max-w-preview-content flex-col items-center pb-empty-offset-y text-center">
+							<h2 className="text-subtitle font-semibold tracking-tight text-foreground">
+								{t("workItems.emptyTitle")}
+							</h2>
+							<p className="mt-2 text-md-sm leading-relaxed text-muted-foreground">{t("workItems.empty")}</p>
+							<div className="mt-5">
+								<TopbarButton aria-label={t("workItems.create")} variant="accent" onClick={() => setCreateOpen(true)}>
+									<Plus className="size-icon-md" aria-hidden="true" />
+									{t("workItems.create")}
+								</TopbarButton>
+							</div>
+						</div>
+					</div>
 				) : (
 					<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
 						{decisionError ? (

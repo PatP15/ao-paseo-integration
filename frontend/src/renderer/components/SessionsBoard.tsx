@@ -42,6 +42,7 @@ import {
 	useTerminateSession,
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
+import { useExecutionHostName } from "../hooks/useExecutionHostsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
@@ -789,6 +790,7 @@ function SessionCard({
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const executionHostName = useExecutionHostName(session.executionHostId);
 	const termination = useTerminateSessionState(session.id);
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
@@ -878,10 +880,10 @@ function SessionCard({
 					{session.executionHostId && (
 						<div
 							className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive"
-							title={t("shell.remoteHost", { host: session.executionHostId })}
+							title={t("shell.remoteHost", { host: executionHostName })}
 						>
 							<Monitor aria-hidden="true" className="size-icon-2xs shrink-0" />
-							<span className="truncate">{session.executionHostId}</span>
+							<span className="truncate">{executionHostName}</span>
 						</div>
 					)}
 					<AutoResumeIndicator className="mt-1.5" sessionId={session.id} />

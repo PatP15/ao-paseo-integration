@@ -30,6 +30,8 @@ type commandStore interface {
 	FailExecutionCommand(context.Context, domain.ExecutionCommand, error) error
 	EscalateExecutionAttempt(context.Context, domain.SessionID) error
 	AcknowledgeExecutionStart(context.Context, string, domain.SessionID, string, string, time.Time) error
+	AcknowledgeExecutionDelivery(context.Context, string, time.Time) error
+	GetSession(context.Context, domain.SessionID) (domain.SessionRecord, bool, error)
 }
 
 // BriefWriter commits the immutable instruction package for a launch. It is
@@ -110,10 +112,52 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	if err := w.atCheckpoint(checkpointClaimed); err != nil {
 		return true, err
 	}
-	if command.Type != domain.ExecutionCommandStartAgent {
+	switch command.Type {
+	case domain.ExecutionCommandStartAgent:
+		return w.deliverStart(ctx, command)
+	case domain.ExecutionCommandSendMessage:
+		return w.deliverMessage(ctx, command)
+	default:
 		err := fmt.Errorf("unsupported execution command type %q", command.Type)
 		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
 	}
+}
+
+// deliverMessage hands one free-form message to the agent the session is bound
+// to. It carries no remote creation, so there is no escalation ladder here:
+// either the host takes the text or the row retries.
+func (w *Worker) deliverMessage(ctx context.Context, command domain.ExecutionCommand) (bool, error) {
+	payload, err := decodeMessagePayload(command.PayloadJSON)
+	if err != nil {
+		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
+	}
+	backend, ok := w.backends.ResolveExecutionBackend(command.HostID)
+	if !ok {
+		err := fmt.Errorf("no execution backend for host %s", command.HostID)
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	runtime, ok := backend.(ports.ExecutionRuntime)
+	if !ok {
+		err := fmt.Errorf("execution backend for host %s cannot deliver messages", command.HostID)
+		return true, errorsJoin(err, w.store.FailExecutionCommand(ctx, command, err))
+	}
+	session, found, err := w.store.GetSession(ctx, command.SessionID)
+	if err != nil {
+		return true, err
+	}
+	// The handle is published by the start_agent this row queues behind, so an
+	// absent one is a race with the launch rather than a dead end: retry.
+	if !found || session.Metadata.RuntimeHandleID == "" {
+		err := fmt.Errorf("session %s has no runtime handle to message", command.SessionID)
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	if err := runtime.SendMessage(ctx, ports.RuntimeHandle{ID: session.Metadata.RuntimeHandleID}, payload.Message); err != nil {
+		return true, w.retryOrFail(ctx, command, err)
+	}
+	return true, w.store.AcknowledgeExecutionDelivery(ctx, command.ID, w.now().UTC())
+}
+
+func (w *Worker) deliverStart(ctx context.Context, command domain.ExecutionCommand) (bool, error) {
 	backend, ok := w.backends.ResolveExecutionBackend(command.HostID)
 	if !ok {
 		err := fmt.Errorf("no execution backend for host %s", command.HostID)
@@ -250,6 +294,22 @@ func decodeStartPayload(raw string) (domain.ExecutionStartPayload, error) {
 	if payload.ProjectID == "" || payload.RepoPath == "" || payload.Branch == "" || payload.Provider == "" ||
 		payload.Prompt == "" || payload.IntentID == "" || payload.Attempt < 1 || payload.LaunchID == "" {
 		return domain.ExecutionStartPayload{}, fmt.Errorf("decode start_agent payload: required field missing")
+	}
+	return payload, nil
+}
+
+func decodeMessagePayload(raw string) (domain.ExecutionMessagePayload, error) {
+	decoder := json.NewDecoder(bytes.NewBufferString(raw))
+	decoder.DisallowUnknownFields()
+	var payload domain.ExecutionMessagePayload
+	if err := decoder.Decode(&payload); err != nil {
+		return domain.ExecutionMessagePayload{}, fmt.Errorf("decode send_message payload: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return domain.ExecutionMessagePayload{}, fmt.Errorf("decode send_message payload: trailing JSON")
+	}
+	if payload.Message == "" {
+		return domain.ExecutionMessagePayload{}, fmt.Errorf("decode send_message payload: message is empty")
 	}
 	return payload, nil
 }

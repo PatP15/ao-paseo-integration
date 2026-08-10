@@ -347,6 +347,28 @@ func (s *Store) AcknowledgeExecutionStart(ctx context.Context, commandID string,
 	})
 }
 
+// AcknowledgeExecutionDelivery completes a command that publishes nothing of
+// its own. start_agent has AcknowledgeExecutionStart because it mints a runtime
+// handle; a delivered message has only its own completion to record.
+//
+// A row that is no longer delivering means the lease expired and someone else
+// owns the delivery, so the stale worker is told rather than allowed to
+// overwrite the queue state.
+func (s *Store) AcknowledgeExecutionDelivery(ctx context.Context, commandID string, at time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.AcknowledgeExecutionCommand(ctx, gen.AcknowledgeExecutionCommandParams{
+		AcknowledgedAt: encodeExecutionTime(at), ID: commandID,
+	})
+	if err != nil {
+		return fmt.Errorf("acknowledge execution command %s: %w", commandID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("acknowledge execution command %s: not delivering", commandID)
+	}
+	return nil
+}
+
 // GetExecutionCommand returns one durable outbox row.
 func (s *Store) GetExecutionCommand(ctx context.Context, id string) (domain.ExecutionCommand, bool, error) {
 	row, err := s.qr.GetExecutionCommand(ctx, id)

@@ -80,6 +80,18 @@ type ExecutionStartPayload struct {
 	LaunchID         string            `json:"launchId"`
 }
 
+// ExecutionMessagePayload is the send_message payload: free-form text AO
+// delivers to an already-launched remote agent.
+//
+// QuestionID is set only when the message discharges a human-inbox item. Both
+// producers share one payload shape deliberately, so the outbox keeps exactly
+// one decoder per command type and a follow-up prompt cannot be mistaken for a
+// second answer to a question.
+type ExecutionMessagePayload struct {
+	QuestionID string `json:"questionId,omitempty"`
+	Message    string `json:"message"`
+}
+
 // ExecutionDispatchSeed contains everything the store commits atomically for
 // one approved work item. The store assigns the conventional project-N
 // session ID and derives the workspace title and idempotency key from it.

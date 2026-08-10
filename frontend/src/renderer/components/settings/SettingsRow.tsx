@@ -56,7 +56,10 @@ export function SettingsDetailRow({
 		<div className={cn("settings-row-bar h-auto min-h-(--size-settings-row) items-start", className)}>
 			<div className="flex min-w-0 flex-1 items-start gap-(--size-settings-row-icon-gap)">
 				{Icon ? <Icon className="mt-0.5 size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" /> : null}
-				<div className="flex min-w-0 flex-col gap-0.5">
+				{/* flex-1: without it this column is shrink-to-fit, so a meta slot
+				    carrying a form field renders at the width of its longest line
+				    instead of the row's. */}
+				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-5 text-settings-label">
 						{title}
 					</div>

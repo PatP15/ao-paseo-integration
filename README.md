@@ -10,7 +10,149 @@
 > Apache-2.0. See [`docs/paseo-integration/`](docs/paseo-integration/) for the design documents,
 > the compatibility spike, and the supply-chain audit.
 >
-> Upstream README follows.
+> **Setup for this fork is below.** Upstream README follows after it.
+
+---
+
+## Setup (this fork)
+
+Three parts: local work on this machine, adding remote computers, and keeping
+the files that steer agents (preferences, instructions, skills) in sync.
+
+### 1. Local work
+
+Everything upstream AO does works unchanged; remote execution is additive.
+
+1. **Prerequisites**: Go 1.25+, Node 20+, and at least one agent CLI you are
+   logged into (`claude`, `codex`, …). For remote features you also need the
+   **Paseo CLI, pinned 0.2.5**, on your `PATH` (install from [paseo.sh](https://paseo.sh);
+   the desktop app bundles it at `/Applications/Paseo.app/Contents/Resources/bin/paseo`).
+2. **Install dependencies** from the repo root:
+
+   ```bash
+   npm install
+   npm --prefix frontend install
+   ```
+
+3. **Build the CLI/daemon**:
+
+   ```bash
+   cd backend && go build -o "$HOME/.local/bin/ao" ./cmd/ao
+   ```
+
+4. **Start AO**: `ao start` opens the desktop app (starting the daemon if
+   needed); `ao status` / `ao stop` manage it. All state lives under `~/.ao`
+   (override with `AO_DATA_DIR`) — never in `~/Library/Application Support`.
+5. **Add a project and work locally**:
+
+   ```bash
+   ao project add --path ~/code/my-repo --name my-repo
+   ao spawn ...   # or start sessions from the board in the app
+   ```
+
+6. **Verify a checkout** before hacking on this fork: `npm run lint`
+   (backend tests + golangci-lint, must print `0 issues.`),
+   `npm run frontend:typecheck`, and `npm --prefix frontend run test`.
+
+### 2. Remote hosts (computers)
+
+AO dispatches **approved work items** to stock Paseo daemons on other
+machines. Hosts are registered by hand and selected by AO's router — never
+named at dispatch time.
+
+**On the worker machine:**
+
+1. Install the agent CLIs and **log them in as the user that will run work**
+   (an agent on a machine with no `claude` login just answers
+   "Not logged in").
+2. Install Paseo 0.2.5 and start its daemon with a password, reachable from
+   your AO machine (LAN IP or Tailscale name), with MCP injection off:
+
+   ```bash
+   PASEO_PASSWORD='<a strong password>' paseo daemon start \
+     --listen 0.0.0.0:6780 --no-relay --no-mcp --no-web-ui
+   ```
+
+3. Make sure the project repo is checked out somewhere on this machine —
+   you will need that absolute path for the binding.
+
+**On the AO machine:**
+
+4. **Store the credential as a secret ref** — a file, never a value inside an
+   endpoint or command line:
+
+   ```bash
+   mkdir -p ~/.ao/secrets && chmod 700 ~/.ao/secrets
+   printf '%s' '<the password>' > ~/.ao/secrets/office-mac-pw
+   chmod 600 ~/.ao/secrets/office-mac-pw
+   ```
+
+   (The **Settings → Computers → Add computer** sheet does this for you when
+   you paste the password there.)
+5. **Register the computer** — in the app via *Settings → Computers → Add
+   computer* (connection → details → review), or:
+
+   ```bash
+   ao remote register office-mac --name "Office Mac" \
+     --transport tailscale --endpoint office-mac.tailnet.ts.net:6780 \
+     --secret-ref office-mac-pw --trust-zone work --max-sessions 3
+   ```
+
+   The endpoint must contain a `host:port` colon. Registering an endpoint that
+   resolves to the AO machine's own daemon is refused (`HOST_IS_SELF`).
+6. **Test the connection** with the row's *Test connection* button (or
+   `ao remote hosts` to see reachability). A computer that has never been
+   probed shows a gray dot; online is green.
+7. **Bind your project to the computer** — project settings → *Computers*
+   section → *Bind computer*, or:
+
+   ```bash
+   ao remote bind my-repo office-mac \
+     --host-path /Users/me/code/my-repo --base-branch main
+   ```
+
+   The path is the repo's location **on the host**. An unbound project has no
+   candidate hosts and dispatch fails with `NO_ELIGIBLE_HOST`.
+8. **Dispatch work**: create a work item (*Work items* view or
+   `ao work-item add`), **approve it** (approval is the gate — nothing
+   dispatches without it), then *Dispatch* from the app (pick provider, model,
+   mode, and thinking level — all validated live against that computer) or
+   `ao remote dispatch`. You can also create-and-run in one step from the New
+   Task dialog's *Run on* section.
+9. **Supervise**: the board card shows a *Monitor* badge; opening it gives the
+   remote session pane — event timeline, message composer for follow-up
+   prompts, and kill. Agent questions land in notifications and the inbox
+   (`ao remote inbox` / `answer` / `allow` / `deny`). If the computer stops
+   answering, the banner says so — unreachability never terminates a session.
+
+### 3. Updating preferences, instructions, and skills
+
+Click a computer's name (in *Settings → Computers*) to open its detail view.
+Every write below is drift-checked: AO refuses to overwrite a file that
+changed on the host since you last read it — refresh, re-read, retry.
+
+- **Preferences tab** — edits the host's
+  `~/.paseo/orchestration-preferences.json` (the provider map Paseo skills
+  read). Role pickers are filled from the computer's **live** provider
+  catalog, so you can only select models that actually exist there.
+- **Instructions tab** — edits the host's machine-scope `~/.claude/CLAUDE.md`
+  over the same channel, with the same drift discipline.
+- **Skills tab** — inventories `~/.claude/skills` on every computer and
+  pushes a skill from this machine to a host (staged, hash-verified,
+  byte-identical, atomic). Skills that orchestrate through Paseo are marked
+  *policy-gated*; inserting one at dispatch requires an explicit, audited
+  override.
+- **Schedules tab** — lists schedules found on the host's daemon. AO owns
+  scheduling, so these are flagged as policy violations; delete them here.
+- **Project instructions** (project settings) — the committed instruction
+  files (`CLAUDE.md`, `AGENTS.md`, `.claude/skills/**`) are versioned code,
+  shown read-only with *Edit via task*; each bound computer shows live drift
+  against them with one-click *Sync* (fast-forward only — a diverged checkout
+  is refused with git's own words and must be reconciled on that machine).
+- **Auto-resume** (*Settings → Auto-resume*) — toggle *Resume after a usage
+  limit* and edit the resume prompt sent to interrupted agents (empty field
+  restores the default). Applies to local and remote sessions; resumes are
+  capped per session and recorded in the timeline.
 
 ---
 

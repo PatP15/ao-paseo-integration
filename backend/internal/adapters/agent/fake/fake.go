@@ -14,6 +14,8 @@
 // activity through their native hooks. The daemon pins the session PATH to its
 // own binary and sets AO_SESSION_ID/AO_DATA_DIR, so the bare `ao` in the script
 // reaches the daemon and its activity reports land against the spawning session.
+// The script runs under `sh -c`, never a login shell, so that pin holds; see
+// GetLaunchCommand.
 //
 // The terminal state is deterministic: the run ends on a `session-end` event
 // that derives ActivityExited, NOT an incidental idle left behind by a trailing
@@ -87,10 +89,19 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand returns `sh -lc <script>`, where the script walks the fixed
+// GetLaunchCommand returns `sh -c <script>`, where the script walks the fixed
 // activity timeline. cfg is intentionally ignored except that it is honored via
 // ctx cancellation: the fake never consults the prompt, permissions, or
 // workspace, so its behavior is fully deterministic.
+//
+// `-c`, deliberately NOT `-lc`. session_manager.HookPATH PREPENDS the daemon
+// binary's own directory to the session PATH so that the bare `ao` in the script is
+// the daemon itself. A login shell re-runs /etc/profile and ~/.profile, which
+// rebuild and re-order PATH — Ubuntu's ~/.profile prepends ~/.local/bin, so a
+// hand-built or legacy npm `ao` sitting there is found FIRST and the hooks report
+// to the wrong binary, silently, because `|| true` swallows the evidence. The
+// script needs no profile (printf, sleep, ao), so the login shell bought nothing
+// and cost the guarantee this package's own doc comment claims.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -103,7 +114,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) (cm
 	if err != nil {
 		return nil, err
 	}
-	return []string{sh, "-lc", timelineScript(phaseSleep())}, nil
+	return []string{sh, "-c", timelineScript(phaseSleep())}, nil
 }
 
 // AuthStatus reports authorized ONLY when AO_FAKE_HARNESS is set to a truthy
@@ -135,7 +146,7 @@ func isTruthy(raw string) bool {
 }
 
 // ResolveBinary satisfies ports.AgentBinaryResolver. The fake harness launches
-// via the system shell (`sh -lc`), so it resolves to sh's actual path on PATH.
+// via the system shell (`sh -c`), so it resolves to sh's actual path on PATH.
 // When no runnable sh exists (Windows, a stripped-down PATH), it returns an
 // error so the agent catalog reports `fake` as NOT installed and CLI preflight
 // fails cleanly — rather than reporting installed via a hard-coded /bin/sh and

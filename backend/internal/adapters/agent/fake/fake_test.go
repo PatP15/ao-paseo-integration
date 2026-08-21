@@ -47,8 +47,10 @@ func TestGetLaunchCommandIsScriptedTimeline(t *testing.T) {
 	}
 	// argv[0] must be the RESOLVED shell path (what Manager.Spawn validates), not
 	// a bare "sh" — see ResolveBinary / #2692 review.
-	if len(cmd) != 3 || cmd[1] != "-lc" || !strings.HasSuffix(cmd[0], "sh") || !strings.Contains(cmd[0], "/") {
-		t.Fatalf("launch command shape = %#v, want [<resolved sh path> -lc <script>]", cmd)
+	// -c, not -lc: a login shell re-runs the user's profile, which can put a
+	// different `ao` ahead of the one the daemon pinned onto the session PATH.
+	if len(cmd) != 3 || cmd[1] != "-c" || !strings.HasSuffix(cmd[0], "sh") || !strings.Contains(cmd[0], "/") {
+		t.Fatalf("launch command shape = %#v, want [<resolved sh path> -c <script>]", cmd)
 	}
 
 	script := cmd[2]

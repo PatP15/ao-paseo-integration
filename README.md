@@ -133,7 +133,9 @@ Paseo's CLI and HTTP surface only. The daemon AO drives is headless by design.
    `./scripts/paseo-host-setup.sh` does all of it — generates a password,
    writes a hardened `config.json`, starts the daemon, probes it, and prints the
    `ao remote register` line to run on the AO machine. `status`, `stop`, and
-   `systemd-unit` are also subcommands. By hand:
+   `systemd-unit` are also subcommands. On Windows use
+   `.\scripts\paseo-host-setup.ps1` (same posture and guards; `scheduled-task`
+   replaces `systemd-unit`) and see *Hosting on Windows* below. By hand:
 
    ```bash
    export PASEO_HOME="$HOME/.paseo-ao"        # NOT ~/.paseo — see below
@@ -161,8 +163,20 @@ Paseo's CLI and HTTP surface only. The daemon AO drives is headless by design.
        "cors": { "allowedOrigins": [] },
        "relay": { "enabled": false },
        "mcp": { "enabled": false, "injectIntoAgents": false },
-       "browserTools": { "enabled": false } } }
+       "browserTools": { "enabled": false } },
+     "features": {
+       "dictation": { "enabled": false },
+       "voiceMode": { "enabled": false } } }
    ```
+
+   The `features` block is not cosmetic. Dictation and voice mode default to
+   **on** with provider `local`, so a stock daemon starts downloading speech
+   models on its first boot — measured at **983 MB** in
+   `$PASEO_HOME/models/local-speech` (`parakeet-tdt-0.6b-v2-int8` and
+   `kokoro-en-v0_19`) before anything asked it to. There is no flag for this; the
+   config keys are the only off switch, and a headless worker never uses either
+   feature. With them set, the boot log reads `"enabled":false` for all four
+   speech providers and no `models` directory is created.
 
    **Use a separate `PASEO_HOME`, never `~/.paseo`.** That is the desktop app's
    home, and its daemon reports `desktopManaged: true`, which AO refuses to
@@ -213,6 +227,62 @@ as its own daemon with its own `PASEO_HOME` and port; AO refuses to drive a
 desktop-managed daemon, so the two coexist without contending. They do not share
 state: the app will not show AO's remote sessions, because those live in the
 AO-owned home.
+
+#### Hosting on Windows
+
+A Windows box is a first-class host: Paseo 0.2.5 is an npm CLI, and `node-pty`
+ships a **win32-x64 conpty prebuild** (`conpty.node`, `conpty.dll`,
+`OpenConsole.exe`), so `npm install -g` compiles nothing and Visual Studio Build
+Tools are **not** required. Verified on Windows 11 (build 26200) against
+Node 22.23.2: daemon up, `GET /api/status` returning
+`{"status":"server_info","serverId":"srv_…","version":"0.2.5"}`, password
+enforced. `sherpa-onnx-win-x64` resolves too, so nothing is skipped.
+
+Nothing here needs administrator rights, which matters because an elevated
+installer cannot be driven from a script:
+
+```powershell
+# 1. Node 22 LTS, user-local from the official zip - no MSI, no UAC prompt
+$v = 'v22.23.2'
+Invoke-WebRequest "https://nodejs.org/dist/$v/node-$v-win-x64.zip" -OutFile "$env:TEMP\node.zip"
+Expand-Archive "$env:TEMP\node.zip" "$env:LOCALAPPDATA\node" -Force
+$nodeDir = "$env:LOCALAPPDATA\node\node-$v-win-x64"
+
+# 2. Keep global installs in the user profile, so -g never needs admin either
+& "$nodeDir\npm.cmd" config set prefix "$env:LOCALAPPDATA\npm-global"
+$env:Path = "$nodeDir;$env:LOCALAPPDATA\npm-global;$env:Path"
+
+# 3. Paseo at the pinned version, plus the agent CLIs this host will run
+npm install -g @getpaseo/cli@0.2.5
+npm install -g @anthropic-ai/claude-code
+paseo --version      # must print exactly 0.2.5
+claude               # log in - a host with no login just answers "Not logged in"
+
+# 4. Start the daemon in the required posture
+.\scripts\paseo-host-setup.ps1                        # loopback only
+.\scripts\paseo-host-setup.ps1 -Listen 100.x.y.z:6780 # over Tailscale
+.\scripts\paseo-host-setup.ps1 scheduled-task         # print a logon task
+```
+
+Add `%LOCALAPPDATA%\node\node-v22.23.2-win-x64` and
+`%LOCALAPPDATA%\npm-global` to your user `Path` to make this survive a new
+shell. Windows specifics worth knowing:
+
+- **Bind project paths to a drive letter** (`C:\Users\you\code\repo`), never a
+  `\\wsl.localhost\…` path. Git worktrees over the 9p share are slow and lose
+  file modes, so a Windows host wants its own checkout — it does not share your
+  WSL clones.
+- **Run the CLI from a real drive path.** `npm.cmd` and any `cmd.exe` shim print
+  `UNC paths are not supported. Defaulting to Windows directory` and silently
+  change directory when the working directory is a UNC path.
+- **A logon task, not a service.** The agent CLIs store credentials per user
+  (`%USERPROFILE%\.claude\.credentials.json`), so a SYSTEM-level service has no
+  login to run work with. `scheduled-task` prints a `schtasks /SC ONLOGON`
+  wrapper that sets `PATH` and the password explicitly, because a task does not
+  read your shell profile.
+- **WSL on the same box is a *different* host.** Its daemon is reachable from
+  Windows on `127.0.0.1` via the WSL localhost relay, so the two contend for a
+  port: give them separate ports and separate `PASEO_HOME`s, or run only one.
 
 ### 3. Registering the host (on the AO machine)
 

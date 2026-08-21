@@ -56,6 +56,7 @@ Every AO-owned Paseo daemon:
 | `--listen 127.0.0.1:<port>` | Never a LAN interface. Paseo's daemon is `http`-only (`bootstrap.ts:2`) — there is no TLS to enable. |
 | `daemon.mcp.enabled: false`, `daemon.mcp.injectIntoAgents: false`, `daemon.browserTools.enabled: false` | Belt and braces against a programmatic default. |
 | `daemon.cors.allowedOrigins: []` | Default is `["https://app.paseo.sh"]` (`persisted-config.ts:334`) — any JS on that origin gets a `scopes:["*"]` session on your daemon with no password. |
+| `features.dictation.enabled: false`, `features.voiceMode.enabled: false` | Both default **on** with provider `local`, so a stock daemon fetches **983 MB** of speech models (`parakeet-tdt-0.6b-v2-int8`, `kokoro-en-v0_19`) into `$PASEO_HOME/models/local-speech` on first boot — unprompted outbound fetches plus disk on a machine whose only job is running agents. There is no CLI flag; these keys are the only off switch. |
 
 Assert at probe time, and refuse to dispatch if violated. `execution_hosts` carries
 `requires_no_mcp` and `requires_no_relay` for exactly this.

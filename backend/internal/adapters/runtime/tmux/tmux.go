@@ -729,23 +729,45 @@ type processEntry struct {
 	command string
 }
 
+// parseProcessTable reads `ps -ww -axo pid=,ppid=,args=` output into entries.
+//
+// A line whose pid/ppid are not integers is SKIPPED rather than fatal, because
+// runCommand captures COMBINED output and ps writes diagnostics to stderr. Under
+// WSL — and anywhere ps cannot read a sane terminal width — procps prints
+// "your 131072x1 screen size is bogus. expect trouble" twice, ahead of the first
+// real row. Failing the parse on it made IsSupervisedProcessAlive return an error
+// on EVERY probe, so the runtime could never tell whether an agent was still
+// alive on those machines. Neither COLUMNS nor dropping the second -w suppresses
+// the warning, so tolerating it here is the only fix that does not give up the
+// stderr text on genuine failures.
+//
+// Skipping is only safe while it cannot be read as "no processes": if every
+// non-trivial line is rejected then the FORMAT changed, and an empty tree would
+// be taken for "the agent is gone". That case still errors, quoting the first
+// rejected line so the actual format is visible.
 func parseProcessTable(out string) ([]processEntry, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	entries := make([]processEntry, 0, len(lines))
+	firstRejected := ""
+	rejected := 0
 	for _, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid pid in %q", line)
-		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid parent pid in %q", line)
+		pid, pidErr := strconv.Atoi(fields[0])
+		ppid, ppidErr := strconv.Atoi(fields[1])
+		if pidErr != nil || ppidErr != nil {
+			rejected++
+			if firstRejected == "" {
+				firstRejected = line
+			}
+			continue
 		}
 		entries = append(entries, processEntry{pid: pid, ppid: ppid, command: strings.Join(fields[2:], " ")})
+	}
+	if len(entries) == 0 && rejected > 0 {
+		return nil, fmt.Errorf("no process rows parsed; %d line(s) rejected, first was %q", rejected, firstRejected)
 	}
 	return entries, nil
 }

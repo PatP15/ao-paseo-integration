@@ -761,6 +761,31 @@ func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testin
 	}
 }
 
+func TestParseProcessTableSkipsCommandDiagnostics(t *testing.T) {
+	// procps writes this to stderr under WSL and in CI, and runCommand captures
+	// combined output, so it arrives ahead of the real rows.
+	const warning = "your 131072x1 screen size is bogus. expect trouble\n"
+	entries, err := parseProcessTable(warning + warning +
+		"      1       0 /sbin/init\n    100       1 /bin/zsh -i\n    101     100 codex resume native-1\n")
+	if err != nil {
+		t.Fatalf("parseProcessTable: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entries = %#v, want the 3 real rows", entries)
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("workload under the pane shell was not found past the warning preamble")
+	}
+}
+
+func TestParseProcessTableErrorsWhenNothingParses(t *testing.T) {
+	// Every line rejected means the format changed, not that the machine has no
+	// processes: an empty tree would be read as "the agent is gone".
+	if _, err := parseProcessTable("your 131072x1 screen size is bogus. expect trouble\nps: bad -o argument\n"); err == nil {
+		t.Fatal("parseProcessTable accepted output with no parsable rows")
+	}
+}
+
 func TestIsSupervisedProcessAliveRejectsBarePreservedShell(t *testing.T) {
 	entries, err := parseProcessTable("100 1 /bin/zsh -i\n")
 	if err != nil {

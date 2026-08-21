@@ -16,22 +16,62 @@
 
 ## Setup (this fork)
 
-Three parts: local work on this machine, adding remote computers, and keeping
-the files that steer agents (preferences, instructions, skills) in sync.
+Four parts: local work on the AO machine, turning a machine into a **host** AO can
+dispatch to, registering that host, and keeping the files that steer agents
+(preferences, instructions, skills) in sync.
 
-### 1. Local work
+Which machine needs what:
+
+| | AO machine | Host (worker) |
+|---|---|---|
+| Go 1.25+, this repo, the `ao` binary | **yes** | no |
+| Node 20+ | yes | **yes** (Paseo ships as an npm CLI) |
+| Paseo CLI, pinned 0.2.5 | for remote features | **yes** |
+| Agent CLIs, *logged in* | for local sessions | **yes** — this is where work runs |
+| git + a checkout of each project | yes | **yes**, at the path you bind |
+
+### 1. Local work (the AO machine)
 
 Everything upstream AO does works unchanged; remote execution is additive.
 
-1. **Prerequisites**: Go 1.25+, Node 20+, and at least one agent CLI you are
-   logged into (`claude`, `codex`, …). For remote features you also need the
-   **Paseo CLI, pinned 0.2.5**, on your `PATH` (install from [paseo.sh](https://paseo.sh);
-   the desktop app bundles it at `/Applications/Paseo.app/Contents/Resources/bin/paseo`).
-2. **Install dependencies** from the repo root:
+1. **Prerequisites**: Go 1.25.7+, Node 20.19+ / npm 10+, git, and at least one
+   agent CLI you are logged into (`claude`, `codex`, …). Both toolchains install
+   under `$HOME`, so none of this needs `sudo`:
+
+   ```bash
+   # Go — match the flake's 1.25 series; go.mod requires 1.25.7+
+   curl -fsSLO https://go.dev/dl/go1.25.14.linux-amd64.tar.gz
+   mkdir -p ~/.local && tar -C ~/.local -xzf go1.25.14.linux-amd64.tar.gz
+
+   # Node 22 LTS via nvm
+   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+   export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm install 22
+
+   # Put both on PATH for login shells
+   cat >> ~/.profile <<'EOF'
+   export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
+   export NVM_DIR="$HOME/.nvm"
+   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+   EOF
+   ```
+
+   `nvm` only wires itself into `~/.bashrc`, which Ubuntu skips for
+   non-interactive shells — so a bare `bash -lc 'npm …'` (any script, any CI
+   step) will not find npm until it is on the login-shell PATH as above.
+   `nix develop` gets you the same toolchain in one step if you have Nix.
+
+2. **Install dependencies** from the repo root — **three** installs, not two.
+   `frontend/src/landing` is a separate npm package that is *not* a workspace of
+   `frontend`, so the frontend install does not reach it. Skipping it leaves
+   `cheerio` missing and 5 tests in
+   `src/landing/scripts/generate-markdown-twins.test.mjs` fail with
+   `ERR_MODULE_NOT_FOUND` — CI installs it as its own step
+   (`.github/workflows/frontend.yml`).
 
    ```bash
    npm install
    npm --prefix frontend install
+   npm ci --prefix frontend/src/landing
    ```
 
 3. **Build the CLI/daemon**:
@@ -43,6 +83,8 @@ Everything upstream AO does works unchanged; remote execution is additive.
 4. **Start AO**: `ao start` opens the desktop app (starting the daemon if
    needed); `ao status` / `ao stop` manage it. All state lives under `~/.ao`
    (override with `AO_DATA_DIR`) — never in `~/Library/Application Support`.
+   The daemon's liveness routes are `/healthz` and `/readyz`; there is no
+   `/api/health`.
 5. **Add a project and work locally**:
 
    ```bash
@@ -50,35 +92,134 @@ Everything upstream AO does works unchanged; remote execution is additive.
    ao spawn ...   # or start sessions from the board in the app
    ```
 
-6. **Verify a checkout** before hacking on this fork: `npm run lint`
-   (backend tests + golangci-lint, must print `0 issues.`),
-   `npm run frontend:typecheck`, and `npm --prefix frontend run test`.
+6. **Verify a checkout** before hacking on this fork. One command covers build,
+   the test regression gate, lint, typecheck, and generated-artifact drift:
 
-### 2. Remote hosts (computers)
+   ```bash
+   ./scripts/verify-fork-baseline.sh     # must end in VERIFY PASS
+   npm --prefix frontend run test        # 1580 tests; needs step 2's third install
+   ```
 
-AO dispatches **approved work items** to stock Paseo daemons on other
-machines. Hosts are registered by hand and selected by AO's router — never
-named at dispatch time.
+   The gate compares failing tests against `scripts/known-failing-tests.txt`
+   rather than requiring green, because the fork inherited failing tests from
+   upstream — it fails only on a *regression*. `npm run lint` and
+   `npm run frontend:typecheck` remain available individually.
+
+### 2. Turning a machine into a host (a "computer")
+
+A host runs a **stock** Paseo daemon plus the agent CLIs. It does **not** need
+Go, this repository, the `ao` binary, or the desktop app — AO reaches it over
+Paseo's CLI and HTTP surface only. The daemon AO drives is headless by design.
 
 **On the worker machine:**
 
-1. Install the agent CLIs and **log them in as the user that will run work**
-   (an agent on a machine with no `claude` login just answers
-   "Not logged in").
-2. Install Paseo 0.2.5 and start its daemon with a password, reachable from
-   your AO machine (LAN IP or Tailscale name), with MCP injection off:
+1. **Install the agent CLIs and log them in as the user that will run work.**
+   An agent on a machine with no `claude` login just answers "Not logged in",
+   and nothing upstream of it will tell you that is why. Verify per provider —
+   for Claude Code, `~/.claude/.credentials.json` should exist after `claude`
+   completes its login.
+2. **Install Paseo at exactly 0.2.5.** The pin is an equality check, not a
+   floor: `adapters/execution/paseo/version.go` compares `paseo --version`
+   against `SupportedVersion` and refuses anything else, because the JSON shapes
+   the adapter parses are fixture-verified against that one build. npm's
+   `latest` is well past it.
 
    ```bash
-   PASEO_PASSWORD='<a strong password>' paseo daemon start \
-     --listen 0.0.0.0:6780 --no-relay --no-mcp --no-web-ui
+   npm install -g @getpaseo/cli@0.2.5
+   paseo --version    # must print exactly 0.2.5
    ```
 
-3. Make sure the project repo is checked out somewhere on this machine —
-   you will need that absolute path for the binding.
+3. **Start the daemon in the required posture.** From a checkout of this repo,
+   `./scripts/paseo-host-setup.sh` does all of it — generates a password,
+   writes a hardened `config.json`, starts the daemon, probes it, and prints the
+   `ao remote register` line to run on the AO machine. `status`, `stop`, and
+   `systemd-unit` are also subcommands. By hand:
 
-**On the AO machine:**
+   ```bash
+   export PASEO_HOME="$HOME/.paseo-ao"        # NOT ~/.paseo — see below
+   mkdir -p "$PASEO_HOME" && chmod 700 "$PASEO_HOME"
+   ( umask 077; openssl rand -hex 24 > "$PASEO_HOME/daemon-password" )
 
-4. **Store the credential as a secret ref** — a file, never a value inside an
+   env -u PASEO_AGENT_ID -u PASEO_WORKSPACE_ID -u PASEO_HOST \
+     PASEO_PASSWORD="$(cat "$PASEO_HOME/daemon-password")" \
+     paseo daemon start --home "$PASEO_HOME" --listen 127.0.0.1:6780 \
+       --no-relay --no-mcp --no-inject-mcp --no-web-ui
+   ```
+
+   Every flag is load-bearing, and `docs/paseo-integration/SECURITY.md` §3 has
+   the reasoning. Two of the stock defaults fail **open** and are worth
+   restating: the relay is enabled by default and dials out at boot, and
+   `daemon.cors.allowedOrigins` defaults to `["https://app.paseo.sh"]`, which
+   hands any JS on that origin a `scopes:["*"]` session on your daemon with no
+   password. The flags cover this run; the persisted `config.json` is what
+   protects the *next* one, so pin it too:
+
+   ```json
+   { "version": 1,
+     "daemon": {
+       "listen": "127.0.0.1:6780",
+       "cors": { "allowedOrigins": [] },
+       "relay": { "enabled": false },
+       "mcp": { "enabled": false, "injectIntoAgents": false },
+       "browserTools": { "enabled": false } } }
+   ```
+
+   **Use a separate `PASEO_HOME`, never `~/.paseo`.** That is the desktop app's
+   home, and its daemon reports `desktopManaged: true`, which AO refuses to
+   drive outright (`adapters/execution/paseo/backend.go`). Pointing AO at it
+   yields a host that registers and then refuses every dispatch.
+
+4. **Make the address reachable, and only just.** The daemon is plaintext HTTP —
+   `bootstrap.ts` has no TLS to enable — and the password buys terminal write
+   access, project `env` secrets, and a persistent push tap. So:
+   - AO on the same machine → keep `127.0.0.1`.
+   - AO elsewhere → put both machines on Tailscale and bind **that interface's
+     address** (`--listen 100.x.y.z:6780`), which is what `--transport
+     tailscale` expects.
+   - Not `0.0.0.0`. SECURITY.md §3 says never a LAN interface, and `0.0.0.0`
+     is every interface including the LAN.
+   - On WSL2 with default NAT networking, a daemon inside the distro is
+     reachable from its own Windows host but not from the network; run
+     Tailscale inside the distro, or switch WSL to mirrored networking, before
+     expecting a remote AO to reach it.
+
+5. **Check the repo is checked out here**, and note the absolute path — that is
+   what you bind in step 3 of the next section.
+
+6. **Confirm the daemon answers**, which is the same surface AO probes
+   (`GET /api/status`; only `/api/health` is password-exempt):
+
+   ```bash
+   curl -s -H "Authorization: Bearer $(cat "$PASEO_HOME/daemon-password")" \
+     http://127.0.0.1:6780/api/status
+   # {"status":"server_info","serverId":"srv_…","version":"0.2.5","listen":"127.0.0.1:6780"}
+   ```
+
+**Two things to know about the password.** It reaches the daemon's environment,
+and stock Paseo 0.2.5 strips only five runtime-control keys before spawning an
+agent — so every agent on this host can read `PASEO_PASSWORD` with `printenv`,
+and so can that agent's model vendor (SECURITY.md §6). Do not patch the
+installed Paseo to fix it: running a modified AGPL daemon that serves clients
+over a network engages AGPL §13. Instead treat the password as scoped to this
+one daemon, never reused, and rotate it by replacing the file and restarting.
+`paseo daemon set-password` stores a *hashed* password in `config.json` and
+avoids the environment entirely; it prompts interactively, so it is a manual
+hardening step rather than a scriptable one.
+
+**Do you still get the Paseo app on a host?** Yes — but not on this daemon.
+`--no-web-ui` removes the bundled UI, `--no-relay` stops it reaching
+`app.paseo.sh`, and empty CORS blocks that origin anyway. Run the desktop app
+as its own daemon with its own `PASEO_HOME` and port; AO refuses to drive a
+desktop-managed daemon, so the two coexist without contending. They do not share
+state: the app will not show AO's remote sessions, because those live in the
+AO-owned home.
+
+### 3. Registering the host (on the AO machine)
+
+Hosts are registered by hand and selected by AO's router — never named at
+dispatch time.
+
+1. **Store the credential as a secret ref** — a file, never a value inside an
    endpoint or command line:
 
    ```bash
@@ -89,7 +230,7 @@ named at dispatch time.
 
    (The **Settings → Computers → Add computer** sheet does this for you when
    you paste the password there.)
-5. **Register the computer** — in the app via *Settings → Computers → Add
+2. **Register the computer** — in the app via *Settings → Computers → Add
    computer* (connection → details → review), or:
 
    ```bash
@@ -98,12 +239,17 @@ named at dispatch time.
      --secret-ref office-mac-pw --trust-zone work --max-sessions 3
    ```
 
-   The endpoint must contain a `host:port` colon. Registering an endpoint that
-   resolves to the AO machine's own daemon is refused (`HOST_IS_SELF`).
-6. **Test the connection** with the row's *Test connection* button (or
+   The endpoint must contain a `host:port` colon — Paseo resolves a colonless
+   host to the *local* daemon, which would run remote work on the AO machine.
+   Registering an endpoint that resolves to the AO machine's own daemon is
+   refused (`HOST_IS_SELF`).
+3. **Test the connection** with the row's *Test connection* button (or
    `ao remote hosts` to see reachability). A computer that has never been
-   probed shows a gray dot; online is green.
-7. **Bind your project to the computer** — project settings → *Computers*
+   probed shows a gray dot; online is green. From the CLI, a host reads
+   `offline` for the first few seconds after registering — reachability comes
+   from the daemon's observer poll, not from `register` itself, so give it a
+   moment and re-run `ao remote hosts` before suspecting the network.
+4. **Bind your project to the computer** — project settings → *Computers*
    section → *Bind computer*, or:
 
    ```bash
@@ -113,19 +259,19 @@ named at dispatch time.
 
    The path is the repo's location **on the host**. An unbound project has no
    candidate hosts and dispatch fails with `NO_ELIGIBLE_HOST`.
-8. **Dispatch work**: create a work item (*Work items* view or
+5. **Dispatch work**: create a work item (*Work items* view or
    `ao work-item add`), **approve it** (approval is the gate — nothing
    dispatches without it), then *Dispatch* from the app (pick provider, model,
    mode, and thinking level — all validated live against that computer) or
    `ao remote dispatch`. You can also create-and-run in one step from the New
    Task dialog's *Run on* section.
-9. **Supervise**: the board card shows a *Monitor* badge; opening it gives the
+6. **Supervise**: the board card shows a *Monitor* badge; opening it gives the
    remote session pane — event timeline, message composer for follow-up
    prompts, and kill. Agent questions land in notifications and the inbox
    (`ao remote inbox` / `answer` / `allow` / `deny`). If the computer stops
    answering, the banner says so — unreachability never terminates a session.
 
-### 3. Updating preferences, instructions, and skills
+### 4. Updating preferences, instructions, and skills
 
 Click a computer's name (in *Settings → Computers*) to open its detail view.
 Every write below is drift-checked: AO refuses to overwrite a file that
@@ -153,7 +299,6 @@ changed on the host since you last read it — refresh, re-read, retry.
   limit* and edit the resume prompt sent to interrupted agents (empty field
   restores the default). Applies to local and remote sessions; resumes are
   capped per session and recorded in the timeline.
-
 ---
 
 <div align="center">
